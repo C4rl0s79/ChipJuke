@@ -186,6 +186,9 @@ foreach(_m IN LISTS VGMPLAY_MODULES)
     add_subdirectory(src/${_m})
 endforeach()
 
+# Narzedzie offline: render VGM do WAV tym samym dekoderem co silnik (tools/vgmrender).
+add_subdirectory(tools/vgmrender)
+
 if(VGMPLAY_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
