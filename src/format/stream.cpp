@@ -4,11 +4,12 @@
 // wykonywania komend: wyznacza granice komend, sprawdza bloki danych i sume opoznien.
 // Decyzje "odrzuc" (zamiast ostrzezenia) tam, gdzie libvgm NIE ma obrony i skutkiem bylby blad
 // pamieci albo wykonanie danych jako komend:
-//  * blok 0x00..0x7F lezacy w/za loopOfs (libvgm w 2. petli pomija go BEZ przeskoczenia payloadu),
 //  * blok PCM dopisany do banku, na ktory wskazuje juz strumien DAC (0x91; wiszacy wskaznik),
 //  * blok skompresowany z nieznanym typem / za krotki / bez zgodnej tabeli (niezainicjowane dane),
 //  * zapis ROM/RAM krotszy niz naglowek (libvgm wraca bez przeskoczenia payloadu),
 //  * komenda "invalid" (libvgm konczy na niej odtwarzanie), uciety operand, loopOfs nie na granicy komendy.
+// Blok 0x00..0x7F w/za loopOfs NIE jest odrzucany: ostrzezenie BlockAfterLoop + loopDisabled
+// (libvgm w 2. petli pomija go bez przeskoczenia payloadu, wiec plik gra raz, bez petli).
 #include <algorithm>
 #include <array>
 #include <bitset>
@@ -145,10 +146,13 @@ Result<void> Scanner::dataBlock(std::uint64_t pos)
     switch (type & 0xC0) {
     case 0x00:
     case 0x40: {
-        if (h_.hasLoop() && pos >= h_.loopOffset)
-            return makeError(ErrorCode::BadDataBlock,
-                             "PCM data block at/after the loop start (libvgm skips it on loops > 0 without skipping its payload)",
-                             pos);
+        if (h_.hasLoop() && pos >= h_.loopOffset && !rep_.loopDisabled) {
+            // libvgm w 2. przejsciu petli pomija taki blok bez przeskoczenia payloadu. Nie odrzucamy
+            // pliku: gra raz, bez petli (loader zeruje pola petli w swojej kopii bufora).
+            rep_.loopDisabled = true;
+            warn(WarningCode::BlockAfterLoop,
+                 pos, "PCM data block at/after the loop start - looping disabled, the track plays once");
+        }
         if (type == 0x7F) {
             if (dblkLen < 6) return makeError(ErrorCode::BadDataBlock, "value table block shorter than 6 bytes", pos);
             const std::uint8_t bitsDec = d[2];

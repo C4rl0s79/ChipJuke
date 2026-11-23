@@ -96,6 +96,13 @@ Result<LoadedTrack> loadImpl(std::span<const std::uint8_t> input, ByteBuffer* ow
 
     // Dopelnienie zerami (pkt 8.7): resize wartosciuje nowe bajty zerami.
     const std::size_t rawSize = dec.bytes.size();
+    // Petla wylaczona przez pre-skan (blok PCM w/za punktem petli): zerujemy loop offset (0x1C)
+    // i loop samples (0x20) we wlasnej kopii, zeby libvgm nie skakal do petli. Naglowek ma >= 0x38 B.
+    if (track.stream.loopDisabled) {
+        std::fill_n(dec.bytes.begin() + 0x1C, 8, std::uint8_t{0});
+        track.header.loopOffset = 0;
+        track.header.loopSamples = 0;
+    }
     dec.bytes.resize(rawSize + format::kParserPadding);
     track.bytes = std::make_shared<const ByteBuffer>(std::move(dec.bytes));
     track.path = path;

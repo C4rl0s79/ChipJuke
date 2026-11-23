@@ -125,6 +125,10 @@ struct StreamReport {
     std::uint64_t pcmBytes = 0;         // suma bankow PCM
     std::uint64_t romWriteBytes = 0;    // suma memSize zapisow ROM
     bool hasEndCommand = false;         // znaleziono 0x66
+    // Blok PCM (0x00..0x7F) lezy w punkcie petli albo za nim: libvgm w 2. przejsciu petli
+    // wykonalby jego dane jako komendy. Plik jest przyjmowany, ale gra RAZ, bez petli
+    // (decyzja uzytkownika 2026-11-23); loader zeruje pola petli w swojej kopii bufora.
+    bool loopDisabled = false;
     std::vector<Warning> warnings;
 };
 

@@ -1153,20 +1153,23 @@ TEST_CASE("strumien: blok PCM po 0x91 tego samego banku odrzucony (wiszacy wskaz
     CHECK(scan(makeVgm(cat({block(0x00, Bytes(8, 1)), setData, block(0x00, Bytes(4, 2)), Bytes{0x66}}), o)).rep.ok());
 }
 
-TEST_CASE("strumien: blok PCM w/za loopOfs odrzucony (libvgm wykonalby payload jako komendy)")
+TEST_CASE("strumien: blok PCM w/za loopOfs wylacza petle (plik gra raz, ostrzezenie)")
 {
     // cmds: 0x63 (1 B), blok (7 + 3 B), 0x66
     const Bytes blk = block(0x00, Bytes{1, 2, 3});
     Opt after;
     after.loopAt = 1;   // dokladnie na bloku
     auto a = scan(makeVgm(cat({Bytes{0x63}, blk, Bytes{0x66}}), after));
-    REQUIRE_FALSE(a.rep.ok());
-    CHECK(a.rep.error().code == ErrorCode::BadDataBlock);
+    REQUIRE(a.rep.ok());
+    CHECK(a.rep.value().loopDisabled);
+    const auto& aw = a.rep.value().warnings;
+    CHECK(std::any_of(aw.begin(), aw.end(), [](const Warning& w) { return w.code == WarningCode::BlockAfterLoop; }));
 
     Opt before;
     before.loopAt = 1 + static_cast<std::int64_t>(blk.size());   // petla po bloku
     auto b = scan(makeVgm(cat({Bytes{0x63}, blk, Bytes{0x63, 0x66}}), before));
-    CHECK(b.rep.ok());
+    REQUIRE(b.rep.ok());
+    CHECK_FALSE(b.rep.value().loopDisabled);
 
     // blok ROM za petla nie jest pomijany przez libvgm - dozwolony
     Bytes rom;
