@@ -34,6 +34,7 @@ struct Limits {
     std::uint32_t maxTagFieldBytes     = 4096;         // pole GD3 (UTF-8, po konwersji)
     std::uint8_t  maxInstancesPerChip  = 2;            // libvgm: max 2 instancje typu
     std::uint64_t maxTotalSamples      = 44100ull * 60 * 60 * 24; // sanity: 24 h (ticki 44100)
+    std::uint32_t maxDecompressRatio   = 512;          // gzip: wyjscie/wejscie (stosowane powyzej 1 MiB wyjscia)
 };
 
 // Wpis ukladu z naglowka VGM.
@@ -42,7 +43,10 @@ struct ChipEntry {
     std::uint8_t instance = 0;      // 0 lub 1 (bit 30 zegara = "dual chip")
     std::uint32_t clockHz = 0;      // zegar z zamaskowanymi bitami flag (bit 30/31)
     std::uint32_t flags = 0;        // surowe pola dodatkowe naglowka tego ukladu (np. feedback/
-                                    // shift SN76496, typ AY8910, flagi); znaczenie zalezy od type
+                                    // shift SN76496, typ AY8910, flagi); znaczenie zalezy od type.
+                                    // Bit 31 = bit 31 surowego zegara (znaczenie zalezy od ukladu,
+                                    // np. T6W28 dla SN76496); uklady z dodatkowymi bajtami naglowka
+                                    // pakuja je w bitach 0..30 (opis: src/format/header.cpp).
     std::uint32_t volume = 0;       // z naglowka rozszerzonego (0 = brak); bit 15 = wzgledna
 };
 
@@ -79,6 +83,8 @@ struct Gd3Tag {
     std::string converter;      // "VGM by"
     std::string notes;
     bool present = false;       // true, gdy GD3 poprawnie sparsowany
+    bool truncated = false;     // jakies pole przyciete do Limits::maxTagFieldBytes (-> TagTruncated)
+    bool sanitized = false;     // usunieto znaki sterujace / zamieniono niesparowane surogaty (-> TagSanitized)
 
     // Wybor pola wg jezyka z fallbackiem na drugi jezyk, gdy puste.
     // Implementacja inline w pliku .cpp modulu format lub u wywolujacego; tu tylko deklaracja.

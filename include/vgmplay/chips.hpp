@@ -9,6 +9,9 @@
 
 namespace vgmplay {
 
+// Kolejnosc: wartosc = (indeks ukladu w VGMPlayer::_DEV_LIST libvgm) + 1 dla wszystkich 48 ukladow
+// naglowka VGM (C219 nie ma wlasnego pola naglowka: libvgm wybiera go po bajcie 0x96 == 2 przy C140).
+// MultiPCM to DEVID_YMW258 libvgm (jeden uklad, jedna nazwa).
 enum class ChipType : std::uint8_t {
     Unknown = 0,
     SN76496, YM2413, YM2612, YM2151, SegaPcm, RF5C68, YM2203, YM2608, YM2610,
@@ -16,7 +19,7 @@ enum class ChipType : std::uint8_t {
     AY8910, GameBoyDMG, NesApu, MultiPCM, UPD7759, OKIM6258, OKIM6295, K051649,
     K054539, HuC6280, C140, K053260, Pokey, QSound, SCSP, WonderSwan, VirtualBoyVSU,
     SAA1099, ES5503, ES5506, X1010, C352, GA20, Mikey, K007232, K005289, MSM5205,
-    MSM5232, BSMT2000, ICS2115, C219, YMW258,
+    MSM5232, BSMT2000, ICS2115, C219,
     Count_ // nie uzywac jako wartosci; ostatni element
 };
 
