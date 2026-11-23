@@ -28,6 +28,10 @@ struct DeviceDesc {
     std::vector<std::string> channelNames;    // size == channelCount
     std::uint32_t coreId = 0;                 // faktycznie uzyty rdzen (token opaque)
     bool hasLinked = false;                   // uklad polaczony (SSG w OPN, FM w OPL4)
+    // Podzial kanalow (dodane w E1): indeksy [0, mainChannelCount) naleza do ukladu glownego
+    // (MuteMask::main, bit = indeks), reszta [mainChannelCount, channelCount) do polaczonego
+    // (MuteMask::linked, bit = indeks - mainChannelCount). Bez tego silnik nie policzy masek solo.
+    std::uint16_t mainChannelCount = 0;
 };
 
 struct ChannelRef {

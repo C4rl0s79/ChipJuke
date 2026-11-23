@@ -4,8 +4,6 @@
 
 namespace vgmplay {
 namespace core { int module_stub() noexcept; }
-namespace engine { int module_stub() noexcept; }
-namespace audio_out { int module_stub() noexcept; }
 namespace viz { int module_stub() noexcept; }
 namespace chipstate { int module_stub() noexcept; }
 namespace playlist { int module_stub() noexcept; }
@@ -20,8 +18,6 @@ TEST_CASE("zaslepki modulow linkuja sie poprawnie")
 {
     using namespace vgmplay;
     CHECK(core::module_stub() == 0);
-    CHECK(engine::module_stub() == 0);
-    CHECK(audio_out::module_stub() == 0);
     CHECK(viz::module_stub() == 0);
     CHECK(chipstate::module_stub() == 0);
     CHECK(playlist::module_stub() == 0);

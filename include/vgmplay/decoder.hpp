@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -93,6 +94,9 @@ public:
     [[nodiscard]] virtual const ChipStateSnapshot* chipState() const = 0;  // nullptr = brak
     [[nodiscard]] virtual std::vector<CoreInfo> availableCores(ChipType type) const = 0;
     virtual void close() = 0;
+    // Zdejmuje blad krytyczny zgloszony przez render() (ended=true z powodu bledu); nullopt = brak.
+    // Dodane w E1: kontrakt E0 wspominal "last-error", ale nie mial do niego akcesora.
+    [[nodiscard]] virtual std::optional<Error> takeLastError() { return std::nullopt; }
 };
 
 } // namespace vgmplay
