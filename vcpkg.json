@@ -1,0 +1,22 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "vgmplay",
+  "version-string": "0.1.0",
+  "description": "Odtwarzacz VGM/VGMZ w stylu trackera dla Windows",
+  "license": "GPL-2.0-only",
+  "builtin-baseline": "661e42cd1600603016ced1d76a15359e7dade9f5",
+  "dependencies": [
+    "sdl3",
+    {
+      "name": "imgui",
+      "features": [
+        "sdl3-binding",
+        "dx11-binding"
+      ]
+    },
+    "miniaudio",
+    "zlib",
+    "nlohmann-json",
+    "doctest"
+  ]
+}

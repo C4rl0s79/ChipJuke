@@ -1,0 +1,22 @@
+# Katalogi budowania
+build/
+out/
+cmake-build-*/
+.vs/
+.vscode/
+.idea/
+
+# vcpkg
+vcpkg_installed/
+.vcpkg-cache/
+
+# Artefakty
+dist/
+*.user
+*.suo
+*.ncb
+*.aps
+CMakeUserPresets.json
+CMakeCache.txt
+CMakeFiles/
+compile_commands.json

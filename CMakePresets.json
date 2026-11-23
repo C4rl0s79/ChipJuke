@@ -1,0 +1,80 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+      "architecture": { "value": "x64", "strategy": "external" },
+      "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static",
+        "VCPKG_HOST_TRIPLET": "x64-windows-static",
+        "VGMPLAY_STATIC_CRT": "ON",
+        "VGMPLAY_BUILD_TESTS": "ON",
+        "VGMPLAY_BUILD_FUZZ": "OFF"
+      }
+    },
+    {
+      "name": "msvc-x64-debug",
+      "displayName": "MSVC x64 Debug",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    },
+    {
+      "name": "msvc-x64-release",
+      "displayName": "MSVC x64 Release",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      }
+    },
+    {
+      "name": "clang-cl-asan-fuzz",
+      "displayName": "clang-cl x64 ASan + fuzzing",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang-cl",
+        "CMAKE_CXX_COMPILER": "clang-cl",
+        "CMAKE_C_FLAGS": "-fsanitize=address",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
+        "VCPKG_HOST_TRIPLET": "x64-windows-static-md",
+        "VGMPLAY_STATIC_CRT": "OFF",
+        "VGMPLAY_BUILD_FUZZ": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "msvc-x64-debug", "configurePreset": "msvc-x64-debug" },
+    { "name": "msvc-x64-release", "configurePreset": "msvc-x64-release" },
+    { "name": "clang-cl-asan-fuzz", "configurePreset": "clang-cl-asan-fuzz" }
+  ],
+  "testPresets": [
+    {
+      "name": "msvc-x64-debug",
+      "configurePreset": "msvc-x64-debug",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "msvc-x64-release",
+      "configurePreset": "msvc-x64-release",
+      "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "clang-cl-asan-fuzz",
+      "configurePreset": "clang-cl-asan-fuzz",
+      "output": { "outputOnFailure": true }
+    }
+  ]
+}

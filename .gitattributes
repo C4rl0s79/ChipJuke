@@ -1,0 +1,22 @@
+# Tekst: LF w repozytorium (bez wzgledu na system), niejednoznaczne pliki wykrywa git.
+* text=auto eol=lf
+
+# Skrypty Windows wymagaja CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Pliki binarne i dane testowe
+*.vgm binary
+*.vgz binary
+*.vgmz binary
+*.s98 binary
+*.dro binary
+*.gym binary
+*.png binary
+*.ico binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.dll binary
+*.lib binary
+*.exe binary

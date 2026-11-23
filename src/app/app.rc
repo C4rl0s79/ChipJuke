@@ -1,0 +1,4 @@
+// Zasoby exe: font UI (BIZ UD Gothic, SIL OFL 1.1) - jeden przenosny plik wykonywalny.
+#include "app_resources.h"
+
+IDR_FONT_UI RCDATA "../../assets/fonts/BIZUDGothic-Regular.ttf"

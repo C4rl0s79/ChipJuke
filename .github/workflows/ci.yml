@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-msvc-release:
+    runs-on: windows-latest
+    env:
+      # Obraz windows-latest ma vcpkg w C:\vcpkg.
+      VCPKG_ROOT: C:\vcpkg
+      # Binary caching przez pliki + actions/cache (backend x-gha vcpkg zostal wycofany).
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.vcpkg-cache
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Przygotuj katalog cache vcpkg
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-
+
+      # Ninja + cl wymagaja srodowiska Visual Studio (vcvars) w PATH.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake --preset msvc-x64-release
+
+      - name: Build
+        run: cmake --build --preset msvc-x64-release
+
+      - name: Test
+        run: ctest --preset msvc-x64-release
+
+      - name: Zloz paczke (ZIP przenosny)
+        shell: pwsh
+        run: |
+          cmake --install out/build/msvc-x64-release --prefix dist/vgmplay
+          Compress-Archive -Path dist/vgmplay/* -DestinationPath dist/vgmplay-win64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vgmplay-win64
+          path: dist/vgmplay-win64.zip
+          if-no-files-found: error
