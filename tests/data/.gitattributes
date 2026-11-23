@@ -1,0 +1,3 @@
+*.vgm binary
+*.vgz binary
+manifest.json text eol=lf

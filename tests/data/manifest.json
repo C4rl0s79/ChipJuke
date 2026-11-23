@@ -1,0 +1,2506 @@
+{
+  "schemaVersion": 1,
+  "generator": "tools/vgmgen/build_corpus.py",
+  "note": "Plik generowany - nie edytowac recznie. Opis pol: tests/data/README.md.",
+  "files": [
+    {
+      "path": "malformed/blk_after_loop.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x67 po znaczniku petli (loopOfs).",
+      "sizeBytes": 305,
+      "sha256": "e561284ff4173942b98cbdeba6bfd6ac7872525b1bd7d4e862d78bcc3b0d322c",
+      "hazard": "H3/ADR8.10",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "BlockAfterLoop"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          },
+          {
+            "type": "YM2612",
+            "instance": 0,
+            "clockHz": 7670454
+          }
+        ],
+        "dataEnd": 305,
+        "dataOffset": 128,
+        "fileSize": 305,
+        "gd3Offset": 0,
+        "hasLoop": true,
+        "loopSamples": 2000,
+        "rate": 0,
+        "totalSamples": 2100,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 37,
+        "totalSamples": 2100,
+        "loopStartSample": 100,
+        "pcmBytes": 64,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/blk_after_set_data.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x67 typ 0x00 PO komendzie 0x91 (Set Data) tego samego banku (wiszacy wskaznik DAC).",
+      "sizeBytes": 329,
+      "sha256": "18fb3ea540fe45860358b5f66dfc3d640b4d453353ce362fd94ca52312b8f8f9",
+      "hazard": "H3/ADR8.10",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "BlockAfterSetData"
+        ],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadDataBlock"
+          }
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          },
+          {
+            "type": "YM2612",
+            "instance": 0,
+            "clockHz": 7670454
+          }
+        ],
+        "dataEnd": 329,
+        "dataOffset": 128,
+        "fileSize": 329,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 541,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 40,
+        "totalSamples": 541,
+        "loopStartSample": 0,
+        "pcmBytes": 64,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/blk_cmp_bitscmp_gt_16.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x40: bitsCmp=17 (> 16).",
+      "sizeBytes": 253,
+      "sha256": "12f5a451f9183fd2ac03c92945011e6df67277d3fe78e4c9ba8489a2bd97bd81",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_cmp_bitscmp_gt_bitsdec.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x40: bitsCmp=8 > bitsDec=4.",
+      "sizeBytes": 253,
+      "sha256": "49655dddaf8c13b310a8027d5d69a82efb39800ea5c41c7901ddc20ea4ff7c78",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_cmp_bitscmp_zero.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x40: bitsCmp=0 (libvgm: dzielenie przez zero).",
+      "sizeBytes": 253,
+      "sha256": "b88a971b75e0307038fea0ace32533d0046767986f9985d5063cc564cc916652",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_cmp_decmplen_huge.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x40: decmpLen=0xFFFFFFFF (4 GiB) z kilkoma bajtami danych.",
+      "sizeBytes": 253,
+      "sha256": "79d0c32fb8f1e0abde837c3a4945ff02dc1afe1d8ccac83840eef3c99e381779",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "LimitExceeded",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadDataBlock"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/blk_cmp_table_missing.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x40 w trybie tabelowym bez wczesniejszego bloku 0x7F.",
+      "sizeBytes": 253,
+      "sha256": "f08183024cfcab8bb931c1c1b1dd5213fcb473f5096214187fb872155ccebf02",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_cmp_table_too_small.vgm",
+      "kind": "malformed",
+      "description": "Tabela 0x7F ma 4 wartosci, a bitsCmp=4 wymaga 16 (odczyt poza tabela w libvgm).",
+      "sizeBytes": 270,
+      "sha256": "373e54a55e3b272e20fa794e236462f9695509a7ac53aed350ead613c49cf787",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_cmp_too_short.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x40: dblkLen=4 (< 5, naglowek kompresji ucety).",
+      "sizeBytes": 239,
+      "sha256": "4a190de683f3cc950e1f5fa109306f2a9d2cb41855b2d8d8bdcaec0cbfc8925e",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_cmp_unknown_type.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x40: nieznany typ kompresji 5 (znane: 0, 1).",
+      "sizeBytes": 253,
+      "sha256": "fb234df71f004a01357a5ee0d35ef1c8071f043423c2c9a021ac848795c2e985",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_len_2gib_bit31.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x67: dblkLen=0xFFFFFFFF (po masce bitu 31: 2 GiB-1).",
+      "sizeBytes": 251,
+      "sha256": "655bd7240c01bc87ed1f087778980a1f61d87ed4f2b6f400ff02f3a16fcb6bbb",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_longer_than_file.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x67: dblkLen=1 MiB, w pliku tylko 16 B.",
+      "sizeBytes": 251,
+      "sha256": "0f2c53aaa1044fc1fa592d45df70efd989db93a1b07a2f86d9e7424dccdbc172",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_ram_too_short.vgm",
+      "kind": "malformed",
+      "description": "Blok zapisu RAM 0xC0: dblkLen=1 (< 2).",
+      "sizeBytes": 236,
+      "sha256": "59e21354ba7b2c78fdb0654b13d9f967375e929eac7d59ddf6d03c16252b511f",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_rom_budget_sum.vgm",
+      "kind": "malformed",
+      "description": "5 blokow ROM 0x80 po memSize=64 MiB (kazdy <= limit pojedynczy, suma 320 MiB > budzet 256 MiB).",
+      "sizeBytes": 304,
+      "sha256": "3cde0c485edff01223a6ac062cad814cb347fc0a25417cce08ee5f19d4bba492",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "LimitExceeded",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadDataBlock"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/blk_rom_memsize_over_limit.vgm",
+      "kind": "malformed",
+      "description": "Blok ROM 0x80: memSize=0xF0000000 (3.75 GiB) przy dblkLen=8 (> maxSingleBlockBytes).",
+      "sizeBytes": 244,
+      "sha256": "3797ca5db15458dd38067ee4638f17e0fb2ae16f167789303db04b6b67c17ccf",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "LimitExceeded",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadDataBlock"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/blk_table_truncated.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x7F: valueCount=0x1000, a w bloku tylko 2 B tabeli.",
+      "sizeBytes": 243,
+      "sha256": "89cf693ec4c17e90a9ecfcb9760edba3bc0590d799da54e59ba9af09f0e2a582",
+      "hazard": "H3/ADR8.9",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/edge_blk_bit31_masked_fits.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x67: dblkLen=0x80000010 - po zamaskowaniu bitu 31 = 16 B i miesci sie w pliku.",
+      "sizeBytes": 252,
+      "sha256": "dfbc1c32a94a60c35ce2452a9e83ad3d0ec13b56b64838828502ea3085d6087f",
+      "hazard": "ADR8.9",
+      "note": "ADR 8.9: dlugosc liczona po zamaskowaniu bitu 31.",
+      "expect": {
+        "result": "ok",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadDataBlock"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/edge_no_chips_only_end_v100.vgm",
+      "kind": "malformed",
+      "description": "v1.00, brak ukladow w naglowku, strumien = samo 0x66 (dlugosc 0).",
+      "sizeBytes": 65,
+      "sha256": "7bc080387f080aa74b925bcca857615fd9b601d9478e0d4dadd99ef78ee26c2e",
+      "hazard": "edge",
+      "note": "Niejednoznaczne: implementacja moze uznac plik bez ukladow za bledny.",
+      "expect": {
+        "result": "ok",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadHeader"
+          }
+        ]
+      },
+      "header": {
+        "chips": [],
+        "dataEnd": 65,
+        "dataOffset": 64,
+        "fileSize": 65,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 0,
+        "versionBcd": 256
+      },
+      "stream": {
+        "commandCount": 1,
+        "totalSamples": 0,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/gd3_bad_signature.vgm",
+      "kind": "malformed",
+      "description": "GD3: sygnatura 'Gd4 '.",
+      "sizeBytes": 298,
+      "sha256": "af13228191cc0fcbb83667adcec4b5c80b65b69d9168280135f340a8b14281c9",
+      "hazard": "H4",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 298,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/gd3_bad_version.vgm",
+      "kind": "malformed",
+      "description": "GD3: wersja 0x00000200 (poza 0x100..0x1FF).",
+      "sizeBytes": 298,
+      "sha256": "17def1f1ebe0dbdb58f8e9c30f5edd8f0494de0bf97046d9b764bbbfd8f320a2",
+      "hazard": "H4",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 298,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/gd3_control_chars.vgm",
+      "kind": "malformed",
+      "description": "GD3: znaki sterujace (U+0001, U+0007, U+001B, U+007F) w polu.",
+      "sizeBytes": 178,
+      "sha256": "ac6eab23bfdebe77babb955b5cf082da99138c0880df43dc3c967c390892b8d1",
+      "hazard": "H4/ADR8.12",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "TagSanitized"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 178,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEnContains": [
+          "A",
+          "B"
+        ],
+        "mustBeValidUtf8": true,
+        "mustNotContainControl": true,
+        "gameEn": "x",
+        "notes": "x"
+      }
+    },
+    {
+      "path": "malformed/gd3_huge_declared_length.vgm",
+      "kind": "malformed",
+      "description": "GD3: deklarowana dlugosc 0xFFFFFFF0 (dane maja ~100 B).",
+      "sizeBytes": 298,
+      "sha256": "03b919a29303e683c841ae70beaf7c1999f42d595a50529f22517b9583aa10b1",
+      "hazard": "H4",
+      "note": "Wymog: brak odczytu/alokacji poza plikiem; dopuszczalne tez przyciecie do konca pliku.",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 298,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/gd3_last_field_unterminated.vgm",
+      "kind": "malformed",
+      "description": "GD3: ostatnie (11.) pole bez terminatora.",
+      "sizeBytes": 296,
+      "sha256": "6ba1f6ef82d838e15c85ea1eb0f5ea1f6f55aa01eabf987cefcc2ee09a32a054",
+      "hazard": "H4/ADR8.12",
+      "note": "Niejednoznaczne: parser moze zaakceptowac ostatnie pole bez terminatora.",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 296,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/gd3_long_field.vgm",
+      "kind": "malformed",
+      "description": "GD3: pole utworu 5000 B UTF-8 (> maxTagFieldBytes=4096).",
+      "sizeBytes": 10152,
+      "sha256": "41f0a1b1b81007e6d6a322a5d00bab9d950ca5650e4e285546ca98126f73e870",
+      "hazard": "H4/ADR8.12",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "TagTruncated"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 10152,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEnMaxBytes": 4096,
+        "trackEnPrefix": "AAAA",
+        "gameEn": "g",
+        "systemEn": "s",
+        "authorEn": "a"
+      }
+    },
+    {
+      "path": "malformed/gd3_no_terminators.vgm",
+      "kind": "malformed",
+      "description": "GD3: dane bez zadnego terminatora U+0000 (jedno pole bez konca).",
+      "sizeBytes": 168,
+      "sha256": "be8a537f63cf55f5d2f8a78eb66671e2ad8358611d87ae5261de7ec6071d7e9a",
+      "hazard": "H4/ADR8.12",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 168,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/gd3_odd_length.vgm",
+      "kind": "malformed",
+      "description": "GD3: nieparzysta deklarowana dlugosc danych (reszta 1 B).",
+      "sizeBytes": 299,
+      "sha256": "238cf715e8712889a113eb7763e6ea8b6e41e7f372e18ce4df5f385f93043039",
+      "hazard": "H4",
+      "note": "Niejednoznaczne: parser moze zignorowac nadmiarowy bajt.",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 299,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/gd3_too_few_fields.vgm",
+      "kind": "malformed",
+      "description": "GD3: tylko 3 z 11 pol.",
+      "sizeBytes": 160,
+      "sha256": "178f3c2528684925b056ecb250d9ec08178c5f14fea1c8f529f1e083f28c15a6",
+      "hazard": "H4/ADR8.12",
+      "note": "Alternatywa: tolerancyjny parser uzupelnia puste pola - wtedy brak ostrzezenia.",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 160,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/gd3_unpaired_surrogates.vgm",
+      "kind": "malformed",
+      "description": "GD3: pole utworu zawiera niesparowane surogaty (U+D800, U+DC00, U+D83D na koncu).",
+      "sizeBytes": 178,
+      "sha256": "8c8becfc2024432a8ba7fc263a969948a2976f5c2e4deae7e929767bb1c321d7",
+      "hazard": "H4/ADR8.12",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "TagSanitized"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 112,
+        "dataOffset": 64,
+        "fileSize": 178,
+        "gd3Offset": 112,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 26901,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 21,
+        "totalSamples": 26901,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEnContains": [
+          "A",
+          "B",
+          "C"
+        ],
+        "mustBeValidUtf8": true,
+        "gameEn": "x",
+        "notes": "x"
+      }
+    },
+    {
+      "path": "malformed/gz_bad_crc.vgz",
+      "kind": "malformed",
+      "description": "Poprawny deflate, zly CRC32.",
+      "sizeBytes": 221,
+      "sha256": "2bea1ca4ea260e3b6296c00238ef67ee189ba34b07e52a5bc6b4fbf7427e594a",
+      "gzip": true,
+      "hazard": "H5/ADR8.2",
+      "expect": {
+        "result": "error",
+        "error": "DecompressionFailed",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/gz_bomb_2mib_small_limit.vgz",
+      "kind": "malformed",
+      "description": "Mala bomba: 2 MiB po rozpakowaniu; test z Limits::maxDecompressedBytes = 1 MiB.",
+      "sizeBytes": 2140,
+      "sha256": "6df83319638720629d7f00cda87aa26b7fe738cb57bf894d99bc4bff146d445b",
+      "gzip": true,
+      "hazard": "H5/ADR8.1",
+      "limits": {
+        "maxDecompressedBytes": 1048576
+      },
+      "expect": {
+        "result": "error",
+        "error": "TooLarge",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/gz_bomb_66mib.vgz",
+      "kind": "malformed",
+      "description": "Bomba gzip: ~65 KiB na dysku, po rozpakowaniu 66 MiB (> domyslne 64 MiB).",
+      "sizeBytes": 67227,
+      "sha256": "d8652c18b8de82dcec3c52687ab5dd94dd0169b31392e0aa347351063282eae5",
+      "gzip": true,
+      "hazard": "H5/ADR8.1",
+      "note": "Rozpakowanie musi sie zatrzymac na limicie, nie na koncu.",
+      "expect": {
+        "result": "error",
+        "error": "TooLarge",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/gz_header_only.vgz",
+      "kind": "malformed",
+      "description": "Tylko 10-bajtowy naglowek gzip.",
+      "sizeBytes": 10,
+      "sha256": "8c7f82a6186db1311d1b462c42930cc68a4dec7656416865edcb24bcc34a2e4c",
+      "gzip": true,
+      "hazard": "H5/ADR8.2",
+      "expect": {
+        "result": "error",
+        "error": "DecompressionFailed",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/gz_isize_huge.vgz",
+      "kind": "malformed",
+      "description": "ISIZE=0xFFFFFFFF przy kilkuset bajtach danych (libvgm alokowalby 4 GiB).",
+      "sizeBytes": 221,
+      "sha256": "3f943210f3b4387de912cbc07d951919407e1a11f7b4506bfce71c1b50ca6ac7",
+      "gzip": true,
+      "hazard": "H5/ADR8.2",
+      "note": "Wynik zalezy od tego, czy implementacja sprawdza ISIZE (zlib w trybie gzip: tak => DecompressionFailed, to jest wynik podstawowy); wymog: brak alokacji ~4 GiB, wynik w obu przypadkach dopuszczalny.",
+      "expect": {
+        "result": "error",
+        "error": "DecompressionFailed",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/gz_isize_small.vgz",
+      "kind": "malformed",
+      "description": "ISIZE=4 (mniejsze niz prawdziwa dlugosc; libvgm cicho przycinalby dane).",
+      "sizeBytes": 221,
+      "sha256": "a793d8b2959ce571fd6a132b9673c9afeec4d13287d4a63114ae69065332ee20",
+      "gzip": true,
+      "hazard": "H5/ADR8.2",
+      "note": "Jw.; nie wolno przycinac danych do ISIZE bez bledu.",
+      "expect": {
+        "result": "error",
+        "error": "DecompressionFailed",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/gz_nested.vgz",
+      "kind": "malformed",
+      "description": "gzip w gzip: po rozpakowaniu znowu 1F 8B.",
+      "sizeBytes": 244,
+      "sha256": "593264d34f42f162747c3552b4b4dd251119e55df0e3ce4401a03f4c1b02e93f",
+      "gzip": true,
+      "hazard": "ADR8.2",
+      "expect": {
+        "result": "error",
+        "error": "BadSignature",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/gz_truncated.vgz",
+      "kind": "malformed",
+      "description": "gzip ucety w polowie strumienia deflate.",
+      "sizeBytes": 132,
+      "sha256": "390209392a091a23302b415dd24b81a5006825deb40415e31d5d416c541a4932",
+      "gzip": true,
+      "hazard": "H5/ADR8.2",
+      "expect": {
+        "result": "error",
+        "error": "DecompressionFailed",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/gz_truncated_trailer.vgz",
+      "kind": "malformed",
+      "description": "gzip bez konca trailera (brak pelnego CRC/ISIZE).",
+      "sizeBytes": 216,
+      "sha256": "559a97e0718c5957d20d59416792f1b4eea0419fb00a977619a441669825b28a",
+      "gzip": true,
+      "hazard": "H5/ADR8.2",
+      "expect": {
+        "result": "error",
+        "error": "DecompressionFailed",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/hdr_bad_signature.vgm",
+      "kind": "malformed",
+      "description": "Sygnatura 'Vgm!' zamiast 'Vgm '.",
+      "sizeBytes": 126,
+      "sha256": "6c6ac44519c2ba2de0ece810af5b2dfe6e6abca566ab0584ca2b23e14b69123c",
+      "hazard": "ADR8.3",
+      "expect": {
+        "result": "error",
+        "error": "BadSignature",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/hdr_dataofs_beyond_file_v150.vgm",
+      "kind": "malformed",
+      "description": "v1.50: dataOfs (0x34 + 0x10000) poza plikiem.",
+      "sizeBytes": 126,
+      "sha256": "86c65a109013e8a66fdc6331cd3600a8747524586ce384173205748a9d66f481",
+      "hazard": "H1/ADR8.4",
+      "expect": {
+        "result": "error",
+        "error": "BadHeader",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/hdr_dataofs_overflow_u32_v150.vgm",
+      "kind": "malformed",
+      "description": "v1.50: dataOfs rel=0xFFFFFFF0 - w UINT32 0x34+rel zawija sie do 0x24; w UINT64 poza plikiem.",
+      "sizeBytes": 126,
+      "sha256": "875fb07761bd713691af3ddc7fbc9bb65ea966c31834fb54179cc0939941ddf4",
+      "hazard": "H1/ADR8.4",
+      "expect": {
+        "result": "error",
+        "error": "BadHeader",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/hdr_empty.vgm",
+      "kind": "malformed",
+      "description": "Pusty plik (0 B).",
+      "sizeBytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "hazard": "ADR8.3",
+      "expect": {
+        "result": "error",
+        "error": "Truncated",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadSignature"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_eof_before_dataofs.vgm",
+      "kind": "malformed",
+      "description": "eofOfs = 0x20, czyli przed dataOfs.",
+      "sizeBytes": 126,
+      "sha256": "71535124ce8d24924d0e64e10006248ca4a86f6731b69a9dff60d897135c1597",
+      "hazard": "ADR8.5",
+      "expect": {
+        "result": "error",
+        "error": "BadHeader",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/hdr_eof_beyond_file.vgm",
+      "kind": "malformed",
+      "description": "eofOfs wskazuje daleko za koniec pliku.",
+      "sizeBytes": 126,
+      "sha256": "425654cae750aa3fd961f4cbc00fb5b63b183d0c6ffd0b708b324b4bfb378303",
+      "hazard": "H1/ADR8.5",
+      "note": "Naprawialne: loader przycina do rozmiaru pliku.",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "EofOffsetMismatch"
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_eof_overflow_u32.vgm",
+      "kind": "malformed",
+      "description": "eofOfs rel=0xFFFFFFFF (zawija sie w UINT32).",
+      "sizeBytes": 126,
+      "sha256": "8bc98489e5614a520be34dac16ae84787a0da254b624218c51fb678e2fce356b",
+      "hazard": "H1/ADR8.5",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "EofOffsetMismatch"
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_gd3ofs_beyond_file.vgm",
+      "kind": "malformed",
+      "description": "gd3Ofs poza plikiem.",
+      "sizeBytes": 312,
+      "sha256": "0c5b870b5c35a6afbee16f95f9a5bc7a3effaedf8306a13e4929b42c2c3dddc2",
+      "hazard": "H4/ADR8.6",
+      "note": "GD3 jest niekrytyczny; BadHeader dopuszczalny jako alternatywa.",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadHeader"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_gd3ofs_overflow_u32.vgm",
+      "kind": "malformed",
+      "description": "gd3Ofs rel=0xFFFFFFF0 (0x14+rel zawija sie w UINT32 do 0x4).",
+      "sizeBytes": 312,
+      "sha256": "ee7ccb87e01ab6082861b73bf0dc7fe95c4ebab49f4da61a8a8adf0c273a0fd6",
+      "hazard": "H4/ADR8.6",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "Gd3Invalid"
+        ],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadHeader"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_loopofs_before_dataofs.vgm",
+      "kind": "malformed",
+      "description": "v1.51: loopOfs = 0x40 (wewnatrz naglowka), dataOfs = 0x80.",
+      "sizeBytes": 190,
+      "sha256": "4821c4cacd400f52ea6626bd30e628d74626ddfc307adb08c29f4811c5f1106d",
+      "hazard": "ADR8.6",
+      "expect": {
+        "result": "error",
+        "error": "BadHeader",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_loopofs_beyond_file.vgm",
+      "kind": "malformed",
+      "description": "loopOfs poza plikiem (loopSamples != 0).",
+      "sizeBytes": 126,
+      "sha256": "f5b816ab5f73cb933fcb5828a5b4b8c6b7bbb6dc5adcfbb014c44d1ea1774234",
+      "hazard": "ADR8.6",
+      "note": "Alternatywnie loader moze zignorowac petle z ostrzezeniem - patrz README (niejednoznaczne).",
+      "expect": {
+        "result": "error",
+        "error": "BadHeader",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_loopofs_overflow_u32.vgm",
+      "kind": "malformed",
+      "description": "loopOfs rel=0xFFFFFFF0 (zawija sie w UINT32 do 0x0C).",
+      "sizeBytes": 126,
+      "sha256": "0cfe3de4a269486c0e01ae3686a1999c89aee2c8195c7163f1171d2184f24f1e",
+      "hazard": "H1/ADR8.6",
+      "expect": {
+        "result": "error",
+        "error": "BadHeader",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_short_0x20.vgm",
+      "kind": "malformed",
+      "description": "Plik 0x20 B (sygnatura + polowa naglowka).",
+      "sizeBytes": 32,
+      "sha256": "eddc1690adece611469f384c3d3ab28c4ea9b7b10c80594701d4424345cd0680",
+      "hazard": "H1",
+      "expect": {
+        "result": "error",
+        "error": "Truncated",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadHeader"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_short_0x3f.vgm",
+      "kind": "malformed",
+      "description": "Plik 0x3F B (krocej niz naglowek 0x40), poprawna sygnatura.",
+      "sizeBytes": 63,
+      "sha256": "65ab29a5c2ea8f167eb02809acb791bd3b6cf137b68a1e367ce6f56e6efc4d50",
+      "hazard": "H1",
+      "expect": {
+        "result": "error",
+        "error": "Truncated",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadHeader"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_v151_shorter_than_dataofs.vgm",
+      "kind": "malformed",
+      "description": "v1.51: dataOfs wskazuje 0x80, plik ma tylko 0x70 B.",
+      "sizeBytes": 112,
+      "sha256": "47ba3696149d6934468000847243809e2c2381dd60752fb9a5fe9ffb4926a6af",
+      "hazard": "H1/ADR8.3",
+      "expect": {
+        "result": "error",
+        "error": "BadHeader",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "Truncated"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_version_unknown_0180.vgm",
+      "kind": "malformed",
+      "description": "Wersja 1.80 (nowsza niz znana 1.71), reszta poprawna.",
+      "sizeBytes": 126,
+      "sha256": "a74372af0749cf83e081e0d991760c7e4208cd3442bfb88ce79a6960d16c49b0",
+      "hazard": "ADR8.3",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "UnknownVersion"
+        ]
+      }
+    },
+    {
+      "path": "malformed/hdr_version_unsupported_0099.vgm",
+      "kind": "malformed",
+      "description": "Wersja 0.99 (ponizej 1.00).",
+      "sizeBytes": 126,
+      "sha256": "ba71db75f6d0ebab5f18f2df81c0ad2fbedff43c00af6bf9b8c2bbd6e540a2fd",
+      "hazard": "ADR8.3",
+      "note": "Granice 'sensownej' wersji z ADR 8.3: 0x100..0x2FF; wyzsze = ostrzezenie.",
+      "expect": {
+        "result": "error",
+        "error": "UnsupportedVersion",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/stream_chip_without_clock.vgm",
+      "kind": "malformed",
+      "description": "Zapisy YM2612 w strumieniu, ale zegar YM2612 w naglowku = 0.",
+      "sizeBytes": 240,
+      "sha256": "60fcd0c5e893f0e3f77a5afd23053592c2cc097d8ad62c59e31158d3699d6dcb",
+      "hazard": "ADR8.11",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "ChipNotInHeader"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 240,
+        "dataOffset": 128,
+        "fileSize": 240,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 541,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 38,
+        "totalSamples": 541,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "malformed/stream_delay_overflow.vgz",
+      "kind": "malformed",
+      "description": "70000 x 0x61 0xFFFF = 4.59e9 tickow (> 2^32 i > 24 h); .vgz zajmuje kilkaset bajtow.",
+      "sizeBytes": 282,
+      "sha256": "44eb31c74048f2b0ffbe924106de4dfb0450dc4b639b368056a6b84eff16be67",
+      "gzip": true,
+      "rawSizeBytes": 210065,
+      "rawSha256": "661aab805aa284fc8ce777a862610db12ad8ecf79a33d85678649089d233eae6",
+      "hazard": "ADR8.8c/Limits.maxTotalSamples",
+      "expect": {
+        "result": "error",
+        "error": "LimitExceeded",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadCommandStream"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/stream_last_cmd_truncated_block_header.vgm",
+      "kind": "malformed",
+      "description": "Ostatnia komenda 0x67 ucieta w naglowku bloku.",
+      "sizeBytes": 164,
+      "sha256": "2e142dd62c60e2a3db3d814123e14486004a431665bfdcf438fb6194aae89a18",
+      "hazard": "H2/ADR8.8a",
+      "expect": {
+        "result": "error",
+        "error": "BadCommandStream",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/stream_last_cmd_truncated_dacstart.vgm",
+      "kind": "malformed",
+      "description": "Ostatnia komenda 0x93 (11 B) ucieta po 4 B.",
+      "sizeBytes": 165,
+      "sha256": "6d2941a7b02840baa7c52bddf2b14dcb988e8f6565920e482cc6d6e36f3eef5f",
+      "hazard": "H2/ADR8.8a",
+      "expect": {
+        "result": "error",
+        "error": "BadCommandStream",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/stream_last_cmd_truncated_wait.vgm",
+      "kind": "malformed",
+      "description": "Ostatnia komenda 0x61 ucieta po 1 z 2 operandow.",
+      "sizeBytes": 163,
+      "sha256": "0d109b9c694570b27a00e0364f31313a14beb2e04058a3970a88b520c24acb77",
+      "hazard": "H2/ADR8.8a",
+      "expect": {
+        "result": "error",
+        "error": "BadCommandStream",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/stream_last_cmd_truncated_ym2612.vgm",
+      "kind": "malformed",
+      "description": "Ostatnia komenda 0x52 (3 B) ucieta: brak operandow.",
+      "sizeBytes": 162,
+      "sha256": "6152e0f550264c3eae0effb03327150bbb0b5cbbd6a0c7c065bf98be846699ad",
+      "hazard": "H2/ADR8.8a",
+      "expect": {
+        "result": "error",
+        "error": "BadCommandStream",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/stream_no_end_command.vgm",
+      "kind": "malformed",
+      "description": "Strumien bez komendy 0x66 (konczy sie na dataEnd).",
+      "sizeBytes": 97,
+      "sha256": "de7d91fe8414e9d9e9dc2b0c837bed3c6bc9c3a660ef5c8d5d72823c281a0127",
+      "hazard": "ADR8.8d",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "EndsEarly"
+        ]
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 97,
+        "dataOffset": 64,
+        "fileSize": 97,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 18081,
+        "versionBcd": 336
+      },
+      "gd3": {
+        "present": false
+      },
+      "stream": {
+        "commandCount": 14,
+        "totalSamples": 18081,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": false
+      }
+    },
+    {
+      "path": "malformed/stream_unknown_cmd_skippable.vgm",
+      "kind": "malformed",
+      "description": "Zarezerwowana komenda 0x3A z 1 operandem (znana dlugosc), potem 0x66.",
+      "sizeBytes": 100,
+      "sha256": "8af23d0f47fd495f9339af3f21b9987ba056f59b228abbd48e3b38220a7e25ee",
+      "hazard": "ADR8.8b",
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "UnknownCommand"
+        ],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadCommandStream"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/stream_unknown_cmd_unskippable.vgm",
+      "kind": "malformed",
+      "description": "Komenda 0x69 bez znanej dlugosci - dalsze parsowanie niemozliwe.",
+      "sizeBytes": 101,
+      "sha256": "8b8a6766fe8f3a78adf361d20cc1ebe8da3b36655ac6e4896d51c9cdaa6174b2",
+      "hazard": "ADR8.8b",
+      "note": "ZALOZENIE: 0x69 nie ma zdefiniowanej dlugosci w tabeli libvgm (niezweryfikowane z kodem).",
+      "expect": {
+        "result": "error",
+        "error": "BadCommandStream",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": [
+              "UnknownCommand"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "path": "valid/ay8910_melody_loop_v151_gd3en.vgm",
+      "kind": "valid",
+      "description": "v1.51 (naglowek 0x80), AY8910 (typ 0), melodia z petla, GD3 EN.",
+      "sizeBytes": 600,
+      "sha256": "c8fda2ff113bbf93a6cc642f6b13e259143b0275c19ed564d01be9ae033b82aa",
+      "tags": [
+        "golden",
+        "loop",
+        "gd3"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "AY8910",
+            "instance": 0,
+            "clockHz": 1789773
+          }
+        ],
+        "dataEnd": 414,
+        "dataOffset": 128,
+        "fileSize": 600,
+        "gd3Offset": 414,
+        "hasLoop": true,
+        "loopSamples": 145530,
+        "rate": 0,
+        "totalSamples": 145530,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 96,
+        "totalSamples": 145530,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Scale (test)",
+        "trackJp": "",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "",
+        "systemEn": "Sega Master System",
+        "systemJp": "",
+        "authorEn": "vgmgen",
+        "authorJp": "",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": ""
+      }
+    },
+    {
+      "path": "valid/dual_chip_ym2612_sn76489_v151.vgm",
+      "kind": "valid",
+      "description": "v1.51, bit 30 zegara: 2x YM2612 (0x52/0xA2) i 2x SN76489 (0x50/0x30), kwinta w gore.",
+      "sizeBytes": 1204,
+      "sha256": "6e60f7ffd81eada4a36efc00ab4731995e9104660e5af0a13f1d6184aad2bcb0",
+      "tags": [
+        "golden",
+        "dual",
+        "gd3"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          },
+          {
+            "type": "SN76496",
+            "instance": 1,
+            "clockHz": 3579545
+          },
+          {
+            "type": "YM2612",
+            "instance": 0,
+            "clockHz": 7670454
+          },
+          {
+            "type": "YM2612",
+            "instance": 1,
+            "clockHz": 7670454
+          }
+        ],
+        "dataEnd": 1018,
+        "dataOffset": 128,
+        "fileSize": 1204,
+        "gd3Offset": 1018,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 145530,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 338,
+        "totalSamples": 145530,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Scale (test)",
+        "trackJp": "",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "",
+        "systemEn": "Sega Master System",
+        "systemJp": "",
+        "authorEn": "vgmgen",
+        "authorJp": "",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": ""
+      }
+    },
+    {
+      "path": "valid/megadrive_ym2612_sn76489_v151.vgz",
+      "kind": "valid",
+      "description": "v1.51, YM2612 + SN76489 razem, bez GD3, bez petli, skompresowany gzip (mtime=0).",
+      "sizeBytes": 243,
+      "sha256": "998e4d91e6ade55d3048698311e68624ccb36120dda8f748ff6e18af982bacb4",
+      "gzip": true,
+      "rawSizeBytes": 620,
+      "rawSha256": "6665e1430f19d6f33108a62c4e04921faac57ab15642ed55bc9cbc1e3a3fe19a",
+      "tags": [
+        "golden",
+        "gzip",
+        "multichip"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          },
+          {
+            "type": "YM2612",
+            "instance": 0,
+            "clockHz": 7670454
+          }
+        ],
+        "dataEnd": 620,
+        "dataOffset": 128,
+        "fileSize": 620,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 145530,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 185,
+        "totalSamples": 145530,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/sn76489_extra_header_v170.vgm",
+      "kind": "valid",
+      "description": "v1.70, naglowek rozszerzony (0xBC) z lista glosnosci ukladow (SN76489: 0x00C0), dane za nim.",
+      "sizeBytes": 327,
+      "sha256": "5f8dd2757170334462cf11accaf4b91b828658981f1188b7d64b48a849987c61",
+      "tags": [
+        "extraheader"
+      ],
+      "note": "Struktura naglowka rozszerzonego i ID ukladu (0 = SN76489) wg pamieci o specyfikacji 1.70 - NIE zweryfikowane z oryginalnym tekstem; chips[].volume do potwierdzenia.",
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545,
+            "volume": 192
+          }
+        ],
+        "dataEnd": 327,
+        "dataOffset": 209,
+        "fileSize": 327,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 83790,
+        "versionBcd": 368
+      },
+      "stream": {
+        "commandCount": 51,
+        "totalSamples": 83790,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/sn76489_frames_v101_gd3en.vgm",
+      "kind": "valid",
+      "description": "v1.01, rate=60, opoznienia wylacznie 0x62 (ramki 60 Hz), GD3 tylko pola EN (JP puste).",
+      "sizeBytes": 438,
+      "sha256": "b4968010a0a6f58c5a1cfbe992b4f4b91c9754193b9e3fec0ca38332b8eb3c94",
+      "tags": [
+        "golden",
+        "gd3"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 252,
+        "dataOffset": 64,
+        "fileSize": 438,
+        "gd3Offset": 252,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 60,
+        "totalSamples": 88935,
+        "versionBcd": 257
+      },
+      "stream": {
+        "commandCount": 155,
+        "totalSamples": 88935,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Scale (test)",
+        "trackJp": "",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "",
+        "systemEn": "Sega Master System",
+        "systemJp": "",
+        "authorEn": "vgmgen",
+        "authorJp": "",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": ""
+      }
+    },
+    {
+      "path": "valid/sn76489_header_total_lies_v150.vgm",
+      "kind": "valid",
+      "description": "v1.50, totalSamples w naglowku (1048576) ~4x wieksze niz prawdziwa dlugosc; prawdziwa = suma opoznien.",
+      "sizeBytes": 182,
+      "sha256": "7b8f85ad3397db4819bc12389351b252926c81adc8273c448296625e42bcc036",
+      "tags": [
+        "length"
+      ],
+      "note": "Oczekiwana dlugosc to stream.totalSamples; header.totalSamples jest NIEZAUFANE.",
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 182,
+        "dataOffset": 64,
+        "fileSize": 182,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 1048576,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 51,
+        "totalSamples": 83790,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/sn76489_loop_gg_v110_gd3jp.vgm",
+      "kind": "valid",
+      "description": "v1.10, petla, komenda 0x4F (GG stereo), feedback/shift SN, GD3 EN+JP (japonskie pola).",
+      "sizeBytes": 821,
+      "sha256": "9936f3a2e2ff69357fff0e7f46db5bc5f64fcf121b19c0f69e90f8385a317d7a",
+      "tags": [
+        "golden",
+        "loop",
+        "gd3",
+        "jp"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 399,
+        "dataOffset": 64,
+        "fileSize": 821,
+        "gd3Offset": 399,
+        "hasLoop": true,
+        "loopSamples": 145530,
+        "rate": 60,
+        "totalSamples": 229320,
+        "versionBcd": 272
+      },
+      "stream": {
+        "commandCount": 144,
+        "totalSamples": 229320,
+        "loopStartSample": 83790,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Ode to Joy (test melody)",
+        "trackJp": "歓喜の歌 (テスト旋律)",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "vgmplay 合成コーパス",
+        "systemEn": "Sega Mega Drive",
+        "systemJp": "メガドライブ",
+        "authorEn": "Ludwig van Beethoven (arr. vgmgen)",
+        "authorJp": "ベートーヴェン",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": "Synthetic test file. Public domain melody."
+      }
+    },
+    {
+      "path": "valid/sn76489_loop_zero_samples_v150.vgm",
+      "kind": "valid",
+      "description": "v1.50, loopOfs ustawiony, ale loopSamples=0 => brak petli (hasLoop()==false).",
+      "sizeBytes": 182,
+      "sha256": "8ad157e250cd155dd1fda8ee89399b9c40f1afb760a5bcd56ffa0707c01efbdb",
+      "tags": [
+        "loop"
+      ],
+      "note": "stream.loopStartSample jest sensowny tylko gdy hasLoop().",
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 182,
+        "dataOffset": 64,
+        "fileSize": 182,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 83790,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 51,
+        "totalSamples": 83790,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/sn76489_scale_v100.vgm",
+      "kind": "valid",
+      "description": "v1.00, SN76489, gama C-dur, bez GD3, bez petli; opoznienia 0x61/0x7n.",
+      "sizeBytes": 182,
+      "sha256": "ba9cdc9bb6e351964f6ac53618182e22609750b497531742629e73ad26b3bd6f",
+      "tags": [
+        "golden",
+        "minimal"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 182,
+        "dataOffset": 64,
+        "fileSize": 182,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 83790,
+        "versionBcd": 256
+      },
+      "stream": {
+        "commandCount": 51,
+        "totalSamples": 83790,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/sn76489_scale_v150_gd3en.vgz",
+      "kind": "valid",
+      "description": "v1.50, SN76489, gama, GD3 EN, .vgz.",
+      "sizeBytes": 221,
+      "sha256": "9fd3132db93eaaaafe6d58faa52e139b2e6433c0b69970bd5da52104e784f5a5",
+      "gzip": true,
+      "rawSizeBytes": 368,
+      "rawSha256": "b1ba033a87dc71c709f006abcbd9e1cd1ba8d6261b36390c24ed750b38b3b7ea",
+      "tags": [
+        "gzip",
+        "gd3"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "SN76496",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 182,
+        "dataOffset": 64,
+        "fileSize": 368,
+        "gd3Offset": 182,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 83790,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 51,
+        "totalSamples": 83790,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Scale (test)",
+        "trackJp": "",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "",
+        "systemEn": "Sega Master System",
+        "systemJp": "",
+        "authorEn": "vgmgen",
+        "authorJp": "",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": ""
+      }
+    },
+    {
+      "path": "valid/ym2151_melody_loop_v161_gd3jp.vgm",
+      "kind": "valid",
+      "description": "v1.61, YM2151 (OPM), melodia z petla, GD3 EN+JP.",
+      "sizeBytes": 977,
+      "sha256": "463890a5f94ec1dc164a47247de89ba4284e14c420663bea25d82018589e9642",
+      "tags": [
+        "golden",
+        "loop",
+        "gd3",
+        "jp"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "YM2151",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 555,
+        "dataOffset": 128,
+        "fileSize": 977,
+        "gd3Offset": 555,
+        "hasLoop": true,
+        "loopSamples": 145530,
+        "rate": 0,
+        "totalSamples": 145971,
+        "versionBcd": 353
+      },
+      "stream": {
+        "commandCount": 143,
+        "totalSamples": 145971,
+        "loopStartSample": 441,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Ode to Joy (test melody)",
+        "trackJp": "歓喜の歌 (テスト旋律)",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "vgmplay 合成コーパス",
+        "systemEn": "Sega Mega Drive",
+        "systemJp": "メガドライブ",
+        "authorEn": "Ludwig van Beethoven (arr. vgmgen)",
+        "authorJp": "ベートーヴェン",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": "Synthetic test file. Public domain melody."
+      }
+    },
+    {
+      "path": "valid/ym2413_melody_loop_v171_gd3jp.vgm",
+      "kind": "valid",
+      "description": "v1.71 (naglowek 0x100), YM2413 (OPLL), petla, GD3 EN+JP.",
+      "sizeBytes": 913,
+      "sha256": "6cf54e18fb3a0d3a14216ce93fedb941250e17c3f11aebdeaf6f2ea4e2693a2f",
+      "tags": [
+        "golden",
+        "loop",
+        "gd3",
+        "jp"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "YM2413",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 491,
+        "dataOffset": 256,
+        "fileSize": 913,
+        "gd3Offset": 491,
+        "hasLoop": true,
+        "loopSamples": 145530,
+        "rate": 0,
+        "totalSamples": 145530,
+        "versionBcd": 369
+      },
+      "stream": {
+        "commandCount": 79,
+        "totalSamples": 145530,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Ode to Joy (test melody)",
+        "trackJp": "歓喜の歌 (テスト旋律)",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "vgmplay 合成コーパス",
+        "systemEn": "Sega Mega Drive",
+        "systemJp": "メガドライブ",
+        "authorEn": "Ludwig van Beethoven (arr. vgmgen)",
+        "authorJp": "ベートーヴェン",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": "Synthetic test file. Public domain melody."
+      }
+    },
+    {
+      "path": "valid/ym2612_dac_block_v150.vgm",
+      "kind": "valid",
+      "description": "v1.50, blok 0x67 typ 0x00 (4410 B PCM), DAC przez 0xE0 + 0x8n (8820 Hz, sinus 441 Hz).",
+      "sizeBytes": 8903,
+      "sha256": "8efc170eb364d58c551c8d90620801f23d902bd48bdeaa6b9aacc8bfba06b734",
+      "tags": [
+        "golden",
+        "pcm"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "YM2612",
+            "instance": 0,
+            "clockHz": 7670454
+          }
+        ],
+        "dataEnd": 8903,
+        "dataOffset": 64,
+        "fileSize": 8903,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 22491,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 4415,
+        "totalSamples": 22491,
+        "loopStartSample": 0,
+        "pcmBytes": 4410,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/ym2612_dac_compressed_v151.vgm",
+      "kind": "valid",
+      "description": "v1.51, blok 0x7F (tabela 16 wartosci) + blok 0x40 (bit-packing 4->8 bitow, tryb tabelowy, 2000 B po dekompresji), DAC stream.",
+      "sizeBytes": 1213,
+      "sha256": "187f0405485be9c85186e490af3707ded13e82640e8bafc4bed5cb896841c121",
+      "tags": [
+        "pcm",
+        "dacstream",
+        "compressed"
+      ],
+      "note": "Kolejnosc bitow w paczce (MSB first) to zalozenie generatora - golden audio tylko jako regresja, nie jako wzorzec poprawnosci.",
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "YM2612",
+            "instance": 0,
+            "clockHz": 7670454
+          }
+        ],
+        "dataEnd": 1213,
+        "dataOffset": 128,
+        "fileSize": 1213,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 10441,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 11,
+        "totalSamples": 10441,
+        "loopStartSample": 0,
+        "pcmBytes": 2000,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/ym2612_dac_stream_v151.vgm",
+      "kind": "valid",
+      "description": "v1.51, DAC stream: 0x90 (setup), 0x91 (data), 0x92 (czestotliwosc), 0x93 (start), 0x94 (stop), 0x95 (fast call); blok PCM 2000 B.",
+      "sizeBytes": 2187,
+      "sha256": "def376ab95d1554706a1721220bcd0fde656fd80f6d7af6b114c0390133b170c",
+      "tags": [
+        "golden",
+        "pcm",
+        "dacstream"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "YM2612",
+            "instance": 0,
+            "clockHz": 7670454
+          }
+        ],
+        "dataEnd": 2187,
+        "dataOffset": 128,
+        "fileSize": 2187,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 20882,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 14,
+        "totalSamples": 20882,
+        "loopStartSample": 0,
+        "pcmBytes": 2000,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/ym2612_melody_loop_v150_gd3jp.vgm",
+      "kind": "valid",
+      "description": "v1.50 (dataOfs wzgledne), YM2612 4-op FM, melodia z petla, GD3 EN+JP.",
+      "sizeBytes": 955,
+      "sha256": "71d84a10c3d7dc88213e966110cf73c12b2f6d09eae6d64f22df719582385c3a",
+      "tags": [
+        "golden",
+        "loop",
+        "gd3",
+        "jp"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "YM2612",
+            "instance": 0,
+            "clockHz": 7670454
+          }
+        ],
+        "dataEnd": 533,
+        "dataOffset": 64,
+        "fileSize": 955,
+        "gd3Offset": 533,
+        "hasLoop": true,
+        "loopSamples": 145530,
+        "rate": 0,
+        "totalSamples": 147735,
+        "versionBcd": 336
+      },
+      "stream": {
+        "commandCount": 157,
+        "totalSamples": 147735,
+        "loopStartSample": 2205,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Ode to Joy (test melody)",
+        "trackJp": "歓喜の歌 (テスト旋律)",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "vgmplay 合成コーパス",
+        "systemEn": "Sega Mega Drive",
+        "systemJp": "メガドライブ",
+        "authorEn": "Ludwig van Beethoven (arr. vgmgen)",
+        "authorJp": "ベートーヴェン",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": "Synthetic test file. Public domain melody."
+      }
+    },
+    {
+      "path": "valid/ym3812_melody_v151.vgm",
+      "kind": "valid",
+      "description": "v1.51, YM3812 (OPL2), melodia, bez GD3, bez petli.",
+      "sizeBytes": 387,
+      "sha256": "d5387ebcf5505a9ce61f5013c44b3b886687dfec0e50eb4a7bad0db747ed33ec",
+      "tags": [
+        "golden"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "YM3812",
+            "instance": 0,
+            "clockHz": 3579545
+          }
+        ],
+        "dataEnd": 387,
+        "dataOffset": 128,
+        "fileSize": 387,
+        "gd3Offset": 0,
+        "hasLoop": false,
+        "loopSamples": 0,
+        "rate": 0,
+        "totalSamples": 145530,
+        "versionBcd": 337
+      },
+      "stream": {
+        "commandCount": 87,
+        "totalSamples": 145530,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": false
+      }
+    },
+    {
+      "path": "valid/ymf262_melody_loop_v170.vgm",
+      "kind": "valid",
+      "description": "v1.70 (naglowek 0xC0), YMF262 (OPL3), bajty 0x7C/0x7F ustawione, petla, GD3 EN.",
+      "sizeBytes": 667,
+      "sha256": "32b16f283d41836184bedb9ae11e1d8f8dffcd9d987efc6f93561e34a5f2b362",
+      "tags": [
+        "golden",
+        "loop",
+        "gd3"
+      ],
+      "expect": {
+        "result": "ok",
+        "warnings": []
+      },
+      "header": {
+        "chips": [
+          {
+            "type": "YMF262",
+            "instance": 0,
+            "clockHz": 14318180
+          }
+        ],
+        "dataEnd": 481,
+        "dataOffset": 192,
+        "fileSize": 667,
+        "gd3Offset": 481,
+        "hasLoop": true,
+        "loopSamples": 145530,
+        "rate": 0,
+        "totalSamples": 145530,
+        "versionBcd": 368
+      },
+      "stream": {
+        "commandCount": 97,
+        "totalSamples": 145530,
+        "loopStartSample": 0,
+        "pcmBytes": 0,
+        "romWriteBytes": 0,
+        "hasEndCommand": true
+      },
+      "gd3": {
+        "present": true,
+        "trackEn": "Scale (test)",
+        "trackJp": "",
+        "gameEn": "vgmplay synthetic corpus",
+        "gameJp": "",
+        "systemEn": "Sega Master System",
+        "systemJp": "",
+        "authorEn": "vgmgen",
+        "authorJp": "",
+        "releaseDate": "2026/11",
+        "converter": "vgmgen.py",
+        "notes": ""
+      }
+    }
+  ],
+  "limitCases": [
+    {
+      "id": "limit_input_bytes",
+      "path": "valid/sn76489_scale_v100.vgm",
+      "limits": {
+        "maxInputBytes": 64
+      },
+      "expect": {
+        "result": "error",
+        "error": "TooLarge"
+      },
+      "description": "Plik wejsciowy wiekszy niz maxInputBytes."
+    },
+    {
+      "id": "limit_decompressed_bytes",
+      "path": "valid/megadrive_ym2612_sn76489_v151.vgz",
+      "limits": {
+        "maxDecompressedBytes": 100
+      },
+      "expect": {
+        "result": "error",
+        "error": "TooLarge"
+      },
+      "description": "Poprawny .vgz, wynik > maxDecompressedBytes."
+    },
+    {
+      "id": "limit_max_commands",
+      "path": "valid/sn76489_scale_v100.vgm",
+      "limits": {
+        "maxCommands": 5
+      },
+      "expect": {
+        "result": "error",
+        "error": "LimitExceeded"
+      },
+      "description": "Liczba komend w pre-skanie > maxCommands."
+    },
+    {
+      "id": "limit_total_samples",
+      "path": "valid/sn76489_scale_v100.vgm",
+      "limits": {
+        "maxTotalSamples": 1000
+      },
+      "expect": {
+        "result": "error",
+        "error": "LimitExceeded"
+      },
+      "description": "Suma opoznien > maxTotalSamples."
+    },
+    {
+      "id": "limit_pcm_budget",
+      "path": "valid/ym2612_dac_block_v150.vgm",
+      "limits": {
+        "maxPcmBudgetBytes": 1000
+      },
+      "expect": {
+        "result": "error",
+        "error": "LimitExceeded"
+      },
+      "description": "Blok PCM 4410 B > budzet 1000 B."
+    },
+    {
+      "id": "limit_single_block",
+      "path": "valid/ym2612_dac_block_v150.vgm",
+      "limits": {
+        "maxSingleBlockBytes": 1000
+      },
+      "expect": {
+        "result": "error",
+        "error": "LimitExceeded",
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "BadDataBlock"
+          }
+        ]
+      },
+      "description": "Pojedynczy blok 4410 B > maxSingleBlockBytes."
+    },
+    {
+      "id": "limit_tag_field",
+      "path": "valid/sn76489_loop_gg_v110_gd3jp.vgm",
+      "limits": {
+        "maxTagFieldBytes": 8
+      },
+      "expect": {
+        "result": "ok",
+        "warnings": [
+          "TagTruncated"
+        ]
+      },
+      "description": "Pola GD3 dluzsze niz maxTagFieldBytes sa przycinane (ostrzezenie)."
+    }
+  ],
+  "unverifiedNames": {}
+}
