@@ -48,7 +48,7 @@ struct ControllerOptions {
     bool fakeChannelScopes = false;
     // DIAGNOSTYKA: zamiast chipstate::buildPattern - sztuczny wzorzec z nutami dla kanalow ukladu.
     bool fakePattern = false;
-    std::uint32_t rowTicks = 735;   // poczatkowa dlugosc wiersza wzorca (ticki VGM 44100 Hz)
+    std::uint32_t rowTicks = 2205;   // poczatkowa dlugosc wiersza wzorca (ticki VGM 44100 Hz)
 };
 
 class AppController final : public ui::PlayerActions {
@@ -106,7 +106,7 @@ private:
         std::uint64_t gen = 0;
         std::shared_ptr<const loader::LoadedTrack> track;
         std::shared_ptr<const TrackInfo> info;   // uklad kanalow (tylko dla --fake-pattern)
-        std::uint32_t rowTicks = 735;
+        std::uint32_t rowTicks = 2205;
         std::uint32_t sampleRate = 48000;
         bool fake = false;
     };
@@ -183,7 +183,7 @@ private:
     std::shared_ptr<const chipstate::Pattern> pattern_;
     std::shared_ptr<const loader::LoadedTrack> patternTrack_;
     bool patternHasEffects_ = false;
-    std::uint32_t rowTicks_ = 735;
+    std::uint32_t rowTicks_ = 2205;
     bool seekInFlight_ = false;
     std::uint64_t seekTarget_ = 0;
     std::uint64_t seekEpoch_ = 0;

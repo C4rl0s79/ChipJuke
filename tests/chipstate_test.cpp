@@ -81,7 +81,10 @@ private:
     std::uint32_t total_ = 0;
 };
 
-Pattern build(const std::vector<std::uint8_t>& bytes, chipstate::PatternOptions opt = {})
+// Testy syntetyczne zakladaja wiersz 735 tickow (1/60 s), niezaleznie od domyslnej wartosci kontraktu.
+chipstate::PatternOptions opt735() { chipstate::PatternOptions o; o.rowTicks = 735; return o; }
+
+Pattern build(const std::vector<std::uint8_t>& bytes, chipstate::PatternOptions opt = opt735())
 {
     auto h = format::parseVgmHeader(bytes);
     REQUIRE_MESSAGE(h.ok(), (h.ok() ? "" : h.error().message));
@@ -500,7 +503,7 @@ Corpus loadCorpus(const char* name)
     auto t = loader::loadTrackFromFile(testutil::dataDir() / "valid" / name);
     REQUIRE_MESSAGE(t.ok(), (t.ok() ? "" : t.error().message));
     Corpus c{std::move(t).value(), {}};
-    auto p = chipstate::buildPattern(c.track.raw(), c.track.header, c.track.stream);
+    auto p = chipstate::buildPattern(c.track.raw(), c.track.header, c.track.stream, opt735());
     REQUIRE_MESSAGE(p.ok(), (p.ok() ? "" : p.error().message));
     c.pat = std::move(p).value();
     return c;

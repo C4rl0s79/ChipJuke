@@ -45,7 +45,7 @@ struct PatternChannel {
 };
 
 struct Pattern {
-    std::uint32_t rowTicks = 735;      // dlugosc wiersza w tickach VGM (44100 Hz); 735 = 1/60 s
+    std::uint32_t rowTicks = 2205;     // dlugosc wiersza w tickach VGM (44100 Hz); 2205 = 1/20 s (decyzja uzytkownika 2026-11-24)
     std::uint64_t rowCount = 0;        // wiersze od 0 do konca danych (jedno przejscie)
     std::uint64_t loopStartRow = 0;    // wiersz poczatku petli (gdy header.hasLoop())
     std::vector<PatternChannel> channels;
@@ -58,7 +58,7 @@ struct Pattern {
 };
 
 struct PatternOptions {
-    std::uint32_t rowTicks = 735;          // 1/60 s; UI moze zmienic (np. 882 = 1/50 s)
+    std::uint32_t rowTicks = 2205;         // 1/20 s domyslnie; UI moze zmienic (np. 735 = 1/60 s)
     std::uint64_t maxRows = 1'000'000;     // limit pamieci (obciecie + ostrzezenie)
 };
 

@@ -56,7 +56,7 @@ struct PlayerView {
     std::shared_ptr<const chipstate::Pattern> pattern;
     bool patternBuilding = false;
     bool patternHasEffects = false;                     // czy rysowac kolumne efektow
-    std::uint32_t patternRowTicks = 735;                // zadana dlugosc wiersza (ticki VGM, 44100 Hz)
+    std::uint32_t patternRowTicks = 2205;                // zadana dlugosc wiersza (ticki VGM, 44100 Hz)
 
     [[nodiscard]] bool hasTrack() const { return track && info; }
 };

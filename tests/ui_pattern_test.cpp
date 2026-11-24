@@ -308,13 +308,13 @@ TEST_SUITE("ui/pattern_rowticks")
 {
     TEST_CASE("presety: 1/120, 1/60, 1/50 w gore i w dol")
     {
-        CHECK(kDefaultRowTicks == 735);
+        CHECK(kDefaultRowTicks == 2205);   // 1/20 s (decyzja uzytkownika 2026-11-24)
         CHECK(stepRowTicks(735, 1) == 368);      // krotszy wiersz: 1/120 s
         CHECK(stepRowTicks(735, -1) == 882);     // 1/50 s
         CHECK(stepRowTicks(368, 1) == 368);      // obciete do zakresu
         CHECK(stepRowTicks(kRowTickPresets[kRowTickPresetCount - 1], -1) == kRowTickPresets[kRowTickPresetCount - 1]);
         CHECK(stepRowTicks(740, -1) == 882);     // wartosc spoza listy: najblizszy preset
-        CHECK(stepRowTicks(0, 1) == 368);        // 0 = domyslny
+        CHECK(stepRowTicks(0, 1) == 1470);       // 0 = domyslny (2205 = 1/20 s) -> krotszy: 1/30 s
     }
 
     TEST_CASE("etykiety")
@@ -323,7 +323,7 @@ TEST_SUITE("ui/pattern_rowticks")
         CHECK(rowTicksLabel(882) == "1/50 s");
         CHECK(rowTicksLabel(368) == "1/120 s");
         CHECK(rowTicksLabel(4410) == "1/10 s");
-        CHECK(rowTicksLabel(0) == "1/60 s");
+        CHECK(rowTicksLabel(0) == "1/20 s");
     }
 }
 
@@ -422,7 +422,8 @@ TEST_SUITE("app/pattern")
         opt.nullAudio = true;
         app::AppController c(opt);
         REQUIRE(c.start());
-        CHECK(c.view().patternRowTicks == 735);
+        CHECK(c.view().patternRowTicks == kDefaultRowTicks);
+        c.setPatternRowTicks(735);
         c.loadFile(kData / "valid" / "ym2612_melody_loop_v150_gd3jp.vgm");
         REQUIRE(pumpUntil(c, [&] { return c.view().pattern != nullptr; }));
         CHECK(c.view().pattern->rowTicks == 735);

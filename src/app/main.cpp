@@ -109,7 +109,7 @@ struct CommandLine {
     bool fakeChannelScopes = false;
     bool fakePattern = false;
     int scopeStrip = 0;              // 0 = maly, 1 = duzy, 2 = ukryty
-    unsigned rowTicks = 735;
+    unsigned rowTicks = 2205;
 };
 
 // Argumenty z GetCommandLineW (UTF-16): nazwy plikow spoza strony kodowej ANSI dzialaja poprawnie.

@@ -22,7 +22,7 @@
 namespace vgmplay::ui {
 
 inline constexpr std::uint32_t kVgmTickRate = 44100;
-inline constexpr std::uint32_t kDefaultRowTicks = 735;   // 1/60 s
+inline constexpr std::uint32_t kDefaultRowTicks = 2205;  // 1/20 s (decyzja uzytkownika 2026-11-24)
 
 // Presety dlugosci wiersza (rosnaco = coraz wolniejszy przewijany wzorzec): 1/120, 1/60, 1/50,
 // 1/30, 1/20, 1/10 s.
