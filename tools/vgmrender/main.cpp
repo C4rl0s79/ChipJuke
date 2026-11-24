@@ -2,6 +2,13 @@
 //
 //   vgmrender in.vgm out.wav [--rate 44100] [--loops N] [--fade MS] [--float]
 //                            [--max-seconds S] [--list-cores]
+//   vgmrender in.vgm --gaps [--gap-thr RMS] [--gap-rows]
+//
+// --gaps: pomiar luk we wzorcu (chipstate::buildPattern). Dla kazdego kanalu z kopia emulacji (dzwiek
+// per kanal, ChannelScopeBank) liczy wiersze, w ktorych RMS > prog (domyslnie 0.002), a kanal nie ma
+// aktywnej nuty (nuta trzymana od key-on do key-off jest aktywna; po key-off wybrzmiewanie z
+// energia nie rosnaca (<= 1.5x poprzedniego wiersza) albo <= 0.3 szczytu nuty nie jest luka; "scisle" liczy je jako luki). Wyjscie TSV: GAP plik typ instancja kanal grajace luki_scisle luki_z_tolerancja;
+// z --gap-rows dodatkowo ROW plik kanal wiersz rms (wiersze luk).
 //
 // Wyjscie: stereo, 16-bit PCM (domyslnie) lub 32-bit float (--float). Rdzenie wg polityki vgmplay
 // (docs/licensing/libvgm-audit.md). --loops 0 = bez konca (wymaga --max-seconds).
@@ -19,6 +26,11 @@
 #include <string>
 #include <vector>
 
+#include <cmath>
+#include <memory>
+
+#include "vgmplay/channel_scopes.hpp"
+#include "vgmplay/chipstate.hpp"
 #include "vgmplay/loader.hpp"
 #include "vgmplay/vgm_decoder.hpp"
 
@@ -81,6 +93,108 @@ void usage()
         "       vgmrender --list-cores\n");
 }
 
+// ---- --gaps -------------------------------------------------------------------------------------
+int measureGaps(const std::string& in, double thr, bool listRows)
+{
+    auto track = loader::loadTrackFromFile(std::filesystem::path(in));
+    if (!track.ok()) { std::fprintf(stderr, "load failed: %s\n", track.error().message.c_str()); return 1; }
+    auto tp = std::make_shared<const loader::LoadedTrack>(std::move(track).value());
+    auto pat = chipstate::buildPattern(tp->raw(), tp->header, tp->stream);
+    if (!pat.ok()) { std::fprintf(stderr, "buildPattern failed: %s\n", pat.error().message.c_str()); return 1; }
+    const chipstate::Pattern& P = pat.value();
+
+    DecoderConfig cfg;
+    cfg.sampleRate = 44100;     // 1 klatka = 1 tick VGM
+    cfg.loopCount = 1;
+    cfg.fadeMs = 0;
+    auto dec = engine::makeVgmDecoder();
+    auto info = dec->open(tp->raw(), cfg);
+    if (!info.ok()) { std::fprintf(stderr, "open failed: %s\n", info.error().message.c_str()); return 1; }
+    if (!dec->start().ok()) { std::fprintf(stderr, "start failed\n"); return 1; }
+    const auto& chans = info.value().layout.channels;
+    if (chans.size() != P.channels.size()) {
+        std::fprintf(stderr, "layout/pattern mismatch: %zu vs %zu\n", chans.size(), P.channels.size());
+        return 1;
+    }
+    engine::ChannelScopeBank bank;
+    bank.bind(tp, cfg, info.value(), *dec);
+    for (int g = 0; bank.needsSync() && g < 1000; ++g) bank.syncStep(0, std::chrono::microseconds(1000000));
+
+    // stream -> indeks kanalu wzorca
+    const std::size_t ns = bank.streamCount();
+    std::vector<int> chanOf(ns, -1);
+    for (std::size_t s = 0; s < ns; ++s) {
+        const auto& d = bank.desc(s);
+        if (!(d.flags & kScopeStreamAvailable)) continue;
+        for (std::size_t c = 0; c < chans.size(); ++c)
+            if (chans[c].deviceIdx == d.deviceIdx && chans[c].channelIdx == d.channelIdx) chanOf[s] = static_cast<int>(c);
+    }
+    const std::uint64_t rows = P.rowCount;
+    std::vector<std::vector<double>> sumSq(ns, std::vector<double>(rows, 0.0));
+    std::vector<std::uint32_t> cnt(rows, 0);
+    auto sb = std::make_unique<ScopeBlock>();
+    std::vector<float> buf(2u * kMaxBlockFrames);
+    SampleTime pos = 0;
+    bool ended = false;
+    while (!ended && pos / P.rowTicks < rows) {
+        const RenderResult r = dec->render(buf.data(), kMaxBlockFrames, sb.get());
+        if (r.frames > 0) {
+            bank.render(r.frames, pos, sb.get());
+            for (std::uint32_t i = 0; i < r.frames; ++i) {
+                const std::uint64_t row = (pos + i) / P.rowTicks;
+                if (row >= rows) break;
+                ++cnt[row];
+                for (std::size_t s = 0; s < ns && s < sb->extraStreamCount; ++s) {
+                    const double v = sb->extra[s][i];
+                    sumSq[s][row] += v * v;
+                }
+            }
+            pos += r.frames;
+        }
+        ended = r.ended || r.frames == 0;
+    }
+    for (std::size_t s = 0; s < ns; ++s) {
+        const int c = chanOf[s];
+        if (c < 0) continue;
+        const auto& pc = P.channels[static_cast<std::size_t>(c)];
+        if (!pc.decoded) continue;
+        bool active = false, tail = false;
+        double prev = 0.0, peak = 0.0;
+        std::uint64_t playing = 0, strict = 0, tol = 0;
+        for (std::uint64_t row = 0; row < rows; ++row) {
+            const chipstate::Cell& cell = P.at(row, static_cast<std::size_t>(c));
+            if (cell.note >= 0) { active = true; tail = false; peak = 0.0; }
+            const bool noteHere = cell.note >= 0;
+            if (cell.note == chipstate::kNoteOff) { active = false; tail = true; }
+            const bool isActive = active || noteHere || cell.note == chipstate::kNoteOff;   // wiersz "===": nuta grala do key-off w jego trakcie
+            const double rms = cnt[row] ? std::sqrt(sumSq[s][row] / cnt[row]) : 0.0;
+            if (isActive) peak = std::max(peak, rms);
+            if (rms > thr) {
+                ++playing;
+                if (!isActive) {
+                    ++strict;
+                    // Wybrzmiewanie po key-off: energia nie rosnie (>1.5x poprzedniego wiersza = nowy atak).
+                    const bool decaying = tail && (rms <= 1.5 * prev + thr || rms <= 0.3 * peak);
+                    if (decaying) { /* ogon release - nie luka */ }
+                    else {
+                        ++tol;
+                        tail = false;
+                        if (listRows) std::printf("ROW\t%s\t%s\t%llu\t%.4f\n", in.c_str(), pc.name.c_str(),
+                                                  static_cast<unsigned long long>(row), rms);
+                    }
+                }
+            } else if (!isActive) {
+                tail = false;
+            }
+            prev = rms;
+        }
+        std::printf("GAP\t%s\t%u\t%u\t%s\t%llu\t%llu\t%llu\n", in.c_str(), static_cast<unsigned>(pc.type),
+                    static_cast<unsigned>(pc.instance), pc.name.c_str(), static_cast<unsigned long long>(playing),
+                    static_cast<unsigned long long>(strict), static_cast<unsigned long long>(tol));
+    }
+    return 0;
+}
+
 int listCores()
 {
     auto dec = engine::makeVgmDecoder();
@@ -102,7 +216,8 @@ int main(int argc, char** argv)
     std::string in, out;
     std::uint32_t rate = 44100, loops = 2, fadeMs = 1000;
     double maxSeconds = 0;
-    bool asFloat = false;
+    bool asFloat = false, gaps = false, gapRows = false;
+    double gapThr = 0.002;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&](const char* name) -> const char* {
@@ -115,11 +230,15 @@ int main(int argc, char** argv)
         else if (a == "--fade") fadeMs = static_cast<std::uint32_t>(std::strtoul(next("--fade"), nullptr, 10));
         else if (a == "--max-seconds") maxSeconds = std::strtod(next("--max-seconds"), nullptr);
         else if (a == "--float") asFloat = true;
+        else if (a == "--gaps") gaps = true;
+        else if (a == "--gap-rows") gapRows = true;
+        else if (a == "--gap-thr") gapThr = std::strtod(next("--gap-thr"), nullptr);
         else if (!a.empty() && a[0] == '-') { usage(); return 2; }
         else if (in.empty()) in = a;
         else if (out.empty()) out = a;
         else { usage(); return 2; }
     }
+    if (gaps && !in.empty()) return measureGaps(in, gapThr, gapRows);
     if (in.empty() || out.empty()) { usage(); return 2; }
     if (loops == 0 && maxSeconds <= 0) {
         std::fprintf(stderr, "--loops 0 (infinite) requires --max-seconds\n");
