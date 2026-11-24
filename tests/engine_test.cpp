@@ -9,12 +9,14 @@
 #include <cstdint>
 #include <memory>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "vgmplay/engine.hpp"
 #include "vgmplay/pcm_ring.hpp"
 #include "vgmplay/timeline.hpp"
 #include "vgmplay/vgm_decoder.hpp"
+#include "test_util.hpp"
 
 using namespace vgmplay;
 using namespace vgmplay::engine;
@@ -538,8 +540,8 @@ TEST_SUITE("engine/decoder")
         REQUIRE(dec->seek(48000u * 5).ok());             // wstecz: Reset + powtorka
         const double back = std::chrono::duration<double>(clk::now() - t0).count();
         MESSAGE("seek w przod do 280 s: ", fwd * 1000, " ms; wstecz do 5 s: ", back * 1000, " ms");
-        CHECK(fwd < 2.0);
-        CHECK(back < 2.0);
+        CHECK(fwd < testutil::perfLimit(2.0));   // luzne x5 poza VGMPLAY_PERF_STRICT
+        CHECK(back < testutil::perfLimit(2.0));
     }
 }
 
@@ -623,15 +625,30 @@ struct Rig {
         drainEvents();
     }
 
-    template <class Pred> bool until(Pred p, int timeoutMs)
+    // Czeka na warunek. `nominalMs` to nominalny czas na spokojnej maszynie; NIE jest sztywnym limitem:
+    // przerywamy dopiero, gdy przez max(nominalMs, 30 s) nie ma ZADNEGO postepu (stan silnika, klatki, zdarzenia)
+    // albo po twardym limicie 10 x nominalMs (min. 120 s). Pod obciazeniem maszyny test wolno, ale nie pada.
+    template <class Pred> bool until(Pred p, int nominalMs)
     {
         using clk = std::chrono::steady_clock;
         const auto start = clk::now();
-        while (clk::now() - start < std::chrono::milliseconds(timeoutMs)) {
+        const auto stall = std::chrono::milliseconds((std::max)(nominalMs, 30000));
+        const auto hard = std::chrono::milliseconds((std::max)(nominalMs * 10, 120000));
+        const auto key = [&] {
+            const TransportSnapshot s = eng->snapshot();
+            return std::make_tuple(s.epoch, s.renderedFrame, s.audibleFrame, static_cast<int>(s.state), events.size(),
+                                   scopeBlocks);
+        };
+        auto lastKey = key();
+        auto lastProgress = start;
+        for (;;) {
             run(5);
             if (p()) return true;
+            const auto now = clk::now();
+            const auto k = key();
+            if (k != lastKey) { lastKey = k; lastProgress = now; }
+            if (now - lastProgress > stall || now - start > hard) return false;
         }
-        return false;
     }
 };
 

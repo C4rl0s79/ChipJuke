@@ -5,6 +5,7 @@
 #include "app_resources.h"
 #include "file_dialog.h"
 
+#include "vgmplay_ui/file_browser.h"
 #include "vgmplay_ui/nav_input.h"
 #include "vgmplay_ui/player_screen.h"
 #include "vgmplay_ui/strings.h"
@@ -27,6 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -113,6 +115,7 @@ struct CommandLine {
     bool diag = false;
     bool fakeChannelScopes = false;
     bool fakePattern = false;
+    std::optional<vgmplay::ui::BrowserMode> browser;   // DIAGNOSTYKA: --browser=files|folder|import|export otwiera przegladarke plikow przy starcie
     int scopeStrip = -1;             // -1 = z ustawien (ui.scopeBar), 0 = maly, 1 = duzy, 2 = ukryty
     std::optional<unsigned> rowTicks;
     std::optional<std::filesystem::path> settingsDir;   // --settings-dir=<katalog>: settings.json, playlists.json, cache
@@ -134,6 +137,10 @@ CommandLine parseCommandLine()
         else if (a == L"--diag") cl.diag = true;                  // start z diagnostyka (jak F12)
         else if (a == L"--fake-channel-scopes") cl.fakeChannelScopes = true; // DIAGNOSTYKA: syntetyczne przebiegi kanalow
         else if (a == L"--fake-pattern") cl.fakePattern = true;   // DIAGNOSTYKA: sztuczne nuty zamiast chipstate
+        else if (a == L"--browser" || a == L"--browser=files") cl.browser = vgmplay::ui::BrowserMode::AddFiles;
+        else if (a == L"--browser=folder") cl.browser = vgmplay::ui::BrowserMode::AddFolder;
+        else if (a == L"--browser=import") cl.browser = vgmplay::ui::BrowserMode::ImportM3u;
+        else if (a == L"--browser=export") cl.browser = vgmplay::ui::BrowserMode::ExportM3u;
         else if (a == L"--scopes-large") cl.scopeStrip = 1;       // start z duzym paskiem oscyloskopow
         else if (a == L"--scopes-hidden") cl.scopeStrip = 2;      // start bez paska oscyloskopow
         else if (a.rfind(L"--row-ticks=", 0) == 0) cl.rowTicks = static_cast<unsigned>(std::max(1, _wtoi(a.c_str() + 12)));
@@ -183,7 +190,7 @@ int main()
         const float s = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
         return s > 0.0f ? s : 1.0f;
     }();
-    SDL_Window* window = SDL_CreateWindow("vgmplay", static_cast<int>(1280 * scale),
+    SDL_Window* window = SDL_CreateWindow("ChipJuke", static_cast<int>(1280 * scale),
                                           static_cast<int>(720 * scale),
                                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window) {
@@ -224,6 +231,10 @@ int main()
         std::filesystem::path appData;
         const bool appDataOk = roamingAppData(appData);
         const auto loc = vgmplay::settings::resolveSettingsLocation(exeDirectory(), appDataOk ? appData : std::filesystem::path());
+        // Dawny katalog "vgmplay" w %APPDATA% przenosimy tylko, gdy ustawienia faktycznie pojda do %APPDATA% (exe w katalogu bez
+        // zapisu); w trybie przenosnym nie ruszamy cudzego katalogu.
+        if (!loc.portable && appDataOk && loc.file.native().rfind(appData.native(), 0) == 0)
+            (void)vgmplay::settings::migrateLegacyAppDataDir(appData);
         if (loc.portable || appDataOk) options.settingsFile = loc.file;
         else options.noAppDataNotice = true;   // brak zapisywalnego katalogu: bez trwalosci
     }
@@ -259,14 +270,29 @@ int main()
         if (cl.rowTicks) { st.ui.rowTicks = *cl.rowTicks; changed = true; }
         if (changed) controller->applySettings(st);
     }
-    if (cl.files.size() == 1 && !std::filesystem::is_directory(cl.files[0]))
-        controller->openStartupFile(cl.files[0]);   // jeden plik: dodany do playlisty i odtwarzany
-    else if (!cl.files.empty())
-        controller->submitPaths(cl.files);          // foldery/wiele plikow: do aktywnej playlisty
+    {
+        // Bez zgody na siec nie dotykamy sciezek UNC / urzadzen (ani is_directory, ani otwarcie): odrzucone z komunikatem.
+        std::vector<std::filesystem::path> startup;
+        for (const auto& f : cl.files) {
+            if (vgmplay::ui::isPathAllowed(f, cl.allowNetwork)) startup.push_back(f);
+            else std::fprintf(stderr, "Pominieto sciezke sieciowa (wymaga --allow-network-paths): %s\n", f.string().c_str());
+        }
+        // Katalog od pliku odroznia worker (submitPaths), nie watek UI: jeden plik .vgm/.vgz = odtwarzanie od razu.
+        const auto isVgmExt = [](const std::filesystem::path& p) {
+            std::wstring e = p.extension().wstring();
+            for (wchar_t& c : e) c = static_cast<wchar_t>(std::towlower(c));
+            return e == L".vgm" || e == L".vgz";
+        };
+        if (startup.size() == 1 && isVgmExt(startup[0]))
+            controller->openStartupFile(startup[0]);   // jeden plik: dodany do playlisty i odtwarzany
+        else if (!startup.empty())
+            controller->submitPaths(std::move(startup));   // foldery/wiele plikow: do aktywnej playlisty
+    }
 
     vgmplay::ui::NavInput nav;
     vgmplay::ui::PlayerScreen screen;
     screen.setDiagnosticsVisible(cl.diag);
+    std::optional<vgmplay::ui::BrowserMode> pendingBrowser = cl.browser;   // DIAGNOSTYKA: po pierwszym pump() (view.settings)
     const int stripChoice = cl.scopeStrip >= 0 ? cl.scopeStrip : static_cast<int>(controller->settings().ui.scopeBar);
     screen.setScopeStrip(stripChoice == 1 ? vgmplay::ui::ScopeStrip::Large
                          : stripChoice == 2 ? vgmplay::ui::ScopeStrip::Hidden
@@ -366,6 +392,10 @@ int main()
             d3d.occluded = false;
         }
 
+        if (pendingBrowser && controller->view().settings) {
+            screen.openBrowser(*pendingBrowser, controller->view());
+            pendingBrowser.reset();
+        }
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();

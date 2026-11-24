@@ -14,6 +14,7 @@
 #include "vgmplay/input.hpp"
 #include "vgmplay/playlist.hpp"
 #include "vgmplay/settings.hpp"
+#include "test_util.hpp"
 
 namespace {
 
@@ -35,7 +36,7 @@ TEST_SUITE("e3 settings")
         settings::Settings s;
         s.playback.repeat = settings::Repeat::All;
         s.ui.scopeBar = settings::ScopeBar::Hidden;
-        s.ui.showButtonHints = false;
+        s.ui.showButtonHints = true;   // [E4] domyslnie false - round-trip sprawdza wartosc niedomyslna
         s.library.allowNetworkPaths = true;
         s.audio.device = "{0.0.0.00000000}.{abc-123}";
         const std::string j = settings::toJson(s);
@@ -43,7 +44,7 @@ TEST_SUITE("e3 settings")
         REQUIRE(r.ok());
         CHECK(r.value().playback.repeat == settings::Repeat::All);
         CHECK(r.value().ui.scopeBar == settings::ScopeBar::Hidden);
-        CHECK_FALSE(r.value().ui.showButtonHints);
+        CHECK(r.value().ui.showButtonHints);
         CHECK(r.value().library.allowNetworkPaths);
         CHECK(r.value().audio.device == s.audio.device);
         CHECK(r.value().schemaVersion == 1);
@@ -67,8 +68,9 @@ TEST_SUITE("e3 settings")
         REQUIRE(r.ok());
         CHECK(r.value().playback.repeat == settings::Repeat::Off);
         CHECK(r.value().ui.scopeBar == settings::ScopeBar::Small);
-        CHECK(r.value().ui.showButtonHints);
+        CHECK_FALSE(r.value().ui.showButtonHints);   // [E4] pasek podpowiedzi domyslnie wylaczony
         CHECK_FALSE(r.value().library.allowNetworkPaths);
+        CHECK(r.value().library.recentFolders.empty());
         CHECK(w.empty());
 
         w.clear();
@@ -77,7 +79,7 @@ TEST_SUITE("e3 settings")
         REQUIRE(b.ok());
         CHECK(b.value().playback.repeat == settings::Repeat::Off);
         CHECK(b.value().ui.scopeBar == settings::ScopeBar::Small);
-        CHECK(b.value().ui.showButtonHints);
+        CHECK_FALSE(b.value().ui.showButtonHints);
         CHECK_FALSE(b.value().library.allowNetworkPaths);
         CHECK(hasWarn(w, "repeat"));
         CHECK(hasWarn(w, "scopeBar"));
@@ -88,6 +90,42 @@ TEST_SUITE("e3 settings")
         auto notObj = settings::fromJson(R"({"library":5})", &w);
         REQUIRE(notObj.ok());
         CHECK(hasWarn(w, "library"));
+    }
+
+    TEST_CASE("[E4] library.recentFolders: round-trip, limit, duplikaty, odrzucanie niebezpiecznych sciezek")
+    {
+        settings::Settings s;
+        s.library.recentFolders = {"C:\\muzyka\\gry", "D:\\\xC5\x82" "adne \xE3\x82\xB2\xE3\x83\xBC\xE3\x83\xA0"};
+        const std::string j = settings::toJson(s);
+        auto r = settings::fromJson(j);
+        REQUIRE(r.ok());
+        CHECK(r.value().library.recentFolders == s.library.recentFolders);
+        CHECK(settings::toJson(r.value()) == j);
+
+        std::vector<Warning> w;
+        auto many = settings::fromJson(
+            R"({"library":{"recentFolders":["C:\\a","C:\\b","C:\\a","C:\\c","C:\\d","C:\\e","C:\\f","C:\\g","C:\\h","C:\\i","C:\\j"]}})", &w);
+        REQUIRE(many.ok());
+        CHECK(many.value().library.recentFolders.size() == settings::LibrarySettings::kMaxRecentFolders);
+        CHECK(many.value().library.recentFolders.front() == "C:\\a");   // duplikat pominiety
+        CHECK(hasWarn(w, "recentFolders"));
+
+        w.clear();
+        const std::string doc =
+            R"({"library":{"allowNetworkPaths":true,"recentFolders":["C:\\ok","\\\\srv\\share\\x","http://x/y","\\\\?\\C:\\z",5]}})";
+        auto safe = settings::fromJson(doc, &w, false);
+        REQUIRE(safe.ok());
+        CHECK(safe.value().library.recentFolders == std::vector<std::string>{"C:\\ok"});   // UNC bez zgody z aplikacji odrzucone
+        CHECK(hasWarn(w, "recentFolders"));
+        auto net = settings::fromJson(doc, &w, true);
+        REQUIRE(net.ok());
+        CHECK(net.value().library.recentFolders == std::vector<std::string>{"C:\\ok", "\\\\srv\\share\\x"});   // URL i \\?\ nigdy
+
+        w.clear();
+        auto bad = settings::fromJson(R"({"library":{"recentFolders":"C:\\x"}})", &w);
+        REQUIRE(bad.ok());
+        CHECK(bad.value().library.recentFolders.empty());
+        CHECK(hasWarn(w, "recentFolders"));
     }
 
     TEST_CASE("library.allowNetworkPaths z tego samego pliku NIE odblokowuje UNC w session.trackPath [E3-sec]")
@@ -294,7 +332,7 @@ TEST_SUITE("e3 playlist")
         const std::size_t changed = m.updateEntryMeta(ups);
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         CHECK(changed == 1000);
-        CHECK(ms < 1000);
+        CHECK(ms < vgmplay::testutil::perfLimit(1000.0));   // luzne x5 poza VGMPLAY_PERF_STRICT
         MESSAGE("batch 100k x 1000: " << ms << " ms");
         CHECK(m.playlist(0).entries[97].title == "T1");
     }

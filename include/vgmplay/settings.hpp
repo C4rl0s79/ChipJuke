@@ -12,6 +12,7 @@
 // Wartosci domyslne oznaczone [robocze] to propozycje do zmiany bez zmiany kontraktu.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -66,7 +67,9 @@ struct UiSettings {
     // Zakres po walidacji: 64 .. 44100.  [dodatek E2]
     std::uint32_t rowTicks = 2205;
     ScopeBar scopeBar = ScopeBar::Small;   // [dodatek E3]
-    bool showButtonHints = true;           // [dodatek E3] pasek podpowiedzi przyciskow pada
+    // [dodatek E3] pasek podpowiedzi przyciskow pada. [E4] Domyslnie WYLACZONY (decyzja uzytkownika po tescie E3):
+    // pasek jest widoczny wylacznie przy wlaczonym ustawieniu (takze przy uzyciu pada).
+    bool showButtonHints = false;
 };
 
 // [dodatek E3] Biblioteka / dostep do plikow.
@@ -78,6 +81,12 @@ struct LibrarySettings {
     // (flaga --allow-network-paths lub efektywna wartosc przekazana przez aplikacje).
     // URL i przestrzen urzadzen zawsze odrzucane.
     bool allowNetworkPaths = false;
+
+    // [dodatek E4] Ostatnio uzywane foldery wbudowanej przegladarki plikow (UTF-8), najnowszy pierwszy,
+    // maks. kMaxRecentFolders. Przegladarka startuje w pierwszym z nich i pokazuje je na gorze listy dyskow.
+    // fromJson odrzuca wpisy niebezpieczne (URL, przestrzen urzadzen, UNC bez zgody - jak session.trackPath).
+    static constexpr std::size_t kMaxRecentFolders = 8;
+    std::vector<std::string> recentFolders;
 };
 
 struct InputSettings {
@@ -123,6 +132,12 @@ struct SettingsLocation {
 // exeDir: katalog pliku wykonywalnego. appDataDir: %APPDATA% (wstrzykiwane dla testow).
 // appDataDir zaczynajacy sie od dwoch separatorow (UNC, \?\) jest ignorowany [E2-sec]: wynik jak dla pustego
 // (settings.json obok exe, portable=false).
+// [E5] Zmiana nazwy produktu na ChipJuke: katalog w %APPDATA% to "ChipJuke". Jesli go nie ma, a istnieje
+// dawny "%APPDATA%\vgmplay" (prawdziwy katalog, nie dowiazanie), przenosi go pod nowa nazwe (rename).
+// Zwraca true, gdy przeniesiono. Wolac (watek startowy) TYLKO wtedy, gdy ustawienia faktycznie pojda do %APPDATA%, czyli
+// resolveSettingsLocation zwrocilo portable=false i plik pod appDataDir (main.cpp); w trybie przenosnym lub z --settings-dir
+// nie wolac. Migracja nie zalezy od kolejnosci wzgledem resolveSettingsLocation (ta tylko liczy sciezke).
+bool migrateLegacyAppDataDir(const std::filesystem::path& appDataDir);
 [[nodiscard]] SettingsLocation resolveSettingsLocation(const std::filesystem::path& exeDir,
                                                        const std::filesystem::path& appDataDir);
 [[nodiscard]] bool isDirectoryWritable(const std::filesystem::path& dir);

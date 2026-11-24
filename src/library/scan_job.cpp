@@ -37,13 +37,6 @@ std::wstring toExtended(std::wstring w)
     return L"\\\\?\\" + w;
 }
 
-std::wstring extensionOf(const std::wstring& name)
-{
-    const std::size_t dot = name.find_last_of(L'.');
-    if (dot == std::wstring::npos || dot == 0) return {};
-    return lowerKey(name.substr(dot));
-}
-
 bool isLinkReparse(const WIN32_FIND_DATAW& fd)
 {
     if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
@@ -104,9 +97,13 @@ struct ScanJob::Impl {
             if ((*w)[0] != L'.') w->insert(w->begin(), L'.');
             exts.push_back(lowerKey(*w));
         }
+        // Dopasowanie po koncowce nazwy (obsluguje tez rozszerzenia wieloczlonowe, np. ".vgm.gz"); sama koncowka
+        // bez nazwy (np. plik ".vgm") nie pasuje.
         auto matches = [&](const std::wstring& name) {
-            const std::wstring ext = extensionOf(name);
-            return !ext.empty() && std::find(exts.begin(), exts.end(), ext) != exts.end();
+            const std::wstring low = lowerKey(name);
+            for (const std::wstring& ext : exts)
+                if (ext.size() > 1 && low.size() > ext.size() && low.compare(low.size() - ext.size(), ext.size(), ext) == 0) return true;
+            return false;
         };
 
         struct Dir { std::wstring path; std::uint32_t depth; };

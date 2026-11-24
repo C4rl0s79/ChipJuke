@@ -39,7 +39,7 @@ void SDLCALL onSelected(void* userdata, const char* const* files, int /*filter*/
             break;
         }
         case Kind::Import: t->controller->submitImportM3u(toPath(files[0])); break;
-        case Kind::Export: t->controller->submitExportM3u(toPath(files[0])); break;
+        case Kind::Export: t->controller->submitExportM3u(toPath(files[0]), true);   // systemowe okno potwierdzilo zastapienie break;
         }
     }
     g_open.store(false);

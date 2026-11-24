@@ -312,29 +312,15 @@ void PlayerScreen::drawBindings(NavInput& nav, const PlayerView&, PlayerActions&
 
 // ------------------------------------------------------------------ pasek podpowiedzi
 
-namespace {
-
-struct Hint {
-    Action action;     // akcja, ktorej przycisk pada pokazujemy
-    Str label;
-    bool dpad = false; // Up/Down/Left/Right: pokaz "D-pad", gdy przypisany
-};
-
-} // namespace
-
 void PlayerScreen::drawHints(NavInput& nav, const PlayerView&, float x, float y, float w, float h)
 {
     const Palette& p = palette();
-    ImDrawList* dl = ImGui::GetForegroundDrawList();
-    const float dpi = ImGui::GetStyle().FontScaleDpi;
-    const float lh = ImGui::GetTextLineHeight();
-    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), col32(p.panel));
-    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), col32(p.border));
-
     std::vector<Hint> hints;
     std::string note;
     ImVec4 noteColor = p.notice;
-    if (bindingsOpen_) {
+    if (browser_.isOpen() && dlg_.kind == DlgKind::None && !bindingsOpen_ && !settingsOpen_) {
+        hints = browserHints();
+    } else if (bindingsOpen_) {
         if (bindCapturing_) note = tr(Str::BindPress);
         else if (bindPending_) hints = {{Action::Confirm, Str::HkSwap}, {Action::Back, Str::HkCancel}};
         else hints = {{Action::Up, Str::HkMove, true}, {Action::Confirm, Str::HkAssign}, {Action::ToggleSolo, Str::HkClear},
@@ -377,24 +363,41 @@ void PlayerScreen::drawHints(NavInput& nav, const PlayerView&, float x, float y,
             break;
         default: break;
         }
-        if (focusKbdOnly_) note = tr(Str::HkNeedsKbd);
     }
 
+    ImDrawList* dl = ImGui::GetForegroundDrawList();
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), col32(p.panel));
+    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), col32(p.border));
+    drawHintRow(dl, hints, note, noteColor, x, y, w, h);
+}
+
+void PlayerScreen::drawHintRow(ImDrawList* dl, const std::vector<Hint>& hints, const std::string& note,
+                               const ImVec4& noteColor, float x, float y, float w, float h)
+{
+    const Palette& p = palette();
+    const float dpi = ImGui::GetStyle().FontScaleDpi;
+    const float lh = ImGui::GetTextLineHeight();
     const std::vector<input::Binding>& eff = effBind_;
     float cx = x + 6.0f * dpi;
     const float ty = y + (h - lh) * 0.5f;
     const float right = x + w - 6.0f * dpi;
     for (const Hint& hint : hints) {
-        std::string glyph;
-        for (const input::Binding& b : eff) {
-            if (b.action != hint.action || b.source.kind == SourceKind::Keyboard) continue;
-            const bool isDpad = b.source.kind == SourceKind::GamepadButton &&
-                                (b.source.code >= SDL_GAMEPAD_BUTTON_DPAD_UP && b.source.code <= SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
-            if (hint.dpad && !isDpad) continue;
-            glyph = hint.dpad ? "D-pad" : sourceLabel(b.source);
-            break;
-        }
+        auto glyphOf = [&](Action act) {
+            for (const input::Binding& b : eff) {
+                if (b.action != act || b.source.kind == SourceKind::Keyboard) continue;
+                const bool isDpad = b.source.kind == SourceKind::GamepadButton &&
+                                    (b.source.code >= SDL_GAMEPAD_BUTTON_DPAD_UP && b.source.code <= SDL_GAMEPAD_BUTTON_DPAD_RIGHT);
+                if (hint.dpad && !isDpad) continue;
+                return hint.dpad ? std::string("D-pad") : sourceLabel(b.source);
+            }
+            return std::string();
+        };
+        std::string glyph = glyphOf(hint.action);
         if (glyph.empty()) continue;   // brak przypisania pada: nie obiecujemy przycisku
+        if (hint.also != Action::None) {   // para przyciskow (np. LB/RB)
+            const std::string g2 = glyphOf(hint.also);
+            if (!g2.empty()) glyph = g2 + "/" + glyph;
+        }
         const char* label = tr(hint.label);
         const ImVec2 gs = ImGui::CalcTextSize(glyph.c_str());
         const ImVec2 ls = ImGui::CalcTextSize(label);

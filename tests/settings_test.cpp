@@ -277,7 +277,7 @@ TEST_CASE("settings lokalizacja: folder niedostepny do zapisu -> %APPDATA%\\vgmp
     {
         const auto loc = resolveSettingsLocation(td.path / "brak", appdata);
         CHECK_FALSE(loc.portable);
-        CHECK(loc.file == appdata / "vgmplay" / "settings.json");
+        CHECK(loc.file == appdata / "ChipJuke" / "settings.json");
         CHECK_FALSE(isDirectoryWritable(td.path / "brak"));
         CHECK_FALSE(fs::exists(td.path / "brak"));   // nie tworzy katalogu
     }
@@ -286,7 +286,7 @@ TEST_CASE("settings lokalizacja: folder niedostepny do zapisu -> %APPDATA%\\vgmp
         writeFile(td.path / "plik", "x");
         const auto loc = resolveSettingsLocation(td.path / "plik", appdata);
         CHECK_FALSE(loc.portable);
-        CHECK(loc.file == appdata / "vgmplay" / "settings.json");
+        CHECK(loc.file == appdata / "ChipJuke" / "settings.json");
     }
     SUBCASE("pusta sciezka")
     {
@@ -309,7 +309,7 @@ TEST_CASE("settings lokalizacja: folder niedostepny do zapisu -> %APPDATA%\\vgmp
         } else {
             const auto loc = resolveSettingsLocation(ro, appdata);
             CHECK_FALSE(loc.portable);
-            CHECK(loc.file == appdata / "vgmplay" / "settings.json");
+            CHECK(loc.file == appdata / "ChipJuke" / "settings.json");
             CHECK(std::system(undo.c_str()) == 0);   // zeby TempDir mogl posprzatac
             CHECK(isDirectoryWritable(ro));
         }
@@ -435,6 +435,30 @@ TEST_CASE("settings sec: session.trackPath walidowany jak wpisy playlist")
     CHECK(fromJson(R"({"session":{"trackPath":""}})").value().session.trackPath.empty());
 }
 
+TEST_CASE("settings sec: recentFolders i session.trackPath wymagaja sciezki bezwzglednej")
+{
+    // Wzgledne, zalezne od biezacego katalogu i "C:foo" (katalog biezacy dysku) sa odrzucane z ostrzezeniem.
+    std::vector<Warning> w;
+    auto r = fromJson(
+        R"({"library":{"recentFolders":["muzyka\\gry","..\\x","\\x","C:foo","C:\\ok","D:/ok2","\\\\srv\\share\\x"]},)"
+        R"("session":{"trackPath":"rel\\a.vgm","positionMs":7}})",
+        &w, true);
+    REQUIRE(r.ok());
+    CHECK(r.value().library.recentFolders == std::vector<std::string>{"C:\\ok", "D:/ok2", "\\\\srv\\share\\x"});
+    CHECK(hasWarning(w, "recentFolders"));
+    CHECK(r.value().session.trackPath.empty());
+    CHECK(r.value().session.positionMs == 7);
+    CHECK(hasWarning(w, "session.trackPath"));
+    for (const char* bad : {"C:a.vgm", R"(\\a.vgm)", "a.vgm", "./a.vgm"}) {
+        auto b = fromJson(std::string(R"({"session":{"trackPath":")") + bad + R"("}})", nullptr, true);
+        REQUIRE(b.ok());
+        CHECK(b.value().session.trackPath.empty());
+    }
+    auto ok = fromJson(R"({"session":{"trackPath":"C:\\Muzyka\\a.vgz"}})", nullptr, false);
+    REQUIRE(ok.ok());
+    CHECK(ok.value().session.trackPath == "C:\\Muzyka\\a.vgz");
+}
+
 TEST_CASE("settings sec: appDataDir UNC lub rozszerzony jest odrzucany")
 {
     TempDir td;
@@ -445,7 +469,7 @@ TEST_CASE("settings sec: appDataDir UNC lub rozszerzony jest odrzucany")
         CHECK(loc.file == bad / "settings.json");
     }
     // zwykly appData nadal dziala
-    CHECK(resolveSettingsLocation(bad, td.path / "AppData").file == td.path / "AppData" / "vgmplay" / "settings.json");
+    CHECK(resolveSettingsLocation(bad, td.path / "AppData").file == td.path / "AppData" / "ChipJuke" / "settings.json");
 }
 
 TEST_CASE("settings sec: zapisywalny folder NTFS nie jest bledne uznawany za niezapisywalny (proba z DELETE)")
@@ -508,4 +532,31 @@ TEST_CASE("settings sec: zapis nie zostawia plikow, nazwa tymczasowa jest losowa
         ++n;
     }
     CHECK(n == 1);
+}
+
+TEST_CASE("settings lokalizacja: migracja %APPDATA%\\vgmplay -> %APPDATA%\\ChipJuke [E5]")
+{
+    TempDir td;
+    const fs::path appdata = td.path / "AppData";
+    SUBCASE("stary katalog istnieje, nowego brak -> przeniesiony z zawartoscia")
+    {
+        writeFile(appdata / "vgmplay" / "settings.json", "{}");
+        CHECK(migrateLegacyAppDataDir(appdata));
+        CHECK(fs::exists(appdata / "ChipJuke" / "settings.json"));
+        CHECK_FALSE(fs::exists(appdata / "vgmplay"));
+        CHECK_FALSE(migrateLegacyAppDataDir(appdata));   // drugi raz nic nie robi
+    }
+    SUBCASE("oba istnieja -> nic nie ruszane")
+    {
+        writeFile(appdata / "vgmplay" / "settings.json", "{\"old\":1}");
+        writeFile(appdata / "ChipJuke" / "settings.json", "{}");
+        CHECK_FALSE(migrateLegacyAppDataDir(appdata));
+        CHECK(fs::exists(appdata / "vgmplay" / "settings.json"));
+    }
+    SUBCASE("brak starego, pusta sciezka, UNC -> false")
+    {
+        CHECK_FALSE(migrateLegacyAppDataDir(appdata));
+        CHECK_FALSE(migrateLegacyAppDataDir(fs::path()));
+        CHECK_FALSE(migrateLegacyAppDataDir(fs::path(L"\\\\serwer\\udzial")));
+    }
 }

@@ -225,7 +225,7 @@ TEST_SUITE("ui/nav")
         CHECK_FALSE(f.nav.lastInputWasPad());
     }
 
-    TEST_CASE("Transport: pad dosiega przyciski, pasek pozycji i glosnosc; Open oznaczony jako wymagajacy klawiatury")
+    TEST_CASE("Transport: pad dosiega przyciski, pasek pozycji i glosnosc, takze przycisk Open")
     {
         Fixture f;
         f.nav.setFocus(Panel::Transport);
@@ -250,11 +250,10 @@ TEST_SUITE("ui/nav")
         CHECK(f.act.has("next"));
         f.key(Action::Right);                                      // Open
         CHECK(f.screen.focusCol(Panel::Transport) == 5);
-        CHECK(f.screen.focusNeedsKeyboard());
         f.key(Action::Right);                                      // brak pulapki: kursor zostaje na koncu
         CHECK(f.screen.focusCol(Panel::Transport) == 5);
         f.key(Action::Left);
-        CHECK_FALSE(f.screen.focusNeedsKeyboard());
+        CHECK(f.screen.focusCol(Panel::Transport) == 4);
     }
 
     TEST_CASE("Playlista: z listy w gore do przyciskow, kazdy przycisk dostepny padem, Down wraca do listy")
@@ -272,8 +271,8 @@ TEST_SUITE("ui/nav")
         f.key(Action::Right);
         f.key(Action::Confirm);                                    // Powtarzanie
         CHECK(f.act.has("repeat2"));
-        f.key(Action::Right);                                      // Dodaj pliki: okno systemowe
-        CHECK(f.screen.focusNeedsKeyboard());
+        f.key(Action::Right);                                      // Dodaj pliki
+        CHECK(f.screen.focusCol(Panel::Playlist) == 2);
         f.key(Action::Right);
         f.key(Action::Confirm);                                    // Dodaj folder (wywola zadanie, okno zalezy od aplikacji)
         CHECK(f.act.has("folder"));

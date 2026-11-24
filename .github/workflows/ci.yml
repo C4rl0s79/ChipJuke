@@ -49,11 +49,11 @@ jobs:
       - name: Zloz paczke (ZIP przenosny)
         shell: pwsh
         run: |
-          cmake --install out/build/msvc-x64-release --prefix dist/vgmplay
-          Compress-Archive -Path dist/vgmplay/* -DestinationPath dist/vgmplay-win64.zip
+          cmake --install out/build/msvc-x64-release --prefix dist/ChipJuke
+          Compress-Archive -Path dist/ChipJuke/* -DestinationPath dist/ChipJuke-win64.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: vgmplay-win64
-          path: dist/vgmplay-win64.zip
+          name: ChipJuke-win64
+          path: dist/ChipJuke-win64.zip
           if-no-files-found: error

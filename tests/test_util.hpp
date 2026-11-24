@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -13,6 +14,18 @@
 #include <vector>
 
 namespace vgmplay::testutil {
+
+// Progi wydajnosci: domyslnie luzne (x5), bo testy bywaja uruchamiane pod obciazeniem maszyny (rownolegle
+// instancje, fuzz, CI). Zmienna srodowiskowa VGMPLAY_PERF_STRICT=1 przywraca ostre progi (pomiary na spokojnej maszynie).
+inline bool perfStrict()
+{
+    char* v = nullptr;
+    std::size_t n = 0;
+    const bool on = _dupenv_s(&v, &n, "VGMPLAY_PERF_STRICT") == 0 && v && *v && *v != '0';
+    std::free(v);
+    return on;
+}
+inline double perfLimit(double strictLimit) { return perfStrict() ? strictLimit : strictLimit * 5.0; }
 
 inline std::filesystem::path dataDir() { return std::filesystem::path(VGMPLAY_TEST_DATA_DIR); }
 

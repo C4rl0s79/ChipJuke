@@ -25,6 +25,15 @@ constexpr std::size_t kMaxCores = 128;
 constexpr std::size_t kMaxStringBytes = 4096;
 constexpr std::size_t kMaxDeviceIdBytes = 512;
 constexpr const char* kSettingsFileName = "settings.json";
+constexpr const wchar_t* kAppDataDirName = L"ChipJuke";        // [E5] nazwa produktu
+constexpr const wchar_t* kLegacyAppDataDirName = L"vgmplay";   // do 1.0.0-rc1 (przed zmiana nazwy)
+
+// Sciezka zapisana w pliku (ostatnie foldery, session.trackPath) musi byc bezwzgledna: "C:\x", "\\srv\sh\x".
+// Odrzuca wzgledne ("a\b", "..\x"), zalezne od biezacego katalogu ("\x") i od biezacego katalogu dysku ("C:x").
+bool isAbsoluteStoredPath(const std::string& utf8)
+{
+    return fsutil::pathFromUtf8(utf8).is_absolute();
+}
 
 // ---- nazwy enumow w pliku (trwale; wartosci liczbowe enumow NIE sa zapisywane) ----
 
@@ -209,6 +218,27 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
         if (const json* lib = getObject(c, root, "library")) {
             bool b = false;
             if (getBool(c, *lib, "allowNetworkPaths", b)) s.library.allowNetworkPaths = b;
+            auto rf = lib->find("recentFolders");   // [E4] ostatnie foldery przegladarki
+            if (rf != lib->end()) {
+                if (!rf->is_array()) {
+                    c.warn("invalid array, default used: recentFolders");
+                } else {
+                    for (const json& item : *rf) {
+                        if (s.library.recentFolders.size() >= LibrarySettings::kMaxRecentFolders) {
+                            c.warn("library.recentFolders truncated");
+                            break;
+                        }
+                        if (!item.is_string()) { c.warn("library.recentFolders entry is not a string"); continue; }
+                        std::string rp = item.get<std::string>();
+                        if (rp.size() > kMaxStringBytes || fsutil::isUnsafeStoredPath(rp, allowNetworkPaths) || !isAbsoluteStoredPath(rp)) {
+                            c.warn("library.recentFolders entry rejected (relative, URL, network or device path)");
+                            continue;
+                        }
+                        if (std::find(s.library.recentFolders.begin(), s.library.recentFolders.end(), rp) == s.library.recentFolders.end())
+                            s.library.recentFolders.push_back(std::move(rp));
+                    }
+                }
+            }
         }
         // [E3-sec] UNC w session.trackPath honorowane TYLKO przez parametr (flaga lub efektywna wartosc z aplikacji);
         // library.allowNetworkPaths z tego samego pliku nie moze sam odblokowac sciezki.
@@ -310,8 +340,8 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
 
         if (const json* se = getObject(c, root, "session")) {
             if (getString(c, *se, "trackPath", str)) {
-                if (str.empty() || !fsutil::isUnsafeStoredPath(str, effectiveAllowNetwork)) s.session.trackPath = str;
-                else c.warn("session.trackPath rejected (URL, network or device path)");
+                if (str.empty() || (!fsutil::isUnsafeStoredPath(str, effectiveAllowNetwork) && isAbsoluteStoredPath(str))) s.session.trackPath = str;
+                else c.warn("session.trackPath rejected (relative, URL, network or device path)");
             }
             if (getUint(c, *se, "positionMs", u)) s.session.positionMs = (std::min<std::uint64_t>)(u, 24ull * 3600 * 1000);
         }
@@ -358,7 +388,9 @@ std::string toJson(const Settings& s)
         binds.push_back({{"action", std::string(an)}, {"source", std::string(kn)}, {"code", b.source.code}});
     }
     root["input"] = {{"bindings", std::move(binds)}, {"repeatDelayMs", s.input.repeatDelayMs}, {"repeatRateMs", s.input.repeatRateMs}};
-    root["library"] = {{"allowNetworkPaths", s.library.allowNetworkPaths}};
+    json recent = json::array();
+    for (const std::string& r : s.library.recentFolders) recent.push_back(r);
+    root["library"] = {{"allowNetworkPaths", s.library.allowNetworkPaths}, {"recentFolders", std::move(recent)}};
     root["session"] = {{"trackPath", s.session.trackPath}, {"positionMs", s.session.positionMs}};
     return root.dump(2, ' ', false, json::error_handler_t::replace) + "\n";
 }
@@ -380,12 +412,27 @@ bool isDirectoryWritable(const std::filesystem::path& dir)
     return true;
 }
 
+bool migrateLegacyAppDataDir(const std::filesystem::path& appDataDir)
+{
+    if (appDataDir.empty() || fsutil::startsWithDoubleSeparator(appDataDir.native())) return false;
+    std::error_code ec;
+    const auto oldDir = appDataDir / kLegacyAppDataDirName;
+    const auto newDir = appDataDir / kAppDataDirName;
+    if (std::filesystem::exists(newDir, ec) || ec) return false;
+    ec.clear();
+    const auto st = std::filesystem::symlink_status(oldDir, ec);
+    if (ec || st.type() != std::filesystem::file_type::directory) return false;   // bez dowiazan i junctions
+    // Na Windows "vgmplay" i "ChipJuke" to rozne nazwy; rename w obrebie jednego wolumenu jest atomowy.
+    std::filesystem::rename(oldDir, newDir, ec);
+    return !ec;
+}
+
 SettingsLocation resolveSettingsLocation(const std::filesystem::path& exeDir, const std::filesystem::path& appDataDir)
 {
     if (isDirectoryWritable(exeDir)) return SettingsLocation{exeDir / kSettingsFileName, true};
     // appDataDir ze sciezka sieciowa / przestrzenia urzadzen (UNC, \?\, \.\) jest odrzucany: traktujemy jak brak.
     if (appDataDir.empty() || fsutil::startsWithDoubleSeparator(appDataDir.native())) return SettingsLocation{exeDir / kSettingsFileName, false};   // ostatnia deska ratunku
-    return SettingsLocation{appDataDir / L"vgmplay" / kSettingsFileName, false};
+    return SettingsLocation{appDataDir / kAppDataDirName / kSettingsFileName, false};
 }
 
 Result<Settings> loadSettings(const std::filesystem::path& file, std::vector<Warning>* warnings, bool allowNetworkPaths)

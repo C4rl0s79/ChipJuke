@@ -1,4 +1,41 @@
-// Zasoby exe: font UI (BIZ UD Gothic, SIL OFL 1.1) - jeden przenosny plik wykonywalny.
+// Zasoby exe: font UI (BIZ UD Gothic, SIL OFL 1.1) i VERSIONINFO - jeden przenosny plik wykonywalny.
+#include <winver.h>
 #include "app_resources.h"
+#include <vgmplay/version_rc.h>   // generowany przez CMake (wersja z project(VERSION))
+
+IDI_APP_ICON ICON "chipjuke.ico"
 
 IDR_FONT_UI RCDATA "../../assets/fonts/BIZUDGothic-Regular.ttf"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    VGMPLAY_RC_VERSION_NUM
+ PRODUCTVERSION VGMPLAY_RC_VERSION_NUM
+ FILEFLAGSMASK  VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS      VS_FF_DEBUG
+#else
+ FILEFLAGS      0x0L
+#endif
+ FILEOS         VOS_NT_WINDOWS32
+ FILETYPE       VFT_APP
+ FILESUBTYPE    VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"   // en-US, Unicode
+        BEGIN
+            VALUE "CompanyName",      "ChipJuke contributors\0"
+            VALUE "FileDescription",  "ChipJuke - tracker-style VGM/VGZ jukebox\0"
+            VALUE "FileVersion",      VGMPLAY_RC_VERSION_STR " (" VGMPLAY_RC_GIT_COMMIT ")\0"
+            VALUE "InternalName",     "ChipJuke\0"
+            VALUE "LegalCopyright",   "Copyright (C) ChipJuke contributors. Licensed under GPL-2.0-only.\0"
+            VALUE "OriginalFilename", "ChipJuke.exe\0"
+            VALUE "ProductName",      "ChipJuke\0"
+            VALUE "ProductVersion",   VGMPLAY_RC_VERSION_STR "\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 0x04B0
+    END
+END

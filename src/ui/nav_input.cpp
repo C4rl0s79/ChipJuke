@@ -97,6 +97,11 @@ void NavInput::dispatch(const std::vector<input::ActionEvent>& evs)
     for (const input::ActionEvent& ev : evs) {
         if (ev.phase == input::Phase::Released) continue;   // UI nie potrzebuje puszczen; router je dostarcza
         if (ev.action == Action::NextTab || ev.action == Action::PrevTab) {
+            if (overlay_ && *overlay_ == ScreenId::FileBrowser) {   // [E4] LB/RB = strona listy w przegladarce plikow
+                if (ev.phase == input::Phase::Pressed)
+                    events_.push_back({ev.action == Action::NextTab ? Action::PageDown : Action::PageUp, false, 0, ev.screen});
+                continue;
+            }
             if (!overlay_ && ev.phase == input::Phase::Pressed) cycleFocus(ev.action == Action::NextTab ? 1 : -1);
             continue;
         }

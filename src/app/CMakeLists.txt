@@ -7,6 +7,8 @@ add_library(vgmplay_app STATIC
 )
 add_library(vgmplay::app ALIAS vgmplay_app)
 target_include_directories(vgmplay_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# fs_util.hpp (zapis bez nadpisywania, UTF-8) to wewnetrzny naglowek modulu settings.
+target_include_directories(vgmplay_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../settings)
 target_link_libraries(vgmplay_app PUBLIC
     vgmplay::options
     vgmplay::ui
@@ -24,13 +26,16 @@ add_executable(vgmplay
     app.rc
 )
 target_include_directories(vgmplay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Nazwa produktu: ChipJuke (cel CMake i przestrzen nazw w kodzie pozostaja "vgmplay").
+set_target_properties(vgmplay PROPERTIES OUTPUT_NAME "ChipJuke")
 target_link_libraries(vgmplay PRIVATE
     vgmplay::app
     imgui::imgui
     SDL3::SDL3
     d3d11 dxgi d3dcompiler shell32 ole32)
 set_property(SOURCE app.rc APPEND PROPERTY OBJECT_DEPENDS
-    "${CMAKE_SOURCE_DIR}/assets/fonts/BIZUDGothic-Regular.ttf")
+    "${CMAKE_SOURCE_DIR}/assets/fonts/BIZUDGothic-Regular.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/chipjuke.ico")
 
 if(MSVC)
     # Release: podsystem WINDOWS (bez konsoli); Debug: CONSOLE (logi na stderr).

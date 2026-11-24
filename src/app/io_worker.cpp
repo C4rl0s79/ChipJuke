@@ -1,5 +1,7 @@
 #include "io_worker.h"
 
+#include "fs_util.hpp"
+#include "vgmplay_ui/file_browser.h"
 #include "vgmplay_ui/track_meta.h"
 
 #include <fstream>
@@ -83,11 +85,20 @@ void IoWorker::importM3u(fs::path file)
     cv_.notify_one();
 }
 
-void IoWorker::exportM3u(fs::path file, std::string text)
+void IoWorker::exportM3u(fs::path file, std::string text, bool overwrite)
 {
     {
         std::lock_guard lock(mutex_);
-        exportQueue_.emplace_back(std::move(file), std::move(text));
+        exportQueue_.push_back(ExportJob{std::move(file), std::move(text), overwrite});
+    }
+    cv_.notify_one();
+}
+
+void IoWorker::classifyPaths(std::vector<fs::path> paths, std::string tag)
+{
+    {
+        std::lock_guard lock(mutex_);
+        classifyQueue_.emplace_back(std::move(paths), std::move(tag));
     }
     cv_.notify_one();
 }
@@ -109,6 +120,8 @@ void IoWorker::post(IoResults& add)
         for (auto& m : add.meta) results_.meta.push_back(std::move(m));
         for (auto& i : add.imports) results_.imports.push_back(std::move(i));
         for (auto& e : add.exports) results_.exports.push_back(std::move(e));
+        for (auto& c : add.classified) results_.classified.push_back(std::move(c));
+        for (auto& t : add.classifiedTags) results_.classifiedTags.push_back(std::move(t));
         for (auto& f : add.saveFailures) results_.saveFailures.push_back(std::move(f));
     }
     if (!wakePending_.exchange(true) && wake_) wake_();
@@ -149,7 +162,8 @@ void IoWorker::loop()
         std::optional<playlist::PlaylistModel> pl;
         bool doLoad = false;
         std::optional<fs::path> imp;
-        std::optional<std::pair<fs::path, std::string>> exp;
+        std::optional<ExportJob> exp;
+        std::optional<std::pair<std::vector<fs::path>, std::string>> cls;
         std::optional<fs::path> meta;
         bool allowCloud = false;
         bool quitting = false;
@@ -157,7 +171,7 @@ void IoWorker::loop()
             std::unique_lock lock(mutex_);
             cv_.wait(lock, [&] {
                 return quit_ || pendingSettings_ || pendingPlaylists_ || loadPlaylists_ || !importQueue_.empty() ||
-                       !exportQueue_.empty() || !metaQueue_.empty() || !downloadQueue_.empty();
+                       !exportQueue_.empty() || !classifyQueue_.empty() || !metaQueue_.empty() || !downloadQueue_.empty();
             });
             quitting = quit_;
             st = std::move(pendingSettings_);
@@ -173,6 +187,9 @@ void IoWorker::loop()
                 } else if (!exportQueue_.empty()) {
                     exp = std::move(exportQueue_.front());
                     exportQueue_.pop_front();
+                } else if (!classifyQueue_.empty()) {
+                    cls = std::move(classifyQueue_.front());
+                    classifyQueue_.pop_front();
                 } else if (!doLoad && !st && !pl && !downloadQueue_.empty()) {
                     meta = std::move(downloadQueue_.front());
                     downloadQueue_.pop_front();
@@ -222,21 +239,37 @@ void IoWorker::loop()
         }
         if (exp) {
             ExportDone d;
-            d.file = exp->first;
-            fs::path tmp = exp->first;
-            tmp += L".tmp";
-            std::error_code ec;
-            {
-                std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-                if (f) f.write(exp->second.data(), static_cast<std::streamsize>(exp->second.size()));
-                if (!f || !f.flush()) d.error = makeError(ErrorCode::Io, "cannot write file");
+            d.file = exp->file;
+            if (exp->overwrite) {
+                // Systemowe okno zapisu: uzytkownik potwierdzil zastapienie, wiec atomowa zamiana (stara albo nowa tresc).
+                auto r = fsutil::atomicWriteFile(exp->file, exp->text);
+                if (r.ok()) d.written = exp->file;
+                else d.error = r.error();
+            } else {
+                // Nazwa wolna jest wybierana TERAZ i plik powstaje bez nadpisywania (MoveFileExW bez REPLACE_EXISTING).
+                auto r = fsutil::createFileExclusive(exp->file, exp->text);
+                if (r.ok()) d.written = std::move(r.value());
+                else d.error = r.error();
             }
-            if (!d.error) {
-                fs::rename(tmp, exp->first, ec);
-                if (ec) d.error = makeError(ErrorCode::Io, "cannot replace file");
-            }
-            if (d.error) fs::remove(tmp, ec);
             out.exports.push_back(std::move(d));
+        }
+        if (cls) {
+            std::vector<ClassifiedPath> done;
+            done.reserve(cls->first.size());
+            const bool net = allowNetwork_.load(std::memory_order_relaxed);
+            for (fs::path& p : cls->first) {
+                ClassifiedPath c;
+                // Bez zgody na siec: ani UNC, ani dysk zmapowany (DRIVE_REMOTE), ani dowiazanie do sieci - nie pytamy serwera
+                // o typ (isNetworkRedirected idzie skladnik po skladniku i nie otwiera pelnej sciezki).
+                if (ui::isPathAllowed(p, net) && (net || !ui::isNetworkRedirected(p))) {
+                    std::error_code ec;
+                    c.isDirectory = fs::is_directory(p, ec);
+                }
+                c.path = std::move(p);
+                done.push_back(std::move(c));
+            }
+            out.classified.push_back(std::move(done));
+            out.classifiedTags.push_back(std::move(cls->second));
         }
         // 4) metadane (jeden plik na obieg, zeby zapisy nie czekaly)
         if (meta) {
