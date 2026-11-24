@@ -54,6 +54,9 @@ struct UiSettings {
     float fontScale = 1.0f;             // 0.5 .. 3.0
     ScopeMode scopeMode = ScopeMode::Master;
     TrackerView trackerView = TrackerView::Notes;
+    // Dlugosc wiersza wzorca w tickach VGM (44100 Hz); 2205 = 1/20 s (decyzja uzytkownika 2026-11-24).
+    // Zakres po walidacji: 64 .. 44100.  [dodatek E2]
+    std::uint32_t rowTicks = 2205;
 };
 
 struct InputSettings {
@@ -62,18 +65,29 @@ struct InputSettings {
     std::uint32_t repeatRateMs = 60;        // [robocze]
 };
 
+// Stan sesji do wznowienia przy starcie. [dodatek E2]
+// Aktywna playlista i kursor zapisuje plik playlist (PlaylistModel::activeIndex + Playlist::cursor);
+// tutaj tylko pozycja w utworze. trackPath sluzy weryfikacji: UI przywraca positionMs tylko wtedy,
+// gdy sciezka biezacego wpisu kursora == trackPath (inaczej pozycja = 0).
+struct SessionSettings {
+    std::string trackPath;              // UTF-8, '/' jako separator; pusty = brak
+    std::uint64_t positionMs = 0;
+};
+
 struct Settings {
     std::uint32_t schemaVersion = kSettingsSchemaVersion;
     AudioSettings audio;
     PlaybackSettings playback;
     UiSettings ui;
     InputSettings input;
+    SessionSettings session;            // [dodatek E2]
 };
 
 // Zwraca ustawienia zwalidowane (clamp zakresow: fontScale, volume, bufferMs, repeat*).
 // Nieznane pola ignoruje; brakujace = domyslne. schemaVersion > znany -> UnsupportedSchema;
 // starszy -> migracja w gore. Zla skladnia -> ParseError.
-[[nodiscard]] Result<Settings> fromJson(std::string_view json);
+// `warnings` (opcjonalne, dodatek E2): przyciete zakresy, pola o zlym typie, pominiete wiazania.
+[[nodiscard]] Result<Settings> fromJson(std::string_view json, std::vector<Warning>* warnings = nullptr);
 [[nodiscard]] std::string toJson(const Settings& settings);   // UTF-8, deterministyczne
 
 struct SettingsLocation {
@@ -87,7 +101,9 @@ struct SettingsLocation {
 
 // Brak pliku -> domyslne ustawienia (NIE blad). Uszkodzony plik -> Error (wywolujacy
 // zachowuje kopie .bad i uzywa domyslnych). Zapis atomowy: temp + rename, tworzy katalogi.
-[[nodiscard]] Result<Settings> loadSettings(const std::filesystem::path& file);
+// Przy uszkodzonym pliku loadSettings sam zachowuje kopie `<plik>.bad` (oryginal zostaje).
+[[nodiscard]] Result<Settings> loadSettings(const std::filesystem::path& file,
+                                            std::vector<Warning>* warnings = nullptr);
 [[nodiscard]] Result<void> saveSettings(const std::filesystem::path& file, const Settings& settings);
 
 } // namespace vgmplay::settings
