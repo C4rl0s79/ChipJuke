@@ -460,16 +460,16 @@ def build_malformed():
     add(K, "hdr_loopofs_beyond_file.vgm", g.patch(dl, 0x1C, 0x10000),
         "loopOfs poza plikiem (loopSamples != 0).", err("BadHeader"), hazard="ADR8.6",
         note="Alternatywnie loader moze zignorowac petle z ostrzezeniem - patrz README (niejednoznaczne).")
-    ENTRIES[-1]["entry"]["expect"]["alternatives"] = [alt_ok()]
+    ENTRIES[-1]["entry"]["expect"]["alternatives"] = [alt_ok("Other")]
     add(K, "hdr_loopofs_overflow_u32.vgm", g.patch(dl, 0x1C, 0xFFFFFFF0),
         "loopOfs rel=0xFFFFFFF0 (zawija sie w UINT32 do 0x0C).", err("BadHeader"),
         hazard="H1/ADR8.6")
-    ENTRIES[-1]["entry"]["expect"]["alternatives"] = [alt_ok()]
+    ENTRIES[-1]["entry"]["expect"]["alternatives"] = [alt_ok("Other")]
     dl2, _ = base(0x151, loop=True)
     add(K, "hdr_loopofs_before_dataofs.vgm", g.patch(dl2, 0x1C, 0x40 - 0x1C),
         "v1.51: loopOfs = 0x40 (wewnatrz naglowka), dataOfs = 0x80.", err("BadHeader"),
         hazard="ADR8.6")
-    ENTRIES[-1]["entry"]["expect"]["alternatives"] = [alt_ok()]
+    ENTRIES[-1]["entry"]["expect"]["alternatives"] = [alt_ok("Other")]
 
     # --- edge: bez ukladow i bez komend
     v = Vgm(0x100, {})
@@ -478,8 +478,9 @@ def build_malformed():
     d0, m0 = v.build(s)
     add(K, "edge_no_chips_only_end_v100.vgm", d0,
         "v1.00, brak ukladow w naglowku, strumien = samo 0x66 (dlugosc 0).",
-        ok(alternatives=[alt_err("BadHeader")]), meta=m0, hazard="edge",
-        note="Niejednoznaczne: implementacja moze uznac plik bez ukladow za bledny.")
+        ok(["Other"], [alt_err("BadHeader")]), meta=m0, hazard="edge",
+        note="Niejednoznaczne: implementacja moze uznac plik bez ukladow za bledny. "
+             "Implementacja (E1) przyjmuje plik z ostrzezeniem Other (\"header lists no sound chips\").")
 
     # --- gzip
     good, _ = base(0x150, gd3=GD3_EN, melody=SCALE)
@@ -536,8 +537,9 @@ def build_malformed():
     valid_fields = GD3_EN.data()
     with_gd3(g.gd3_raw_chunk(b"".join(c.encode("utf-16-le") for c in "NoTerminatorsAtAll!!!!")),
              "gd3_no_terminators.vgm", "GD3: dane bez zadnego terminatora U+0000 (jedno pole bez konca).",
-             ok(["Gd3Invalid"]), hazard="H4/ADR8.12",
-             gd3_expect={"present": False})
+             ok(["Gd3Invalid"], [alt_ok()]), hazard="H4/ADR8.12",
+             gd3_expect={"present": False},
+             note="Alternatywa: tolerancyjny parser dekoduje jedno pole bez terminatora (implementacja E1).")
     with_gd3(g.gd3_raw_chunk("Only\0Three\0Fields\0".encode("utf-16-le")),
              "gd3_too_few_fields.vgm", "GD3: tylko 3 z 11 pol.", ok(["Gd3Invalid"]),
              hazard="H4/ADR8.12", gd3_expect={"present": False},
@@ -615,11 +617,22 @@ def build_malformed():
         "Blok ROM 0x80: memSize=0xF0000000 (3.75 GiB) przy dblkLen=8 (> maxSingleBlockBytes).",
         err("LimitExceeded", [alt_err("BadDataBlock")]), hazard="H3/ADR8.9")
     blk(lambda s: (pre(s),
-                   [s.data_block(0x80, g.u32(0x04000000) + g.u32(0)) for _ in range(5)],
+                   [s.data_block(0x80 + i, g.u32(0x04000000) + g.u32(0)) for i in range(5)],
                    s.wait(10)),
         "blk_rom_budget_sum.vgm",
-        "5 blokow ROM 0x80 po memSize=64 MiB (kazdy <= limit pojedynczy, suma 320 MiB > budzet 256 MiB).",
-        err("LimitExceeded", [alt_err("BadDataBlock")]), hazard="H3/ADR8.9")
+        "5 blokow ROM (typy 0x80..0x84, rozne uklady) po memSize=64 MiB (kazdy <= limit pojedynczy, "
+        "suma 320 MiB > budzet 256 MiB).",
+        err("LimitExceeded", [alt_err("BadDataBlock")]), hazard="H3/ADR8.9",
+        note="Rozne typy ROM => osobne pamieci; budzet liczy SUME. Wersja z jednym typem: blk_rom_same_slot_not_summed.")
+    blk(lambda s: (pre(s),
+                   [s.data_block(0x80, g.u32(0x04000000) + g.u32(0)) for _ in range(5)],
+                   s.wait(10)),
+        "blk_rom_same_slot_not_summed.vgm",
+        "5 blokow ROM 0x80 (ten sam typ i uklad) po memSize=64 MiB: rdzen robi realloc do memSize, "
+        "wiec pamiec = max (64 MiB), nie suma.",
+        ok(alternatives=[alt_err("LimitExceeded")]), hazard="H3/ADR8.9",
+        note="Implementacja liczy najwiekszy memSize na (typ, uklad); ADR 8.9 mowi 'suma memSize' - "
+             "kontrakt do doprecyzowania (alternatywa = naiwna suma).")
 
     cmp_ok_tail = b"\x00" * 8
     blk(lambda s: (pre(s), s.data_block(0x40, g.cmp_block_payload(0, 16, 8, 0, 0, 0, cmp_ok_tail))),
@@ -659,6 +672,23 @@ def build_malformed():
     # kolejnosc blok / 0x91 / petla
     def after_set_data(s):
         pre(s)
+        s.data_block(0x00, g.sine_wave_8bit(64))
+        s.dac_setup(0, 0x02, 0x00, 0x2A)
+        s.dac_data(0, 0x00, 1, 0)
+        s.data_block(0x00, g.sine_wave_8bit(32))
+        s.dac_freq(0, 8820)
+        s.dac_start(0, 0, 0x01, 64)
+        s.wait(441)
+
+    d, m = stream_file(0x151, after_set_data, clocks={"SN76496": CLK_SN, "YM2612": CLK_YM2612})
+    add(K, "blk_after_set_data.vgm", d,
+        "Blok 0x67 typ 0x00 PO komendzie 0x91 (Set Data) banku, ktory juz ma dane (realokacja = wiszacy "
+        "wskaznik strumienia DAC, H3).",
+        err("BadDataBlock"), hazard="H3/ADR8.10",
+        note="Decyzja: odrzucenie (BadDataBlock), nie ostrzezenie BlockAfterSetData.")
+
+    def after_set_data_empty(s):
+        pre(s)
         s.dac_setup(0, 0x02, 0x00, 0x2A)
         s.dac_data(0, 0x00, 1, 0)
         s.data_block(0x00, g.sine_wave_8bit(64))
@@ -666,10 +696,11 @@ def build_malformed():
         s.dac_start(0, 0, 0x01, 64)
         s.wait(441)
 
-    d, m = stream_file(0x151, after_set_data, clocks={"SN76496": CLK_SN, "YM2612": CLK_YM2612})
-    add(K, "blk_after_set_data.vgm", d,
-        "Blok 0x67 typ 0x00 PO komendzie 0x91 (Set Data) tego samego banku (wiszacy wskaznik DAC).",
-        ok(["BlockAfterSetData"], [alt_err("BadDataBlock")]), hazard="H3/ADR8.10", meta=m)
+    d, m = stream_file(0x151, after_set_data_empty, clocks={"SN76496": CLK_SN, "YM2612": CLK_YM2612})
+    add(K, "blk_after_set_data_empty_bank.vgm", d,
+        "Blok 0x67 po 0x91, ale bank byl pusty w chwili 0x91 (wskaznik NULL, dlugosc 0): brak wiszacego wskaznika.",
+        ok(alternatives=[alt_err("BadDataBlock")]), hazard="H3/ADR8.10", meta=m,
+        note="Implementacja przyjmuje (bank pusty = bezpieczny); alternatywa = odrzucenie jak w blk_after_set_data.")
 
     def after_loop(s):
         pre(s)
@@ -705,7 +736,8 @@ def build_malformed():
             ("stream_last_cmd_truncated_block_header", b"\x67\x66\x00", "Ostatnia komenda 0x67 ucieta w naglowku bloku."),
             ("stream_last_cmd_truncated_dacstart", b"\x93\x00\x00\x00", "Ostatnia komenda 0x93 (11 B) ucieta po 4 B.")):
         d, m = stream_file(0x151, tail(raw_b), clocks={"SN76496": CLK_SN}, end=False)
-        add(K, nm + ".vgm", d, desc, err("BadCommandStream"), hazard="H2/ADR8.8a")
+        add(K, nm + ".vgm", d, desc, err("BadCommandStream", [alt_err("Truncated")]), hazard="H2/ADR8.8a",
+            note="ErrorCode nie jest rozstrzygniety w ADR; implementacja zwraca Truncated (dane urwane).")
 
     d, m = stream_file(0x150, tail(b"\x3A\x55\x66"), clocks={"SN76496": CLK_SN}, end=False)
     add(K, "stream_unknown_cmd_skippable.vgm", d,

@@ -264,6 +264,17 @@ private:
         if (cfg.sampleRate < kMinRate || cfg.sampleRate > kMaxRate)
             return makeError(ErrorCode::InvalidArgument, "unsupported output sample rate");
 
+        // Obrona w glebi (ADR 0002 pkt 8): nawet gdy wolajacy twierdzi, ze bufor jest zwalidowany,
+        // powtarzamy kontrole naglowka i pre-skan strumienia komend (O(rozmiar), czyste funkcje format).
+        // Wejscie z LoadedTrack::raw() przechodzi je bez zmian; surowy bufor z zewnatrz (np. test, fuzz)
+        // nie dotrze do libvgm bez walidacji.
+        auto hdrRes = format::parseVgmHeader(raw);
+        if (!hdrRes) return hdrRes.error();
+        const format::HeaderInfo& vhdr = hdrRes.value();
+        auto scanRes = format::validateCommandStream(raw, vhdr);
+        if (!scanRes) return scanRes.error();
+        const format::StreamReport& scan = scanRes.value();
+
         cfg_ = cfg;
         if (cfg_.maxBlockFrames == 0 || cfg_.maxBlockFrames > kMaxBlockFrames)
             cfg_.maxBlockFrames = kMaxBlockFrames;
@@ -271,6 +282,15 @@ private:
 
         TrackInfo info;
         info.format = "VGM";
+        info.warnings = vhdr.warnings;
+        info.warnings.insert(info.warnings.end(), scan.warnings.begin(), scan.warnings.end());
+        if (auto g = format::parseGd3(raw, vhdr); g) {
+            info.tags = std::move(g).value();
+            if (info.tags.truncated) info.warnings.push_back({WarningCode::TagTruncated, vhdr.gd3Offset, "GD3 field truncated"});
+            if (info.tags.sanitized) info.warnings.push_back({WarningCode::TagSanitized, vhdr.gd3Offset, "GD3 text sanitized"});
+        } else {
+            info.warnings.push_back({WarningCode::Gd3Invalid, g.error().byteOffset, "GD3 tag invalid: " + g.error().message});
+        }
 
         pa_ = std::make_unique<PlayerA>();
         tap_ = new TapVgmPlayer();
@@ -285,6 +305,8 @@ private:
             padded.reserve(raw.size() + format::kParserPadding);
             padded.assign(raw.begin(), raw.end());
             padded.resize(raw.size() + format::kParserPadding, 0);
+            // Blok PCM w/za punktem petli: plik gra raz, bez petli (jak w loaderze; decyzja 2026-11-23).
+            if (scan.loopDisabled) std::fill_n(padded.begin() + 0x1C, 8, std::uint8_t{0});
             dl_ = MemoryLoader_Init(padded.data(), static_cast<UINT32>(padded.size()));
             if (!dl_) return makeError(ErrorCode::OutOfMemory, "MemoryLoader_Init failed");
             if (DataLoader_Load(dl_) != 0)
@@ -315,12 +337,12 @@ private:
             : 0u;
         pa_->SetConfiguration(pc);
 
-        // Czasy (orientacyjne - z naglowka; Engine nadpisuje je skanem z LoadedTrack).
-        info.totalFrames = ticksToFrames(song.songLen, cfg_.sampleRate);
-        const UINT32 loopTicks = tap_->GetLoopTicks();
-        if (hasLoop && loopTicks > 0 && loopTicks <= song.songLen) {
-            info.loopFrames = ticksToFrames(loopTicks, cfg_.sampleRate);
-            info.introFrames = info.totalFrames - std::min(info.loopFrames, info.totalFrames);
+        // Czasy z WLASNEGO skanu strumienia (nie z naglowka, ktory moze klamac).
+        (void)song;
+        info.totalFrames = ticksToFrames(scan.totalSamples, cfg_.sampleRate);
+        if (hasLoop && vhdr.hasLoop() && !scan.loopDisabled && scan.loopStartSample < scan.totalSamples) {
+            info.introFrames = ticksToFrames(scan.loopStartSample, cfg_.sampleRate);
+            info.loopFrames = info.totalFrames - std::min(info.introFrames, info.totalFrames);
         } else {
             info.introFrames = info.totalFrames;
         }

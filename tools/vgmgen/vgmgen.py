@@ -505,6 +505,7 @@ def scan_stream(data: bytes, start: int, end: int, loop_abs: int = 0) -> dict:
     pos = start
     r = {"commandCount": 0, "totalSamples": 0, "loopStartSample": 0, "pcmBytes": 0,
          "romWriteBytes": 0, "hasEndCommand": False, "error": None}
+    rom_slots = {}   # (typ, bit31 dlugosci) -> najwiekszy memSize (rdzen robi realloc do memSize)
     while pos < end:
         if loop_abs and pos == loop_abs:
             r["loopStartSample"] = r["totalSamples"]
@@ -514,7 +515,8 @@ def scan_stream(data: bytes, start: int, end: int, loop_abs: int = 0) -> dict:
                 r["error"] = "blok 0x67 uciety/zly przy 0x%X" % pos
                 return r
             typ = data[pos + 2]
-            dlen = struct.unpack_from("<I", data, pos + 3)[0] & 0x7FFFFFFF
+            dlen_raw = struct.unpack_from("<I", data, pos + 3)[0]
+            dlen = dlen_raw & 0x7FFFFFFF
             if pos + 7 + dlen > end:
                 r["error"] = "blok 0x67 dluzszy niz dane przy 0x%X" % pos
                 return r
@@ -524,7 +526,11 @@ def scan_stream(data: bytes, start: int, end: int, loop_abs: int = 0) -> dict:
             elif typ < 0x7F and dlen >= 5:
                 r["pcmBytes"] += struct.unpack_from("<I", data, p + 1)[0]
             elif 0x80 <= typ < 0xC0 and dlen >= 4:
-                r["romWriteBytes"] += struct.unpack_from("<I", data, p)[0]
+                slot = (typ, dlen_raw >> 31)
+                mem = struct.unpack_from("<I", data, p)[0]
+                if mem > rom_slots.get(slot, 0):
+                    r["romWriteBytes"] += mem - rom_slots.get(slot, 0)
+                    rom_slots[slot] = mem
             pos += 7 + dlen
             r["commandCount"] += 1
             continue

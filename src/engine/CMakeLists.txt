@@ -8,6 +8,8 @@ add_library(vgmplay_engine STATIC
 add_library(vgmplay::engine ALIAS vgmplay_engine)
 target_include_directories(vgmplay_engine PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(vgmplay_engine PUBLIC vgmplay::options)
+# Dekoder waliduje wejscie sam (obrona w glebi): format::parseVgmHeader/validateCommandStream.
+target_link_libraries(vgmplay_engine PUBLIC vgmplay::format)
 # PcmRing (naglowek) i konsument-callback zyja w audio_out; silnik jest producentem.
 target_link_libraries(vgmplay_engine PUBLIC vgmplay::audio_out)
 # Silnik odtwarzania opiera sie na libvgm (cele z external/libvgm).
