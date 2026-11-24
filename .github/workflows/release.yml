@@ -1,0 +1,91 @@
+name: Release
+
+# Wydanie powstaje po wypchnieciu tagu v* (np. v1.0.0-rc1). Tag musi zgadzac sie z wersja w CMakeLists.txt.
+# Wynik: DRAFT release na GitHubie z plikami vgmplay-<wersja>-win64.zip i SHA256SUMS.txt
+# (publikacje robi czlowiek po sprawdzeniu). Tag z sufiksem pre-release (np. -rc1) jest oznaczany jako pre-release.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  windows-release:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # gh release create
+    env:
+      # Obraz windows-latest ma vcpkg w C:\vcpkg; wersje pakietow przypina builtin-baseline z vcpkg.json.
+      VCPKG_ROOT: C:\vcpkg
+      # Binary caching przez pliki + actions/cache (backend x-gha vcpkg zostal wycofany).
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.vcpkg-cache
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # Akcje przypiete do pelnych SHA commitow (komentarz = wersja).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: recursive
+          fetch-depth: 0   # skrot commita i `git describe` w wersji
+
+      - name: Przygotuj katalog cache vcpkg
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+          key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-bin-${{ runner.os }}-
+
+      # Ninja + cl + dumpbin wymagaja srodowiska Visual Studio (vcvars) w PATH.
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Configure
+        run: cmake --preset msvc-x64-release
+
+      - name: Tag zgodny z wersja w CMake
+        shell: pwsh
+        run: |
+          $hdr = Get-Content -Raw out/build/msvc-x64-release/generated/vgmplay/version.hpp
+          if ($hdr -notmatch 'kVersionFull\s*=\s*"([^"]+)"') { throw 'Brak kVersionFull w version.hpp' }
+          $expected = "v$($Matches[1])"
+          if ($env:GITHUB_REF_NAME -ne $expected) {
+            throw "Tag '$env:GITHUB_REF_NAME' != wersja z CMakeLists.txt '$expected'"
+          }
+
+      - name: Build
+        run: cmake --build --preset msvc-x64-release
+
+      - name: Test
+        run: ctest --preset msvc-x64-release
+
+      - name: Paczka ZIP + SHA256SUMS
+        shell: pwsh
+        run: >
+          tools/package.ps1 -NoBuild
+          -SourceUrl "${{ github.server_url }}/${{ github.repository }}"
+
+      - name: Draft release z plikami
+        shell: pwsh
+        run: |
+          $prerelease = if ($env:GITHUB_REF_NAME -match '-') { '--prerelease' } else { '' }
+          $zip = Get-ChildItem out/dist -Filter 'vgmplay-*-win64.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'Brak ZIP w out/dist' }
+          $ghArgs = @('release', 'create', $env:GITHUB_REF_NAME, $zip.FullName, 'out/dist/SHA256SUMS.txt',
+                    '--draft', '--verify-tag', '--title', "vgmplay $($env:GITHUB_REF_NAME.TrimStart('v'))",
+                    '--notes-file', 'CHANGELOG.md')
+          if ($prerelease) { $ghArgs += $prerelease }
+          gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create nie powiodl sie' }
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vgmplay-win64
+          path: |
+            out/dist/*.zip
+            out/dist/SHA256SUMS.txt
+          if-no-files-found: error

@@ -13,7 +13,11 @@ endif()
 # i libvgm zostalby zbudowany z /MD (konflikt CRT przy linkowaniu).
 set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 
-project(vgmplay VERSION 0.1.0 LANGUAGES C CXX)
+# Jedyne zrodlo prawdy dla wersji: VERSION ponizej + VGMPLAY_VERSION_SUFFIX (pre-release, np. "rc1";
+# pusty = wydanie finalne). Reszta (version.hpp, VERSIONINFO, nazwa paczki) jest z nich wyprowadzana.
+# vcpkg.json ("version-string") musi byc zgodny - sprawdza to sekcja "Wersja" nizej.
+project(vgmplay VERSION 1.0.0 LANGUAGES C CXX)
+set(VGMPLAY_VERSION_SUFFIX "rc1")
 
 if(PROJECT_IS_TOP_LEVEL)
     set(_vgmplay_tests_default ON)
@@ -52,6 +56,60 @@ endif()
 target_compile_definitions(vgmplay_options INTERFACE
     UNICODE _UNICODE
     WIN32_LEAN_AND_MEAN NOMINMAX)
+
+# ---------------------------------------------------------------------------
+# Wersja. Generuje <build>/generated/vgmplay/version.hpp (C++: kVersion, kGitCommit, ...)
+# i version_rc.h (makra dla app.rc). Naglowek jest widoczny przez vgmplay::options:
+#   #include <vgmplay/version.hpp>
+# Skrot commita jest ustalany przy konfiguracji (i ponownie po zmianie HEAD).
+# ---------------------------------------------------------------------------
+set(VGMPLAY_VERSION_FULL "${PROJECT_VERSION}")
+if(VGMPLAY_VERSION_SUFFIX)
+    string(APPEND VGMPLAY_VERSION_FULL "-${VGMPLAY_VERSION_SUFFIX}")
+endif()
+set(VGMPLAY_GIT_COMMIT "unknown")
+set(VGMPLAY_GIT_DIRTY 0)
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --short=7 HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE _vgmplay_commit RESULT_VARIABLE _vgmplay_rc
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(_vgmplay_rc EQUAL 0 AND _vgmplay_commit)
+        set(VGMPLAY_GIT_COMMIT "${_vgmplay_commit}")
+        execute_process(COMMAND "${GIT_EXECUTABLE}" status --porcelain --untracked-files=no
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE _vgmplay_status ERROR_QUIET)
+        if(_vgmplay_status)
+            set(VGMPLAY_GIT_DIRTY 1)
+        endif()
+        # Przekonfiguruj po zmianie HEAD (rowniez w worktree, gdzie .git jest plikiem).
+        execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --path-format=absolute --git-path HEAD
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            OUTPUT_VARIABLE _vgmplay_head ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(_vgmplay_head AND EXISTS "${_vgmplay_head}")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_vgmplay_head}")
+        endif()
+    endif()
+endif()
+# Numeryczne skladniki dla VERSIONINFO (cztery liczby; ostatnia = 0).
+set(VGMPLAY_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
+set(VGMPLAY_VERSION_MINOR ${PROJECT_VERSION_MINOR})
+set(VGMPLAY_VERSION_PATCH ${PROJECT_VERSION_PATCH})
+set(VGMPLAY_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file(cmake/version.hpp.in "${VGMPLAY_GENERATED_DIR}/vgmplay/version.hpp" @ONLY)
+configure_file(cmake/version_rc.h.in "${VGMPLAY_GENERATED_DIR}/vgmplay/version_rc.h" @ONLY)
+target_include_directories(vgmplay_options INTERFACE "${VGMPLAY_GENERATED_DIR}")
+message(STATUS "vgmplay: wersja ${VGMPLAY_VERSION_FULL}, commit ${VGMPLAY_GIT_COMMIT}")
+
+# vcpkg.json musi niesc te sama wersje (jedno zrodlo prawdy to project(VERSION)).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg.json")
+    file(READ "${CMAKE_CURRENT_SOURCE_DIR}/vcpkg.json" _vgmplay_vcpkg_json)
+    string(JSON _vgmplay_vcpkg_ver ERROR_VARIABLE _vgmplay_err GET "${_vgmplay_vcpkg_json}" "version-string")
+    if(NOT _vgmplay_vcpkg_ver STREQUAL VGMPLAY_VERSION_FULL)
+        message(WARNING "vcpkg.json: version-string '${_vgmplay_vcpkg_ver}' != '${VGMPLAY_VERSION_FULL}'")
+    endif()
+endif()
 
 # ---------------------------------------------------------------------------
 # Zaleznosci (vcpkg, tryb manifestu). Nazwy pakietow CMake to ZALOZENIA do
@@ -200,5 +258,8 @@ endif()
 
 # Pliki dolaczane do paczki ZIP (cmake --install <build> --prefix <katalog>).
 # Plik wykonywalny doda install(TARGETS ...) w src/app/CMakeLists.txt.
-install(FILES LICENSE README.md THIRD_PARTY_NOTICES.md DESTINATION .)
+# (Pelna paczka wydania: tools/package.ps1 - dodaje m.in. samples/, SOURCE.txt, SHA256SUMS.)
+install(FILES LICENSE README.md CHANGELOG.md THIRD_PARTY_NOTICES.md DESTINATION .)
+install(FILES docs/user-guide.pl.md DESTINATION docs)
+install(DIRECTORY licenses/ DESTINATION licenses)
 install(FILES docs/licensing/libvgm-audit.md DESTINATION licenses)

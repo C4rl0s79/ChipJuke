@@ -1,0 +1,21 @@
+// Plik generowany przez CMake z cmake/version.hpp.in - NIE EDYTUJ.
+// Zrodlo prawdy: project(VERSION) i VGMPLAY_VERSION_SUFFIX w glownym CMakeLists.txt.
+#pragma once
+
+namespace vgmplay {
+
+inline constexpr int kVersionMajor = @VGMPLAY_VERSION_MAJOR@;
+inline constexpr int kVersionMinor = @VGMPLAY_VERSION_MINOR@;
+inline constexpr int kVersionPatch = @VGMPLAY_VERSION_PATCH@;
+/// "1.0.0" - sama liczba wersji.
+inline constexpr const char* kVersion = "@PROJECT_VERSION@";
+/// "rc1" albo "" dla wydania finalnego.
+inline constexpr const char* kVersionSuffix = "@VGMPLAY_VERSION_SUFFIX@";
+/// "1.0.0-rc1" (albo "1.0.0") - do wyswietlania i nazw plikow.
+inline constexpr const char* kVersionFull = "@VGMPLAY_VERSION_FULL@";
+/// Skrot commita (7 znakow) z czasu konfiguracji; "unknown" bez gita.
+inline constexpr const char* kGitCommit = "@VGMPLAY_GIT_COMMIT@";
+/// true, gdy w chwili konfiguracji sledzone pliki mialy niezatwierdzone zmiany.
+inline constexpr bool kGitDirty = @VGMPLAY_GIT_DIRTY@ != 0;
+
+} // namespace vgmplay
