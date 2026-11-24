@@ -28,6 +28,13 @@ struct Palette {
     ImVec4 scopeLineR;  // kanal R
     ImVec4 error;       // komunikat bledu
     ImVec4 notice;      // dyskretna informacja (ostrzezenia)
+    ImVec4 scopeCell;   // tlo ramki oscyloskopu kanalu
+    ImVec4 vuLow;       // segmenty VU: dol (zielony)
+    ImVec4 vuMid;       // segmenty VU: srodek (zolty)
+    ImVec4 vuHigh;      // segmenty VU: gora (czerwony)
+    ImVec4 vuOff;       // segment zgaszony
+    ImVec4 muteOn;      // przelacznik MUTE wlaczony
+    ImVec4 soloOn;      // przelacznik SOLO wlaczony
     ImVec4 channel[kChannelCount];
 };
 

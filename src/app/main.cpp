@@ -105,6 +105,8 @@ struct CommandLine {
     bool nullAudio = false;
     bool noAutoplay = false;
     bool diag = false;
+    bool fakeChannelScopes = false;
+    bool patternView = false;
 };
 
 // Argumenty z GetCommandLineW (UTF-16): nazwy plikow spoza strony kodowej ANSI dzialaja poprawnie.
@@ -120,6 +122,8 @@ CommandLine parseCommandLine()
         else if (a == L"--null-audio") cl.nullAudio = true;       // bez dzwieku (testy/CI)
         else if (a == L"--no-autoplay") cl.noAutoplay = true;     // po zaladowaniu: Stopped
         else if (a == L"--diag") cl.diag = true;                  // start z diagnostyka (jak F12)
+        else if (a == L"--fake-channel-scopes") cl.fakeChannelScopes = true; // DIAGNOSTYKA: syntetyczne przebiegi kanalow
+        else if (a == L"--pattern-view") cl.patternView = true;   // start z podgladem wzorca zamiast oscyloskopow
         else if (a.rfind(L"--", 0) != 0 && !cl.file) cl.file = std::filesystem::path(a);
     }
     LocalFree(argv);
@@ -181,6 +185,7 @@ int main()
     vgmplay::app::ControllerOptions options;
     options.nullAudio = cl.nullAudio;
     options.autoplay = !cl.noAutoplay;
+    options.fakeChannelScopes = cl.fakeChannelScopes;
     auto controller = std::make_unique<vgmplay::app::AppController>(options);
     controller->setWakeCallback([wakeEvent] {
         SDL_Event e{};
@@ -197,6 +202,7 @@ int main()
     vgmplay::ui::NavInput nav;
     vgmplay::ui::PlayerScreen screen;
     screen.setDiagnosticsVisible(cl.diag);
+    screen.setScopesView(!cl.patternView);
 
     bool running = true;
     bool minimized = false;
@@ -251,7 +257,10 @@ int main()
         if (!running) break;
 
         controller->pump(); // takze w minimalizacji: zdarzenia silnika i wyniki ladowania
-        if (minimized) continue;
+        if (minimized) {
+            controller->setChannelScopesVisible(false); // ukryte okno: silnik nie liczy strumieni kanalow
+            continue;
+        }
 
         const std::uint64_t now = SDL_GetTicks();
         nav.update(now);

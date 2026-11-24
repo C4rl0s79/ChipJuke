@@ -1,6 +1,7 @@
 #include "vgmplay_ui/scope_buffer.h"
 
 #include <algorithm>
+#include <cmath>
 
 namespace vgmplay::ui {
 namespace {
@@ -61,6 +62,21 @@ bool ScopeBuffer::extract(std::uint64_t audible, std::size_t count, std::vector<
         r[i] = r_[idx];
     }
     if (startedAt) *startedAt = start;
+    return true;
+}
+
+bool ScopeBuffer::peak(std::uint64_t audible, std::size_t count, float& l, float& r) const
+{
+    if (count == 0 || end_ == begin_) return false;
+    const std::uint64_t n = std::min<std::uint64_t>(count, end_ - begin_);
+    std::uint64_t t0 = std::max(audible, begin_);
+    if (t0 + n > end_) t0 = end_ - n;
+    l = r = 0.0f;
+    for (std::uint64_t f = t0; f < t0 + n; ++f) {
+        const std::size_t idx = static_cast<std::size_t>(f & kMask);
+        l = std::max(l, std::fabs(l_[idx]));
+        r = std::max(r, std::fabs(r_[idx]));
+    }
     return true;
 }
 

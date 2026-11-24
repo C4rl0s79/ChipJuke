@@ -16,6 +16,8 @@
 namespace vgmplay::ui {
 
 class ScopeBuffer;
+class ChannelScopeBuffer;
+class ChannelMix;
 
 struct AudioDiag {
     std::string device;
@@ -43,6 +45,8 @@ struct PlayerView {
 
     AudioDiag audio;
     const ScopeBuffer* scope = nullptr;
+    const ChannelScopeBuffer* channelScopes = nullptr;  // strumienie kanalow (po SetChannelScopes)
+    const ChannelMix* mix = nullptr;                    // MUTE/SOLO kanalow biezacego utworu
 
     [[nodiscard]] bool hasTrack() const { return track && info; }
 };
@@ -60,6 +64,17 @@ public:
     virtual void seekBySeconds(double seconds) = 0;
     virtual void setVolume(float linear) = 0;
     virtual void dismissError() = 0;
+
+    // Widok kanalow (E1.5). Indeks = kanal globalny (ChannelLayout::channels); poza zakresem i w czasie
+    // ladowania utworu: ignorowane. Stan MUTE/SOLO jest w PlayerView::mix.
+    virtual void toggleChannelMute(int channel) = 0;
+    virtual void toggleChannelSolo(int channel) = 0;
+    virtual void muteAllChannels() = 0;
+    virtual void unmuteAllChannels() = 0;
+    virtual void clearSolo() = 0;
+    // UI deklaruje, czy widok kanalow (oscyloskopy/VU) jest widoczny; kontroler wysyla komende do
+    // silnika tylko przy zmianie.
+    virtual void setChannelScopesVisible(bool visible) = 0;
 };
 
 } // namespace vgmplay::ui

@@ -18,6 +18,8 @@
 #include "vgmplay/audio_out.hpp"
 #include "vgmplay/engine.hpp"
 #include "vgmplay/pcm_ring.hpp"
+#include "vgmplay_ui/channel_mix.h"
+#include "vgmplay_ui/channel_scopes.h"
 #include "vgmplay_ui/player_view.h"
 #include "vgmplay_ui/scope_buffer.h"
 
@@ -36,6 +38,10 @@ namespace vgmplay::app {
 struct ControllerOptions {
     bool nullAudio = false;    // backend "null" miniaudio (bez dzwieku, z prawdziwym zegarem)
     bool autoplay = true;      // po zaladowaniu pliku od razu graj
+    // DIAGNOSTYKA: gdy silnik nie dostarcza strumieni kanalow (extraStreamCount == 0), UI dopisuje
+    // do bloku scope syntetyczne sinusy na kanal (do testow i zrzutow ekranu). Dziala tylko po
+    // setChannelScopesVisible(true), tak jak silnik po cmd::SetChannelScopes.
+    bool fakeChannelScopes = false;
 };
 
 class AppController final : public ui::PlayerActions {
@@ -71,6 +77,16 @@ public:
     void seekBySeconds(double seconds) override;
     void setVolume(float linear) override;
     void dismissError() override;
+    void toggleChannelMute(int channel) override;
+    void toggleChannelSolo(int channel) override;
+    void muteAllChannels() override;
+    void unmuteAllChannels() override;
+    void clearSolo() override;
+    void setChannelScopesVisible(bool visible) override;
+
+    // Stan komendy SetChannelScopes wyslanej do silnika (dla testow): ostatnia wartosc i liczba wyslan.
+    [[nodiscard]] bool channelScopesRequested() const { return scopesRequested_; }
+    [[nodiscard]] unsigned channelScopesCommandCount() const { return scopesCommands_; }
 
 private:
     struct Request {
@@ -86,6 +102,9 @@ private:
 
     void workerLoop();
     void send(engine::Command c);
+    bool canEditMix() const { return info_ && inflight_.empty(); }
+    void sendMute(DeviceId device);
+    void sendChannelScopes(bool enabled);
     void flushOutbox();
     void handleDone(Done& d);
     void handleEvent(const engine::EngineEvent& e);
@@ -126,6 +145,10 @@ private:
     float volume_ = 0.8f;
     std::unique_ptr<ui::ScopeBuffer> scope_ = std::make_unique<ui::ScopeBuffer>();
     std::unique_ptr<ScopeBlock> scopeBlock_ = std::make_unique<ScopeBlock>();
+    ui::ChannelMix mix_;
+    ui::ChannelScopeBuffer channelScopes_;
+    bool scopesRequested_ = false;   // ostatnia wartosc zadana przez UI (wyslana do silnika)
+    unsigned scopesCommands_ = 0;
     bool seekInFlight_ = false;
     std::uint64_t seekTarget_ = 0;
     std::uint64_t seekEpoch_ = 0;

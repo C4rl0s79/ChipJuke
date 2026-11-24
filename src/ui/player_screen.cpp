@@ -1,5 +1,7 @@
 #include "vgmplay_ui/player_screen.h"
 
+#include "vgmplay_ui/channel_mix.h"
+#include "vgmplay_ui/channel_widgets.h"
 #include "vgmplay_ui/format.h"
 #include "vgmplay_ui/scope_buffer.h"
 #include "vgmplay_ui/strings.h"
@@ -23,6 +25,8 @@ constexpr int kTransportButtons = 6; // prev, play, pause, stop, next, open
 constexpr double kSeekStepSeconds = 5.0;
 constexpr float kVolumeStep = 0.05f;
 constexpr std::size_t kScopeFrames = 1024;
+constexpr std::size_t kChannelScopeFrames = 768;   // okno przebiegu kanalu (klatki silnika)
+constexpr double kVuWindowSeconds = 0.03;          // okno szczytu dla VU
 
 // Panel w stalym prostokacie. Zwraca true, gdy mozna rysowac.
 bool beginPanel(const char* id, float x, float y, float w, float h)
@@ -125,7 +129,7 @@ struct ButtonState {
 bool PlayerScreen::wantsAnimation(const PlayerView& v) const
 {
     return v.transport.state == TransportState::Playing || v.transport.state == TransportState::Loading ||
-           v.loading || seekDrag_ || volumeDrag_ || seekHold_ > 0;
+           v.loading || seekDrag_ || volumeDrag_ || seekHold_ > 0 || vu_.active();
 }
 
 void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view, PlayerActions& actions)
@@ -135,6 +139,7 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
     case Action::ToggleLang: setLang(lang() == Lang::En ? Lang::Pl : Lang::En); return;
     case Action::ToggleGd3Lang: gd3Jp_ = !gd3Jp_; return;
     case Action::ToggleDiag: diag_ = !diag_; return;
+    case Action::ToggleChannelsView: scopesView_ = !scopesView_; return;
     case Action::Back:
         if (view.error || !view.audioError.empty()) { actions.dismissError(); return; }
         if (focus == Panel::Transport && !ev.repeat) actions.stop();
@@ -157,10 +162,27 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
         if (ev.action == Action::Accept && !ev.repeat) actions.requestOpenFile();
         break;
     case Panel::Tracker:
-        if (ev.action == Action::Up) row_ = std::max(0, row_ - 1);
-        else if (ev.action == Action::Down) row_ = std::min(kPatternRows - 1, row_ + 1);
+        if (ev.action == Action::Up) {
+            if (scopesView_) chan_ = moveGridCursor(chan_, 0, -1, gridCols_, channels);
+            else row_ = std::max(0, row_ - 1);
+        } else if (ev.action == Action::Down) {
+            if (scopesView_) chan_ = moveGridCursor(chan_, 0, 1, gridCols_, channels);
+            else row_ = std::min(kPatternRows - 1, row_ + 1);
+        }
         else if (ev.action == Action::Left) chan_ = std::max(0, chan_ - 1);
         else if (ev.action == Action::Right) chan_ = std::min(std::max(0, channels - 1), chan_ + 1);
+        else if (ev.action == Action::Accept || ev.action == Action::ToggleMute) actions.toggleChannelMute(chan_);
+        else if (ev.action == Action::ToggleSolo) actions.toggleChannelSolo(chan_);
+        else if (ev.action == Action::UnmuteAll) actions.unmuteAllChannels();
+        else if (ev.action == Action::ClearSolo) actions.clearSolo();
+        else if (ev.action == Action::ResetMix) { actions.unmuteAllChannels(); actions.clearSolo(); }
+        else if (ev.action == Action::MuteChannel || ev.action == Action::SoloChannel) {
+            if (ev.arg >= 0 && ev.arg < channels) {
+                chan_ = ev.arg;
+                if (ev.action == Action::MuteChannel) actions.toggleChannelMute(ev.arg);
+                else actions.toggleChannelSolo(ev.arg);
+            }
+        }
         else if (ev.action == Action::PageUp) row_ = std::max(0, row_ - trackerVisibleRows_);
         else if (ev.action == Action::PageDown)
             row_ = std::min(kPatternRows - 1, row_ + trackerVisibleRows_);
@@ -177,6 +199,8 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
     if (seekHold_ > 0) --seekHold_;
 
     const ImGuiIO& io = ImGui::GetIO();
+    updateMeters(view, std::clamp(io.DeltaTime, 0.0f, 0.1f));
+    actions.setChannelScopesVisible(view.hasTrack()); // oscyloskopy i VU kanalow widoczne w obu widokach
     const float W = io.DisplaySize.x;
     const float H = io.DisplaySize.y;
     const float lh = ImGui::GetTextLineHeight();
@@ -197,11 +221,40 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
     drawTransport(nav, view, actions, gap, gap, W - 2 * gap, transportH);
     drawPlaylist(nav, view, gap, bodyY, leftW, playlistH);
     drawInfo(view, gap, bodyY + playlistH + gap, leftW, infoH);
-    drawTracker(nav, view, rightX, bodyY, rightW, trackerH);
+    drawTracker(nav, view, actions, rightX, bodyY, rightW, trackerH);
     drawScope(view, rightX, bodyY + trackerH + gap, rightW, scopeH);
     drawStatus(view, actions, gap, H - statusH - gap, W - 2 * gap, statusH);
     if (diag_) drawDiagnostics(view, info, rightX + rightW - std::min(rightW, lh * 30.0f), bodyY,
                                std::min(rightW, lh * 30.0f));
+}
+
+void PlayerScreen::updateMeters(const PlayerView& view, float dt)
+{
+    const int nch = channelCount(view);
+    vu_.resize(static_cast<std::size_t>(nch));
+    vuTargets_.assign(static_cast<std::size_t>(nch), 0.0f);
+    float master[2] = {0.0f, 0.0f};
+    const engine::TransportSnapshot& t = view.transport;
+    if (t.state == TransportState::Playing) { // pauza/stop: wskazniki opadaja do zera
+        const std::size_t win = std::max<std::size_t>(
+            256, static_cast<std::size_t>(kVuWindowSeconds * static_cast<double>(view.sampleRate)));
+        const ChannelScopeBuffer* cs = view.channelScopes;
+        if (cs && cs->epoch() == t.epoch && view.info) {
+            for (int g = 0; g < nch; ++g) {
+                const ChannelRef& r = view.info->layout.channels[static_cast<std::size_t>(g)];
+                float pk = 0.0f;
+                if (cs->peak(r.deviceIdx, r.channelIdx, t.audibleFrame, win, pk))
+                    vuTargets_[static_cast<std::size_t>(g)] = vuLevelFromPeak(pk);
+            }
+        }
+        const ScopeBuffer* sb = view.scope;
+        float l = 0.0f, r = 0.0f;
+        if (sb && sb->epoch() == t.epoch && sb->peak(t.audibleFrame, win, l, r)) {
+            master[0] = vuLevelFromPeak(l);
+            master[1] = vuLevelFromPeak(r);
+        }
+    }
+    vu_.update(vuTargets_, master, dt);
 }
 
 void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x,
@@ -501,7 +554,8 @@ void PlayerScreen::drawInfo(const PlayerView& view, float x, float y, float w, f
     ImGui::End();
 }
 
-void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, float x, float y, float w, float h)
+void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
+                               float w, float h)
 {
     const Palette& p = palette();
     if (!beginPanel("##tracker", x, y, w, h)) { ImGui::End(); return; }
@@ -511,13 +565,26 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, float x, f
 
     const int nch = channelCount(view);
     char title[96];
-    std::snprintf(title, sizeof title, "%s (%s)  %02X/%02X  %d ch", tr(Str::PanelTracker), tr(Str::Preview),
-                  row_, kPatternRows - 1, nch);
-    const float bar = drawFrame(dl, title, focused);
+    if (scopesView_)
+        std::snprintf(title, sizeof title, "%s  %d ch", tr(Str::PanelChannels), nch);
+    else
+        std::snprintf(title, sizeof title, "%s (%s)  %02X/%02X  %d ch", tr(Str::PanelTracker), tr(Str::Preview),
+                      row_, kPatternRows - 1, nch);
+    const float titleBar = drawFrame(dl, title, focused);
     const float dpi = ImGui::GetStyle().FontScaleDpi;
     const float lh = ImGui::GetTextLineHeight();
     const float cw = ImGui::CalcTextSize("0").x;
     const ImVec2 wp = ImGui::GetWindowPos();
+    if (focused) { // podpowiedz klawiszy w pasku tytulu (jak w panelu Transport)
+        const char* hint = tr(Str::HintChannels);
+        const float hw = ImGui::CalcTextSize(hint).x;
+        const float titleW = ImGui::CalcTextSize(title).x;
+        if (hw + titleW + lh * 4.0f < w)
+            dl->AddText(ImVec2(wp.x + w - hw - 8.0f * dpi, wp.y + 2.0f * dpi), col32(p.text), hint);
+    }
+    const float toolH = lh + 6.0f * dpi;
+    drawChannelToolbar(nav, view, actions, wp.x, wp.y + titleBar + dpi, w, toolH, focused);
+    const float bar = titleBar + toolH + dpi;
 
     if (nch == 0) {
         clippedText(dl, wp.x + 8.0f * dpi, wp.x + w - 4.0f * dpi, wp.y + bar + 6.0f * dpi, col32(p.textDim),
@@ -527,6 +594,11 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, float x, f
     }
     const TrackInfo& ti = *view.info;
     chan_ = std::clamp(chan_, 0, nch - 1);
+    if (scopesView_) {
+        drawChannelGrid(nav, view, actions, wp.x, wp.y + bar, w, h - bar, focused);
+        ImGui::End();
+        return;
+    }
 
     if (ImGui::IsWindowHovered()) {
         const float wheel = ImGui::GetIO().MouseWheel;
@@ -535,12 +607,14 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, float x, f
 
     const float rowH = lh + 2.0f * dpi;
     const float headH = rowH + 2.0f * dpi;
+    const float vuH = headH * 1.6f;   // pasek VU nad naglowkami kanalow (jak w ProTrackerze)
     const float numW = cw * 4.0f;
     const float chanW = cw * 10.0f;
     const float left = wp.x + 4.0f * dpi;
-    const float top = wp.y + bar + 2.0f * dpi;
+    const float vuTop = wp.y + bar + 2.0f * dpi;
+    const float top = vuTop + vuH + 2.0f * dpi;
 
-    trackerVisibleRows_ = std::max(1, static_cast<int>((h - bar - 2 * headH - 6.0f * dpi) / rowH));
+    trackerVisibleRows_ = std::max(1, static_cast<int>((h - bar - vuH - 2 * headH - 8.0f * dpi) / rowH));
     const int visChans = std::clamp(static_cast<int>((w - numW - 8.0f * dpi) / chanW), 1, nch);
     if (chan_ < firstChan_) firstChan_ = chan_;
     if (chan_ >= firstChan_ + visChans) firstChan_ = chan_ - visChans + 1;
@@ -559,7 +633,6 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, float x, f
         const float cx = left + numW + c * chanW;
         if (newDev && dev) {
             std::string dn = dev->name.empty() ? std::string(chipTypeName(dev->type)) : dev->name;
-            if (dev->instance > 0) dn += " #2";
             const float ex = cx + chanW * 4.0f;
             clippedText(dl, cx + cw, std::min(ex, wp.x + w - 4.0f * dpi), top + dpi, col32(p.textDim), dn.c_str());
         }
@@ -567,11 +640,29 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, float x, f
         if (dev && ref.channelIdx < dev->channelNames.size())
             std::snprintf(hd, sizeof hd, "%s", dev->channelNames[ref.channelIdx].c_str());
         else std::snprintf(hd, sizeof hd, "CH%d", ch + 1);
-        const ImU32 chc = col32(p.channel[ch % kChannelCount]);
+        const bool audible = !view.mix || view.mix->audible(ch);
+        const ImVec4 chVec = p.channel[ch % kChannelCount];
+        const ImU32 chc = col32(audible ? chVec : withAlpha(chVec, 0.4f));
         const float hy = top + headH;
         dl->AddRectFilled(ImVec2(cx, hy), ImVec2(cx + chanW - 2.0f * dpi, hy + headH - 2.0f * dpi),
-                          col32(withAlpha(p.channel[ch % kChannelCount], ch == chan_ ? 0.35f : 0.15f)));
-        clippedText(dl, cx + cw, cx + chanW - 2.0f * dpi, hy + dpi, chc, hd);
+                          col32(withAlpha(chVec, ch == chan_ ? 0.35f : 0.15f)));
+        // VU nad naglowkiem.
+        if (static_cast<std::size_t>(ch) < vu_.size())
+            drawVuBar(dl, ImVec2(cx + chanW * 0.28f, vuTop), ImVec2(cx + chanW * 0.72f, vuTop + vuH),
+                      vu_.channel(static_cast<std::size_t>(ch)), !audible);
+        // M / S w naglowku.
+        const float bs = headH - 4.0f * dpi;
+        const float bx1 = cx + chanW - 2.0f * dpi - 2.0f;
+        const ImVec2 sPos(bx1 - bs, hy + dpi), mPos(bx1 - 2.0f * bs - 2.0f * dpi, hy + dpi);
+        const bool isMuted = view.mix && view.mix->muted(ch);
+        const bool isSolo = view.mix && view.mix->solo(ch);
+        bool boxClick = false;
+        if (drawToggleBox(dl, mPos, bs, "M", isMuted, p.muteOn, tr(Str::TipMute))) { actions.toggleChannelMute(ch); boxClick = true; }
+        if (drawToggleBox(dl, sPos, bs, "S", isSolo, p.soloOn, tr(Str::TipSolo))) { actions.toggleChannelSolo(ch); boxClick = true; }
+        if (!boxClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            ImGui::IsMouseHoveringRect(ImVec2(cx, hy), ImVec2(mPos.x - 2.0f, hy + headH)))
+            chan_ = ch;
+        clippedText(dl, cx + cw, mPos.x - 2.0f * dpi, hy + dpi, chc, hd);
     }
 
     const float gy = top + 2 * headH;
@@ -622,6 +713,171 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, float x, f
     ImGui::End();
 }
 
+void PlayerScreen::drawChannelToolbar(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x,
+                                      float y, float w, float h, bool focused)
+{
+    const Palette& p = palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float dpi = ImGui::GetStyle().FontScaleDpi;
+    const float lh = ImGui::GetTextLineHeight();
+    const float ty = y + (h - lh) * 0.5f;
+    const bool hasCh = view.mix && view.mix->channelCount() > 0;
+    float cx = x + 6.0f * dpi;
+    const float right = x + w - 6.0f * dpi;
+    (void)focused;
+
+    // Przelacznik widoku (klik lub F4): [Oscyloskopy] Wzorzec.
+    {
+        char lbl[64];
+        if (scopesView_) std::snprintf(lbl, sizeof lbl, "[%s] %s", tr(Str::ViewScopes), tr(Str::ViewPattern));
+        else std::snprintf(lbl, sizeof lbl, "%s [%s]", tr(Str::ViewScopes), tr(Str::ViewPattern));
+        const ImVec2 ts = ImGui::CalcTextSize(lbl);
+        const ImVec2 a(cx, y), b(cx + ts.x + 8.0f * dpi, y + h);
+        const bool hover = ImGui::IsMouseHoveringRect(a, b);
+        dl->AddText(ImVec2(cx + 4.0f * dpi, ty), col32(hover ? p.accent : p.text), lbl);
+        if (hover) {
+            ImGui::SetTooltip("%s", tr(Str::ViewToggle));
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                scopesView_ = !scopesView_;
+                nav.setFocus(Panel::Tracker);
+            }
+        }
+        cx = b.x + 10.0f * dpi;
+    }
+
+    // Ogolne wylaczniki.
+    struct Btn { Str label; bool enabled; int id; };
+    const Btn btns[] = {
+        {Str::BtnUnmuteAll, hasCh && view.mix->anyMuted(), 0},
+        {Str::BtnClearSolo, hasCh && view.mix->anySolo(), 1},
+        {Str::BtnMuteAll, hasCh, 2},
+    };
+    for (const Btn& bt : btns) {
+        const char* label = tr(bt.label);
+        const ImVec2 ts = ImGui::CalcTextSize(label);
+        const ImVec2 a(cx, y + dpi), b(cx + ts.x + 12.0f * dpi, y + h - dpi);
+        if (b.x > right) break;
+        const bool hover = bt.enabled && ImGui::IsMouseHoveringRect(a, b);
+        dl->AddRectFilled(a, b, col32(p.panelHeader));
+        dl->AddRect(a, b, col32(hover ? p.focusBorder : p.border));
+        dl->AddText(ImVec2(a.x + 6.0f * dpi, ty),
+                    col32(!bt.enabled ? withAlpha(p.textDim, 0.5f) : (hover ? p.accent : p.text)), label);
+        if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            nav.setFocus(Panel::Tracker);
+            if (bt.id == 0) actions.unmuteAllChannels();
+            else if (bt.id == 1) actions.clearSolo();
+            else actions.muteAllChannels();
+        }
+        cx = b.x + 6.0f * dpi;
+    }
+}
+
+void PlayerScreen::drawChannelGrid(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x,
+                                   float y, float w, float h, bool focused)
+{
+    const Palette& p = palette();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    const float dpi = ImGui::GetStyle().FontScaleDpi;
+    const float lh = ImGui::GetTextLineHeight();
+    const TrackInfo& ti = *view.info;
+    const int nch = channelCount(view);
+
+    const float margin = 4.0f * dpi;
+    const float gap = std::max(2.0f, 3.0f * dpi);
+    const GridLayout grid = chooseScopeGrid(nch, w - 2.0f * margin, h - margin - 2.0f * dpi, gap);
+    if (grid.cols == 0) return;
+    gridCols_ = grid.cols;
+
+    // Mysz: kolko przesuwa kursor kanalu po siatce.
+    if (ImGui::IsWindowHovered()) {
+        const float wheel = ImGui::GetIO().MouseWheel;
+        if (wheel != 0.0f) chan_ = moveGridCursor(chan_, wheel < 0 ? 1 : -1, 0, gridCols_, nch);
+    }
+
+    const ChannelScopeBuffer* cs = view.channelScopes;
+    const bool epochOk = cs && cs->epoch() == view.transport.epoch &&
+                         view.transport.state != TransportState::Idle &&
+                         view.transport.state != TransportState::Failed;
+    const float headH = lh + 2.0f * dpi;
+    const float boxS = lh * 0.95f;
+
+    for (int g = 0; g < nch; ++g) {
+        const ChannelRef& ref = ti.layout.channels[static_cast<std::size_t>(g)];
+        const DeviceDesc* dev = ref.deviceIdx < ti.layout.devices.size() ? &ti.layout.devices[ref.deviceIdx] : nullptr;
+        const float x0 = x + margin + grid.cellX(g), y0 = y + grid.cellY(g);
+        const float x1 = x0 + grid.cellW, y1 = y0 + grid.cellH;
+        const bool selected = g == chan_;
+        const bool audible = !view.mix || view.mix->audible(g);
+        const bool isMuted = view.mix && view.mix->muted(g);
+        const bool isSolo = view.mix && view.mix->solo(g);
+        const ImVec4 chVec = p.channel[g % kChannelCount];
+
+        dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), col32(p.scopeCell));
+        dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + headH), col32(withAlpha(chVec, selected ? 0.32f : 0.14f)));
+        dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), col32(selected ? (focused ? p.focusBorder : p.textDim) : p.border),
+                    0.0f, 0, selected ? 2.0f * dpi : 1.0f);
+
+        // Naglowek: nazwa kanalu (+ uklad, gdy jest miejsce) i przelaczniki M / S.
+        const bool showBoxes = grid.cellW >= lh * 5.0f && grid.cellH >= headH + 6.0f * dpi;
+        const float bx1 = x1 - 3.0f * dpi;
+        const ImVec2 sPos(bx1 - boxS, y0 + (headH - boxS) * 0.5f);
+        const ImVec2 mPos(sPos.x - boxS - 3.0f * dpi, sPos.y);
+        bool boxClick = false;
+        if (showBoxes) {
+            if (drawToggleBox(dl, mPos, boxS, "M", isMuted, p.muteOn, tr(Str::TipMute))) {
+                actions.toggleChannelMute(g);
+                boxClick = true;
+            }
+            if (drawToggleBox(dl, sPos, boxS, "S", isSolo, p.soloOn, tr(Str::TipSolo))) {
+                actions.toggleChannelSolo(g);
+                boxClick = true;
+            }
+        }
+        char nm[40];
+        if (dev && ref.channelIdx < dev->channelNames.size())
+            std::snprintf(nm, sizeof nm, "%s", dev->channelNames[ref.channelIdx].c_str());
+        else std::snprintf(nm, sizeof nm, "CH%d", g + 1);
+        const float textR = showBoxes ? mPos.x - 3.0f * dpi : x1 - 3.0f * dpi;
+        const ImU32 nameCol = col32(audible ? chVec : withAlpha(chVec, 0.45f));
+        clippedText(dl, x0 + 4.0f * dpi, textR, y0 + dpi, nameCol, nm);
+        if (dev) {
+            const float nw = ImGui::CalcTextSize(nm).x;
+            const float dx = x0 + 4.0f * dpi + nw + 6.0f * dpi;
+            if (textR - dx > lh * 3.0f) {
+                std::string dn = dev->name.empty() ? std::string(chipTypeName(dev->type)) : dev->name;
+                clippedText(dl, dx, textR, y0 + dpi, col32(withAlpha(p.textDim, 0.8f)), dn.c_str());
+            }
+        }
+
+        // Pole przebiegu + VU po prawej.
+        const float vuW = std::clamp(grid.cellW * 0.07f, 5.0f * dpi, 11.0f * dpi);
+        const float wy0 = y0 + headH + dpi, wy1 = y1 - 2.0f * dpi;
+        const ImVec2 wa(x0 + 2.0f * dpi, wy0), wb(x1 - vuW - 5.0f * dpi, wy1);
+        const ImVec2 va(x1 - vuW - 2.0f * dpi, wy0), vb(x1 - 2.0f * dpi, wy1);
+        if (wb.x - wa.x > 8.0f && wb.y - wa.y > 6.0f) {
+            const bool live = epochOk && cs->live(ref.deviceIdx, ref.channelIdx);
+            const bool have = live && cs->extract(ref.deviceIdx, ref.channelIdx, view.transport.audibleFrame,
+                                                  kChannelScopeFrames, wave_);
+            if (have) {
+                drawWave(dl, wa, wb, wave_, kChannelScopeGain, audible ? chVec : withAlpha(chVec, 0.30f), wavePts_);
+            } else {
+                drawWave(dl, wa, wb, {}, 1.0f, chVec, wavePts_); // sama linia srodkowa
+                if (!live) drawCenteredTag(dl, wa, wb, tr(Str::ScopeNa), withAlpha(p.textDim, 0.8f), false);
+            }
+            if (!audible) drawCenteredTag(dl, wa, wb, tr(Str::MuteTag), p.muteOn, true);
+        }
+        if (vb.y - va.y > 6.0f && static_cast<std::size_t>(g) < vu_.size())
+            drawVuBar(dl, va, vb, vu_.channel(static_cast<std::size_t>(g)), !audible);
+
+        // Klik w ramke (poza przelacznikami): wybor kanalu.
+        if (!boxClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            ImGui::IsMouseHoveringRect(ImVec2(x0, y0), ImVec2(x1, y1))) {
+            chan_ = g;
+            nav.setFocus(Panel::Tracker);
+        }
+    }
+}
+
 void PlayerScreen::drawScope(const PlayerView& view, float x, float y, float w, float h)
 {
     const Palette& p = palette();
@@ -632,7 +888,10 @@ void PlayerScreen::drawScope(const PlayerView& view, float x, float y, float w, 
     const ImVec2 wp = ImGui::GetWindowPos();
 
     const float ax = wp.x + 4.0f * dpi, ay = wp.y + bar + 4.0f * dpi;
-    const float aw = w - 8.0f * dpi, ah = h - bar - 8.0f * dpi;
+    const float lh = ImGui::GetTextLineHeight();
+    const float vuBarW = 9.0f * dpi;
+    const float vuRegion = 2.0f * vuBarW + 14.0f * dpi; // dwa slupki master L/R po prawej
+    const float aw = w - 8.0f * dpi - vuRegion, ah = h - bar - 8.0f * dpi;
     if (aw < 8.0f || ah < 8.0f) { ImGui::End(); return; }
     const float cy = ay + ah * 0.5f;
 
@@ -668,6 +927,17 @@ void PlayerScreen::drawScope(const PlayerView& view, float x, float y, float w, 
         dl->AddPolyline(pts.data(), n, col32(pass == 0 ? p.scopeLineR : p.scopeLine), ImDrawFlags_None, 1.5f * dpi);
     }
     dl->PopClipRect();
+
+    // Master VU (L/R), jak ProTracker: pionowe segmenty + litery pod slupkami.
+    {
+        const float vx = ax + aw + 8.0f * dpi;
+        const float vy1 = ay + ah - lh;
+        const ImVec2 la(vx, ay), lb(vx + vuBarW, vy1), ra(vx + vuBarW + 4.0f * dpi, ay), rb(vx + 2.0f * vuBarW + 4.0f * dpi, vy1);
+        drawVuBar(dl, la, lb, vu_.masterL(), false);
+        drawVuBar(dl, ra, rb, vu_.masterR(), false);
+        dl->AddText(ImVec2(la.x + (vuBarW - ImGui::CalcTextSize("L").x) * 0.5f, vy1 + dpi), col32(p.scopeLine), "L");
+        dl->AddText(ImVec2(ra.x + (vuBarW - ImGui::CalcTextSize("R").x) * 0.5f, vy1 + dpi), col32(p.scopeLineR), "R");
+    }
     ImGui::End();
 }
 

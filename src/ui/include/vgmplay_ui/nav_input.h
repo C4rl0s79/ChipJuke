@@ -21,12 +21,16 @@ enum class Panel { Transport, Playlist, Tracker, Count };
 
 enum class Action {
     Up, Down, Left, Right, PageUp, PageDown,
-    Accept, Back, TogglePlay, ToggleLang, ToggleGd3Lang, ToggleDiag
+    Accept, Back, TogglePlay, ToggleLang, ToggleGd3Lang, ToggleDiag,
+    // Widok kanalow (panel Tracker): MUTE/SOLO aktywnego kanalu, ogolne wylaczniki, zmiana widoku.
+    ToggleMute, ToggleSolo, UnmuteAll, ClearSolo, ResetMix, ToggleChannelsView,
+    MuteChannel, SoloChannel   // arg = numer kanalu 0..9 (klawisze 1..9,0)
 };
 
 struct NavEvent {
     Action action;
     bool repeat;
+    int arg = 0;
 };
 
 class NavInput {
@@ -49,12 +53,13 @@ public:
 private:
     struct Held {
         Action action;
+        int arg;
         bool repeatable;
         bool stale; // nacisniete przed zmiana fokusu - czeka na puszczenie
         std::uint64_t nextRepeat;
     };
 
-    void press(std::uint64_t key, Action a, std::uint64_t now);
+    void press(std::uint64_t key, Action a, std::uint64_t now, int arg = 0);
     void release(std::uint64_t key);
     void cycleFocus(int dir);
     void releaseAllForGamepad(SDL_JoystickID id);

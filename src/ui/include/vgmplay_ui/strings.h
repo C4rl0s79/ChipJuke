@@ -51,6 +51,18 @@ enum class Str {
     Diagnostics,
     Idle,
     Fps,
+    PanelChannels,
+    ViewScopes,
+    ViewPattern,
+    BtnUnmuteAll,
+    BtnClearSolo,
+    BtnMuteAll,
+    TipMute,
+    TipSolo,
+    MuteTag,
+    ScopeNa,
+    HintChannels,
+    ViewToggle,
     Count
 };
 

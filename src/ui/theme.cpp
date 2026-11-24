@@ -37,6 +37,13 @@ const Palette& palette()
         /*scopeLineR*/ rgb(0x4FC3F7),
         /*error*/ rgb(0xFF6B6B),
         /*notice*/ rgb(0xFFD180),
+        /*scopeCell*/ rgb(0x0D1016),
+        /*vuLow*/ rgb(0x69F0AE),
+        /*vuMid*/ rgb(0xFFEB6B),
+        /*vuHigh*/ rgb(0xFF6B6B),
+        /*vuOff*/ rgb(0x1C2230),
+        /*muteOn*/ rgb(0xFF6B6B),
+        /*soloOn*/ rgb(0xFFD54F),
         /*channel*/
         {rgb(0xFF6B6B), rgb(0xFFB74D), rgb(0xFFEB6B), rgb(0x69F0AE), rgb(0x4FC3F7),
          rgb(0xC792EA)},

@@ -3,8 +3,11 @@
 // przez PlayerActions; nie zna silnika ani watkow.
 #pragma once
 
+#include "vgmplay_ui/channel_scopes.h"
 #include "vgmplay_ui/nav_input.h"
 #include "vgmplay_ui/player_view.h"
+
+#include <imgui.h>
 
 #include <vector>
 
@@ -26,6 +29,9 @@ public:
     bool diagnosticsVisible() const { return diag_; }
     void setDiagnosticsVisible(bool v) { diag_ = v; }
     void setTagsJapanese(bool jp) { gd3Jp_ = jp; }
+    // Widok panelu kanalow: true = oscyloskopy kanalow (domyslnie), false = podglad wzorca (F4).
+    bool scopesView() const { return scopesView_; }
+    void setScopesView(bool v) { scopesView_ = v; }
 
 private:
     void apply(const NavEvent& ev, Panel focus, const PlayerView& view, PlayerActions& actions);
@@ -33,7 +39,13 @@ private:
                        float w, float h);
     void drawPlaylist(NavInput& nav, const PlayerView& view, float x, float y, float w, float h);
     void drawInfo(const PlayerView& view, float x, float y, float w, float h);
-    void drawTracker(NavInput& nav, const PlayerView& view, float x, float y, float w, float h);
+    void drawTracker(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
+                     float w, float h);
+    void drawChannelToolbar(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
+                            float w, float h, bool focused);
+    void drawChannelGrid(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
+                         float w, float h, bool focused);
+    void updateMeters(const PlayerView& view, float dtSeconds);
     void drawScope(const PlayerView& view, float x, float y, float w, float h);
     void drawStatus(const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h);
     void drawDiagnostics(const PlayerView& view, const FrameInfo& info, float x, float y, float w);
@@ -51,6 +63,11 @@ private:
     int trackerVisibleRows_ = 16;
     int infoScroll_ = 0;
     std::vector<float> scopeL_, scopeR_;
+    bool scopesView_ = true;
+    int gridCols_ = 1;                 // kolumny siatki oscyloskopow z ostatniej klatki (nawigacja)
+    VuBank vu_;
+    std::vector<float> vuTargets_, wave_;
+    std::vector<ImVec2> wavePts_;
 };
 
 } // namespace vgmplay::ui
