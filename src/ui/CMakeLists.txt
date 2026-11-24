@@ -1,6 +1,9 @@
 # Modul: ui
 # Dopisuj zrodla i zaleznosci tylko w tym pliku.
 add_library(vgmplay_ui STATIC
+    channel_mix.cpp
+    channel_scopes.cpp
+    channel_widgets.cpp
     format.cpp
     nav_input.cpp
     player_screen.cpp

@@ -32,6 +32,9 @@ public:
     bool extract(std::uint64_t audibleFrame, std::size_t count, std::vector<float>& l,
                  std::vector<float>& r, std::uint64_t* startedAt = nullptr) const;
 
+    // Szczyt |L| i |R| w oknie `count` klatek od pozycji slyszanej (okno cofane przy koncu danych).
+    bool peak(std::uint64_t audibleFrame, std::size_t count, float& l, float& r) const;
+
 private:
     float mono(std::uint64_t frame) const;
 

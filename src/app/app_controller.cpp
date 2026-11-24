@@ -3,6 +3,7 @@
 #include "vgmplay_ui/format.h"
 
 #include <algorithm>
+#include <cmath>
 #include <exception>
 #include <utility>
 
@@ -13,6 +14,36 @@ std::string fileNameUtf8(const std::filesystem::path& p)
 {
     const auto u8 = p.filename().u8string();
     return std::string(u8.begin(), u8.end());
+}
+
+// Syntetyczne strumienie kanalow (--fake-channel-scopes): sinus/trojkat/prostokat o czestotliwosci
+// zaleznej od kanalu, z wolna zmienna obwiednia (zeby VU sie ruszalo). Ciagle w funkcji numeru klatki.
+// Kanal nr 5 (przy >= 8 kanalach) jest oznaczony jako niedostepny, by pokazac "n/a".
+void fillFakeChannels(ScopeBlock& b, const TrackInfo& info, std::uint32_t sampleRate)
+{
+    constexpr double kTwoPi = 6.283185307179586;
+    const std::size_t nch = info.layout.channels.size();
+    const std::size_t n = std::min<std::size_t>(nch, kMaxExtraStreams);
+    b.extraStreamCount = static_cast<std::uint8_t>(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        b.extraDesc[i].deviceIdx = info.layout.channels[i].deviceIdx;
+        b.extraDesc[i].channelIdx = info.layout.channels[i].channelIdx;
+        const bool na = i == 5 && nch >= 8;
+        b.extraDesc[i].flags = na ? 0 : kScopeStreamAvailable;
+        const double freq = 110.0 * std::pow(2.0, static_cast<double>(i) / 5.0);
+        for (std::uint32_t f = 0; f < b.frames; ++f) {
+            const double t = static_cast<double>(b.startFrame + f) / sampleRate;
+            const double ph = std::fmod(freq * t, 1.0);
+            double w;
+            switch (i % 3) {
+            case 0: w = std::sin(kTwoPi * ph); break;
+            case 1: w = 4.0 * std::fabs(ph - 0.5) - 1.0; break;
+            default: w = ph < 0.5 ? 0.8 : -0.8; break;
+            }
+            const double env = 0.5 + 0.5 * std::sin(kTwoPi * (0.35 + 0.05 * static_cast<double>(i)) * t + static_cast<double>(i));
+            b.extra[i][f] = static_cast<float>(0.25 * env * env * w);
+        }
+    }
 }
 
 } // namespace
@@ -155,6 +186,8 @@ void AppController::handleEvent(const engine::EngineEvent& e)
             inflight_.pop_front();
         }
         info_ = loaded->info;
+        mix_.setLayout(info_->layout); // silnik zeruje MUTE/SOLO przy Load
+        if (scopesRequested_) sendChannelScopes(true); // stan silnika po Load nie jest gwarantowany
         error_.reset();
         errorFile_.clear();
     } else if (const auto* err = std::get_if<engine::evt::Error>(&e)) {
@@ -167,6 +200,7 @@ void AppController::handleEvent(const engine::EngineEvent& e)
         }
         track_.reset();
         info_.reset();
+        mix_.clear();
     }
     // TrackEnded: stan widoczny w snapshot (Ended); Underrun: licznik w snapshot/PcmRing.
 }
@@ -206,7 +240,12 @@ void AppController::pump()
     view_.transport = engine_->snapshot();
     if (seekInFlight_ && view_.transport.epoch != seekEpoch_) seekInFlight_ = false;
 
-    for (int guard = 0; guard < 256 && engine_->popScope(*scopeBlock_); ++guard) scope_->push(*scopeBlock_);
+    for (int guard = 0; guard < 256 && engine_->popScope(*scopeBlock_); ++guard) {
+        if (options_.fakeChannelScopes && scopesRequested_ && info_ && scopeBlock_->extraStreamCount == 0)
+            fillFakeChannels(*scopeBlock_, *info_, view_.sampleRate);
+        scope_->push(*scopeBlock_);
+        channelScopes_.push(*scopeBlock_);
+    }
 
     view_.volume = volume_;
     view_.loading = (latest != handled) || !inflight_.empty();
@@ -217,6 +256,8 @@ void AppController::pump()
     view_.errorFile = errorFile_;
     view_.audioError = audioError_;
     view_.scope = scope_.get();
+    view_.channelScopes = &channelScopes_;
+    view_.mix = &mix_;
     if (audio_.isOpen()) {
         const audio_out::DeviceInfo& di = audio_.info();
         view_.audio.device = di.name;
@@ -300,6 +341,61 @@ void AppController::dismissError()
     error_.reset();
     errorFile_.clear();
     audioError_.clear();
+}
+
+// ------------------------------------------------------------------ widok kanalow
+
+void AppController::sendMute(DeviceId device)
+{
+    send(engine::cmd::SetMute{device, mix_.muteMask(device)});
+}
+
+void AppController::sendChannelScopes(bool enabled)
+{
+    send(engine::cmd::SetChannelScopes{enabled});
+    ++scopesCommands_;
+}
+
+void AppController::setChannelScopesVisible(bool visible)
+{
+    if (visible == scopesRequested_) return;
+    scopesRequested_ = visible;
+    sendChannelScopes(visible);
+}
+
+void AppController::toggleChannelMute(int channel)
+{
+    if (!canEditMix() || !mix_.toggleMute(channel)) return;
+    sendMute(mix_.ref(channel).deviceIdx);
+}
+
+void AppController::toggleChannelSolo(int channel)
+{
+    if (!canEditMix() || !mix_.toggleSolo(channel)) return;
+    const ChannelRef r = mix_.ref(channel);
+    send(engine::cmd::SetSolo{r.deviceIdx, r.channelIdx, mix_.solo(channel)});
+}
+
+void AppController::muteAllChannels()
+{
+    if (!canEditMix()) return;
+    mix_.muteAll();
+    for (int d = 0; d < mix_.deviceCount(); ++d) sendMute(static_cast<DeviceId>(d));
+}
+
+void AppController::unmuteAllChannels()
+{
+    if (!canEditMix()) return;
+    mix_.unmuteAll();
+    for (int d = 0; d < mix_.deviceCount(); ++d) sendMute(static_cast<DeviceId>(d));
+}
+
+void AppController::clearSolo()
+{
+    if (!canEditMix()) return;
+    mix_.clearSolo();
+    for (int d = 0; d < mix_.deviceCount(); ++d)
+        send(engine::cmd::SetSolo{static_cast<DeviceId>(d), kChipSumChannel, false});
 }
 
 } // namespace vgmplay::app

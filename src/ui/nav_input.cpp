@@ -34,12 +34,20 @@ bool mapPadButton(Uint8 b, Action& a)
     case SDL_GAMEPAD_BUTTON_SOUTH: a = Action::Accept; return true;
     case SDL_GAMEPAD_BUTTON_EAST: a = Action::Back; return true;
     case SDL_GAMEPAD_BUTTON_START: a = Action::TogglePlay; return true;
+    case SDL_GAMEPAD_BUTTON_WEST: a = Action::ToggleSolo; return true;      // X
+    case SDL_GAMEPAD_BUTTON_NORTH: a = Action::ResetMix; return true;       // Y
+    case SDL_GAMEPAD_BUTTON_BACK: a = Action::ToggleChannelsView; return true;
     default: return false;
     }
 }
 
-bool mapKey(SDL_Scancode sc, Action& a)
+bool mapKey(SDL_Scancode sc, bool shift, Action& a, int& arg)
 {
+    if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_0) { // 1..9, 0 -> kanaly 0..9
+        arg = static_cast<int>(sc - SDL_SCANCODE_1);
+        a = shift ? Action::SoloChannel : Action::MuteChannel;
+        return true;
+    }
     switch (sc) {
     case SDL_SCANCODE_UP: a = Action::Up; return true;
     case SDL_SCANCODE_DOWN: a = Action::Down; return true;
@@ -52,6 +60,12 @@ bool mapKey(SDL_Scancode sc, Action& a)
     case SDL_SCANCODE_SPACE: a = Action::TogglePlay; return true;
     case SDL_SCANCODE_F2: a = Action::ToggleLang; return true;
     case SDL_SCANCODE_F3: a = Action::ToggleGd3Lang; return true;
+    case SDL_SCANCODE_F4: a = Action::ToggleChannelsView; return true;
+    case SDL_SCANCODE_M: a = Action::ToggleMute; return true;
+    case SDL_SCANCODE_S: a = Action::ToggleSolo; return true;
+    case SDL_SCANCODE_U: a = Action::UnmuteAll; return true;
+    case SDL_SCANCODE_C: a = Action::ClearSolo; return true;
+    case SDL_SCANCODE_R: a = Action::ResetMix; return true;
     case SDL_SCANCODE_F12: a = Action::ToggleDiag; return true;
     default: return false; // Tab obslugiwany osobno
     }
@@ -81,11 +95,11 @@ void NavInput::cycleFocus(int dir)
     setFocus(static_cast<Panel>((static_cast<int>(focus_) + dir + n) % n));
 }
 
-void NavInput::press(std::uint64_t key, Action a, std::uint64_t now)
+void NavInput::press(std::uint64_t key, Action a, std::uint64_t now, int arg)
 {
     if (held_.count(key)) return; // powtorne "down" bez puszczenia
-    held_[key] = Held{a, isRepeatable(a), false, now + kRepeatDelayMs};
-    events_.push_back({a, false});
+    held_[key] = Held{a, arg, isRepeatable(a), false, now + kRepeatDelayMs};
+    events_.push_back({a, false, arg});
 }
 
 void NavInput::release(std::uint64_t key) { held_.erase(key); }
@@ -136,11 +150,12 @@ void NavInput::handleEvent(const SDL_Event& e, std::uint64_t now)
         if (e.key.scancode == SDL_SCANCODE_TAB) {
             if (held_.count(key)) break;
             cycleFocus((e.key.mod & SDL_KMOD_SHIFT) ? -1 : 1);
-            held_[key] = Held{Action::Accept, false, true, 0}; // wpis tylko do sledzenia puszczenia
+            held_[key] = Held{Action::Accept, 0, false, true, 0}; // wpis tylko do sledzenia puszczenia
             break;
         }
         Action a;
-        if (mapKey(e.key.scancode, a)) press(key, a, now);
+        int arg = 0;
+        if (mapKey(e.key.scancode, (e.key.mod & SDL_KMOD_SHIFT) != 0, a, arg)) press(key, a, now, arg);
         break;
     }
     case SDL_EVENT_KEY_UP: // puszczenie zawsze, bez warunku na fokus
@@ -162,7 +177,7 @@ void NavInput::handleEvent(const SDL_Event& e, std::uint64_t now)
         if (b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER || b == SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER) {
             if (held_.count(key)) break;
             cycleFocus(b == SDL_GAMEPAD_BUTTON_LEFT_SHOULDER ? -1 : 1);
-            held_[key] = Held{Action::Accept, false, true, 0};
+            held_[key] = Held{Action::Accept, 0, false, true, 0};
             break;
         }
         Action a;
@@ -185,7 +200,7 @@ void NavInput::update(std::uint64_t now)
     for (auto& kv : held_) {
         Held& h = kv.second;
         if (h.stale || !h.repeatable || now < h.nextRepeat) continue;
-        events_.push_back({h.action, true});
+        events_.push_back({h.action, true, h.arg});
         h.nextRepeat = now + kRepeatRateMs;
     }
 }
