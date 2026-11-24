@@ -10,8 +10,6 @@ namespace playlist { int module_stub() noexcept; }
 namespace library { int module_stub() noexcept; }
 namespace settings { int module_stub() noexcept; }
 namespace input { int module_stub() noexcept; }
-namespace ui { int module_stub() noexcept; }
-namespace app { int module_stub() noexcept; }
 } // namespace vgmplay
 
 TEST_CASE("zaslepki modulow linkuja sie poprawnie")
@@ -24,6 +22,4 @@ TEST_CASE("zaslepki modulow linkuja sie poprawnie")
     CHECK(library::module_stub() == 0);
     CHECK(settings::module_stub() == 0);
     CHECK(input::module_stub() == 0);
-    CHECK(ui::module_stub() == 0);
-    CHECK(app::module_stub() == 0);
 }

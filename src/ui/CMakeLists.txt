@@ -1,11 +1,12 @@
 # Modul: ui
 # Dopisuj zrodla i zaleznosci tylko w tym pliku.
 add_library(vgmplay_ui STATIC
-    mockup.cpp
+    format.cpp
     nav_input.cpp
+    player_screen.cpp
+    scope_buffer.cpp
     strings.cpp
     theme.cpp
-    ui_stub.cpp
 )
 add_library(vgmplay::ui ALIAS vgmplay_ui)
 target_include_directories(vgmplay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

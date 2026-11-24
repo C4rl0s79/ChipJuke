@@ -1,9 +1,12 @@
-// vgmplay - prototyp okna (E0): SDL3 + Dear ImGui (backend SDL3 + DX11).
-// Tylko sprawdzenie stosu; logika odtwarzacza podlaczana jest pozniej.
+// vgmplay - okno aplikacji: SDL3 + Dear ImGui (backend SDL3 + DX11) + AppController.
+// main.cpp zajmuje sie oknem, zdarzeniami SDL i petla klatek; logika (silnik, audio, ladowanie)
+// jest w AppController, a ekrany (PlayerScreen) widza tylko PlayerView i PlayerActions.
+#include "app_controller.h"
 #include "app_resources.h"
+#include "file_dialog.h"
 
-#include "vgmplay_ui/mockup.h"
 #include "vgmplay_ui/nav_input.h"
+#include "vgmplay_ui/player_screen.h"
 #include "vgmplay_ui/strings.h"
 #include "vgmplay_ui/theme.h"
 
@@ -14,11 +17,16 @@
 
 #include <d3d11.h>
 #include <dxgi.h>
+#include <shellapi.h>
 #include <wrl/client.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
 
 using Microsoft::WRL::ComPtr;
 
@@ -91,15 +99,39 @@ const void* loadFontResource(int& size)
     return LockResource(g);
 }
 
+struct CommandLine {
+    std::optional<std::filesystem::path> file;
+    bool pl = false;
+    bool nullAudio = false;
+    bool noAutoplay = false;
+    bool diag = false;
+};
+
+// Argumenty z GetCommandLineW (UTF-16): nazwy plikow spoza strony kodowej ANSI dzialaja poprawnie.
+CommandLine parseCommandLine()
+{
+    CommandLine cl;
+    int argc = 0;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    if (!argv) return cl;
+    for (int i = 1; i < argc; ++i) {
+        const std::wstring a = argv[i];
+        if (a == L"--pl") cl.pl = true;
+        else if (a == L"--null-audio") cl.nullAudio = true;       // bez dzwieku (testy/CI)
+        else if (a == L"--no-autoplay") cl.noAutoplay = true;     // po zaladowaniu: Stopped
+        else if (a == L"--diag") cl.diag = true;                  // start z diagnostyka (jak F12)
+        else if (a.rfind(L"--", 0) != 0 && !cl.file) cl.file = std::filesystem::path(a);
+    }
+    LocalFree(argv);
+    return cl;
+}
+
 } // namespace
 
-int main(int argc, char** argv)
+int main()
 {
-    bool startIdle = false;
-    for (int i = 1; i < argc; ++i) {
-        if (!std::strcmp(argv[i], "--idle")) startIdle = true;       // start bez animacji
-        else if (!std::strcmp(argv[i], "--pl")) vgmplay::ui::setLang(vgmplay::ui::Lang::Pl);
-    }
+    const CommandLine cl = parseCommandLine();
+    if (cl.pl) vgmplay::ui::setLang(vgmplay::ui::Lang::Pl);
 
     // Pad nie ma sterowac aplikacja, gdy okno nie ma fokusu (decyzja projektowa).
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "0");
@@ -132,9 +164,7 @@ int main(int argc, char** argv)
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
-    io.IniFilename = nullptr; // prototyp: bez zapisu ukladu
-    std::fprintf(stderr, "ImGui %s, SDL %d.%d.%d\n", IMGUI_VERSION, SDL_MAJOR_VERSION,
-                 SDL_MINOR_VERSION, SDL_MICRO_VERSION);
+    io.IniFilename = nullptr; // bez zapisu ukladu okien (ustawienia: E3)
 
     const float dpi = SDL_GetWindowDisplayScale(window);
     int fontSize = 0;
@@ -144,17 +174,33 @@ int main(int argc, char** argv)
 
     ImGui_ImplSDL3_InitForOther(window);
     ImGui_ImplDX11_Init(d3d.device.Get(), d3d.context.Get());
-    // 1.92+: backend DX11 ma ImGuiBackendFlags_RendererHasTextures => atlas dynamiczny.
-    std::fprintf(stderr, "dynamic atlas: %s\n",
-                 (io.BackendFlags & ImGuiBackendFlags_RendererHasTextures) ? "tak" : "nie");
+
+    // Zdarzenie budzace petle UI (np. koniec ladowania na watku workera).
+    const Uint32 wakeEvent = SDL_RegisterEvents(1);
+
+    vgmplay::app::ControllerOptions options;
+    options.nullAudio = cl.nullAudio;
+    options.autoplay = !cl.noAutoplay;
+    auto controller = std::make_unique<vgmplay::app::AppController>(options);
+    controller->setWakeCallback([wakeEvent] {
+        SDL_Event e{};
+        e.type = wakeEvent;
+        SDL_PushEvent(&e);
+    });
+    controller->setOpenDialogHandler(
+        [&] { vgmplay::app::showOpenFileDialog(window, *controller); });
+    controller->start();
+    if (!controller->view().audioError.empty())
+        std::fprintf(stderr, "audio: %s\n", controller->view().audioError.c_str());
+    if (cl.file) controller->loadFile(*cl.file);
 
     vgmplay::ui::NavInput nav;
-    vgmplay::ui::Mockup mockup;
-    mockup.setPlaying(!startIdle);
+    vgmplay::ui::PlayerScreen screen;
+    screen.setDiagnosticsVisible(cl.diag);
 
     bool running = true;
     bool minimized = false;
-    int settle = 3; // po zdarzeniu rysujemy jeszcze kilka klatek (hover, stany ImGui)
+    int settle = 12; // po zdarzeniu rysujemy jeszcze kilka klatek (hover, stany ImGui, odpowiedz silnika)
     std::uint64_t fpsStart = SDL_GetTicks();
     int fpsFrames = 0;
     float fps = 0.0f;
@@ -177,13 +223,23 @@ int main(int argc, char** argv)
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
             vgmplay::ui::applyTheme(SDL_GetWindowDisplayScale(window));
             break;
+        case SDL_EVENT_DROP_FILE:
+            if (e.drop.data) {
+                // UTF-8 -> sciezka (bez strony kodowej ANSI).
+                controller->loadFile(std::filesystem::path(reinterpret_cast<const char8_t*>(e.drop.data)));
+            }
+            break;
+        case SDL_EVENT_KEY_DOWN:
+            if (e.key.scancode == SDL_SCANCODE_O && (e.key.mod & SDL_KMOD_CTRL) && !e.key.repeat)
+                controller->requestOpenFile();
+            break;
         default: break;
         }
-        settle = 3;
+        settle = 12;
     };
 
     while (running) {
-        const bool animating = mockup.wantsAnimation() || nav.anyHeld() || settle > 0;
+        const bool animating = screen.wantsAnimation(controller->view()) || nav.anyHeld() || settle > 0;
         SDL_Event e;
         if (minimized) {
             if (SDL_WaitEventTimeout(&e, 250)) handle(e);
@@ -193,12 +249,14 @@ int main(int argc, char** argv)
         }
         while (SDL_PollEvent(&e)) handle(e);
         if (!running) break;
+
+        controller->pump(); // takze w minimalizacji: zdarzenia silnika i wyniki ladowania
         if (minimized) continue;
 
         const std::uint64_t now = SDL_GetTicks();
         nav.update(now);
 
-        const bool idle = !(mockup.wantsAnimation() || nav.anyHeld() || settle > 0);
+        const bool idle = !(screen.wantsAnimation(controller->view()) || nav.anyHeld() || settle > 0);
         if (settle > 0) --settle;
 
         if (d3d.occluded) {
@@ -212,7 +270,7 @@ int main(int argc, char** argv)
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();
-        mockup.frame(nav, {fps, idle}, static_cast<double>(now) / 1000.0);
+        screen.frame(nav, controller->view(), *controller, {fps, idle});
         ImGui::Render();
 
         const ImVec4& bg = vgmplay::ui::palette().window;
@@ -234,6 +292,7 @@ int main(int argc, char** argv)
         }
     }
 
+    controller.reset(); // zatrzymuje watki silnika i workera oraz urzadzenie audio
     ImGui_ImplDX11_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();
