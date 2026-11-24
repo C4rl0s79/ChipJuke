@@ -59,6 +59,7 @@ struct ControllerOptions {
     // brak trwalosci (testy, tryb bez zapisu): nic nie jest czytane ani zapisywane.
     std::filesystem::path settingsFile;
     std::uint32_t saveDelayMs = 1000;   // opoznienie zapisu po ostatniej zmianie (debounce)
+    bool allowNetworkPaths = false;     // --allow-network-paths: UNC w playlists.json/settings/cache
     bool noAppDataNotice = false;       // pokaz komunikat "brak AppData, ustawienia nie sa zapisywane"
 };
 
@@ -138,6 +139,7 @@ public:
     void requestExportM3u() override;
     void cancelScan() override;
     void applySettings(const settings::Settings& s) override;
+    void downloadEntry(std::size_t index) override;
     void dismissNotice() override;
 
     // Prev w pierwszych kPrevRestartSeconds sekundach -> poprzedni wpis; pozniej poczatek utworu.

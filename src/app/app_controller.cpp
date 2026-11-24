@@ -113,6 +113,7 @@ bool AppController::start()
         paths.playlists = dir / L"playlists.json";
         paths.cache = dir / L"library-cache.json";
     }
+    paths.allowNetworkPaths = options_.allowNetworkPaths;
     io_ = std::make_unique<IoWorker>(paths, [this] { if (wake_) wake_(); });
     if (persist_) io_->loadPlaylists();
     else installDefaultPlaylists();
@@ -389,6 +390,7 @@ void AppController::pump()
     view_.playlists = &model_;
     view_.meta = &metaStore_;
     view_.settings = &settings_;
+    view_.allowNetworkPaths = options_.allowNetworkPaths;
     view_.repeat = repeat_;
     view_.playlistsLoading = persist_ && !playlistsReady_;
     view_.scan = {};

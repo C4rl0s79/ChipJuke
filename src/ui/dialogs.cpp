@@ -22,7 +22,7 @@ using namespace detail;
 
 namespace {
 
-constexpr int kSettingsRows = 8;
+constexpr int kSettingsRows = 9;
 
 std::string fmt1(const char* f, const char* a)
 {
@@ -62,6 +62,7 @@ void PlayerScreen::confirmDialog(const PlayerView& view, PlayerActions& actions)
         case 2:
             if (d.index > 0) { actions.moveEntry(d.index, d.index - 1); plSel_ = static_cast<long long>(d.index) - 1; }
             break;
+        case 4: actions.downloadEntry(d.index); break;
         case 3: {
             const std::size_t cnt = view.playlists && view.playlists->playlistCount()
                                         ? view.playlists->playlist(view.playlists->activeIndex()).entries.size() : 0;
@@ -125,7 +126,7 @@ void PlayerScreen::applyModal(const NavEvent& ev, const PlayerView& view, Player
         if (dlg_.kind == DlgKind::EntryMenu) dlg_.sel = std::max(0, dlg_.sel - 1);
         break;
     case Action::Down:
-        if (dlg_.kind == DlgKind::EntryMenu) dlg_.sel = std::min(4, dlg_.sel + 1);
+        if (dlg_.kind == DlgKind::EntryMenu) dlg_.sel = std::min(5, dlg_.sel + 1);
         break;
     default: break;
     }
@@ -189,6 +190,7 @@ void PlayerScreen::drawSettings(const PlayerView& view, PlayerActions& actions, 
     rows.push_back({Str::SetLanguage, s.ui.language == i18n::Language::Pl ? "Polski" : "English", true});
     rows.push_back({Str::SetGd3, s.ui.gd3Language == format::Gd3Language::Jp ? "JP (日本語)" : "EN", true});
     rows.push_back({Str::SetRowLen, rowTicksLabel(s.ui.rowTicks), true});
+    rows.push_back({Str::SetNetwork, std::string(tr(view.allowNetworkPaths ? Str::SetOn : Str::SetOff)) + "  (" + tr(Str::SetNetworkNote) + ")", false});
 
     float ry = y0 + bar + lh * 0.6f;
     for (int i = 0; i < kSettingsRows; ++i) {
@@ -265,7 +267,7 @@ void PlayerScreen::drawDialog(const PlayerView& view, PlayerActions& actions, fl
     }
     case DlgKind::EntryMenu:
         title = tr(Str::PanelPlaylist);
-        items = {tr(Str::MenuPlay), tr(Str::MenuRemove), tr(Str::MenuMoveUp), tr(Str::MenuMoveDown), tr(Str::MenuCancel)};
+        items = {tr(Str::MenuPlay), tr(Str::MenuRemove), tr(Str::MenuMoveUp), tr(Str::MenuMoveDown), tr(Str::MenuDownload), tr(Str::MenuCancel)};
         break;
     case DlgKind::Report:
         title = tr(Str::DlgInfo);
@@ -284,7 +286,7 @@ void PlayerScreen::drawDialog(const PlayerView& view, PlayerActions& actions, fl
     const float bodyH = body.empty() ? 0.0f
                                      : ImGui::CalcTextSize(body.c_str(), nullptr, false, textW).y + lh * 0.6f;
     const float itemH = lh * 1.5f;
-    float contentH = bodyH + (textMode ? lh * 3.2f : 0.0f) + itemH * static_cast<float>(items.size());
+    float contentH = bodyH + (textMode ? lh * 4.6f : 0.0f) + itemH * static_cast<float>(items.size());
     if (report) contentH = bodyH + lh * 1.3f * static_cast<float>(items.size());
     const float btnH = lh + 6.0f * dpi;
     const float bar = lh + 4.0f * dpi;

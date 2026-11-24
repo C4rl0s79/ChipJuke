@@ -15,6 +15,7 @@ namespace vgmplay::ui {
 struct TrackDisplay {
     std::string trackEn, trackJp;   // tytuly GD3 (UTF-8, puste = brak)
     std::uint64_t durationMs = 0;   // 0 = nieznana
+    bool cloud = false;             // plik w chmurze (placeholder), nie pobrany - metadane pominiete
     bool failed = false;            // odczyt metadanych sie nie udal (nie ponawiamy)
 };
 

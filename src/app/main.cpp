@@ -108,6 +108,7 @@ struct CommandLine {
     std::vector<std::filesystem::path> files;   // pliki/foldery z wiersza polecen
     bool pl = false;
     bool nullAudio = false;
+    bool allowNetwork = false;
     bool noAutoplay = false;
     bool diag = false;
     bool fakeChannelScopes = false;
@@ -128,6 +129,7 @@ CommandLine parseCommandLine()
         const std::wstring a = argv[i];
         if (a == L"--pl") cl.pl = true;
         else if (a == L"--null-audio") cl.nullAudio = true;       // bez dzwieku (testy/CI)
+        else if (a == L"--allow-network-paths") cl.allowNetwork = true;   // UNC w playlistach (domyslnie odrzucane)
         else if (a == L"--no-autoplay") cl.noAutoplay = true;     // po zaladowaniu: Stopped
         else if (a == L"--diag") cl.diag = true;                  // start z diagnostyka (jak F12)
         else if (a == L"--fake-channel-scopes") cl.fakeChannelScopes = true; // DIAGNOSTYKA: syntetyczne przebiegi kanalow
@@ -226,6 +228,7 @@ int main()
         else options.noAppDataNotice = true;   // brak zapisywalnego katalogu: bez trwalosci
     }
     options.nullAudio = cl.nullAudio;
+    options.allowNetworkPaths = cl.allowNetwork;
     options.autoplay = !cl.noAutoplay;
     options.fakeChannelScopes = cl.fakeChannelScopes;
     options.fakePattern = cl.fakePattern;

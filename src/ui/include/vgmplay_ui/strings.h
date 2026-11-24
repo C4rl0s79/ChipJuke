@@ -140,6 +140,12 @@ enum class Str {
     SetCtl5,
     SetCtl6,
     DefaultListName,
+    CloudTag,
+    MenuDownload,
+    SetNetwork,
+    SetOn,
+    SetOff,
+    SetNetworkNote,
     Count
 };
 

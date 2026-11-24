@@ -64,7 +64,7 @@ void AppController::loadSettingsAtStart()
     persist_ = !options_.settingsFile.empty();
     if (persist_) {
         std::vector<Warning> warnings;
-        auto r = settings::loadSettings(options_.settingsFile, &warnings);
+        auto r = settings::loadSettings(options_.settingsFile, &warnings, options_.allowNetworkPaths);
         if (r.ok()) {
             settings_ = std::move(r.value());
         } else {
@@ -500,7 +500,11 @@ void AppController::handleIo()
     for (MetaResult& m : r.meta) {
         ui::TrackDisplay d;
         if (const ui::TrackDisplay* old = metaStore_.find(m.path)) d = *old;
-        if (m.meta) {
+        if (m.cloud) {   // placeholder chmury: bez pobierania; uzytkownik moze wybrac "pobierz mimo to"
+            d.cloud = true;
+            d.failed = false;
+        } else if (m.meta) {
+            d.cloud = false;
             if (!m.meta->trackEn.empty() || !m.meta->trackJp.empty()) {
                 d.trackEn = m.meta->trackEn;
                 d.trackJp = m.meta->trackJp;
@@ -561,6 +565,15 @@ void AppController::playPrevious()
         seekToFrame(0);
         if (view_.transport.state == engine::TransportState::Ended) play();
     }
+}
+
+void AppController::downloadEntry(std::size_t index)
+{
+    if (!playlistsReady_ || model_.playlistCount() == 0 || !io_) return;
+    const auto& l = model_.playlist(model_.activeIndex());
+    if (index >= l.entries.size()) return;
+    const ui::TrackDisplay* d = metaStore_.find(l.entries[index].path);
+    if (d && d->cloud) io_->queueMetaDownload(l.entries[index].path);
 }
 
 void AppController::removeEntry(std::size_t index)

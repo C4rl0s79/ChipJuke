@@ -31,6 +31,7 @@ inline constexpr std::uintmax_t kMaxM3uBytes = 16u * 1024u * 1024u;   // limit r
 struct MetaResult {
     std::filesystem::path path;
     std::optional<library::TrackMeta> meta;   // brak = odczyt sie nie udal
+    bool cloud = false;                       // plik w chmurze (placeholder) - pominiety
 };
 
 struct ImportDone {
@@ -67,6 +68,7 @@ public:
         std::filesystem::path settings;    // pusty = brak zapisu ustawien
         std::filesystem::path playlists;   // pusty = brak wczytywania/zapisu playlist
         std::filesystem::path cache;       // pusty = cache metadanych tylko w pamieci
+        bool allowNetworkPaths = false;    // sciezki UNC w playlistach i cache
     };
     IoWorker(Paths paths, std::function<void()> wake);
     ~IoWorker();
@@ -77,6 +79,7 @@ public:
     void saveSettings(settings::Settings s);
     void savePlaylists(playlist::PlaylistModel m);
     void queueMeta(std::vector<std::filesystem::path> paths);
+    void queueMetaDownload(std::filesystem::path path);   // "pobierz mimo to" (plik w chmurze)
     void importM3u(std::filesystem::path file);
     void exportM3u(std::filesystem::path file, std::string text);
     [[nodiscard]] IoResults take();
@@ -96,6 +99,7 @@ private:
     std::deque<std::filesystem::path> importQueue_;
     std::deque<std::pair<std::filesystem::path, std::string>> exportQueue_;
     std::deque<std::filesystem::path> metaQueue_;
+    std::deque<std::filesystem::path> downloadQueue_;
     std::unordered_set<std::wstring> metaQueued_;
     IoResults results_;
     std::atomic<bool> wakePending_{false};

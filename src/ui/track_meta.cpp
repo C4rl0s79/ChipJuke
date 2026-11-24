@@ -1,6 +1,7 @@
 #include "vgmplay_ui/track_meta.h"
 
 #include "vgmplay_ui/format.h"
+#include "vgmplay_ui/strings.h"
 
 #include <cwctype>
 
@@ -25,7 +26,11 @@ std::string entryTitle(const playlist::Entry& e, const TrackMetaStore* meta, for
     }
     if (!e.title.empty()) return sanitizeForDisplay(e.title);
     const auto u8 = e.path.filename().u8string();
-    return sanitizeForDisplay(std::string(u8.begin(), u8.end()));
+    std::string name = sanitizeForDisplay(std::string(u8.begin(), u8.end()));
+    if (meta) {
+        if (const TrackDisplay* d = meta->find(e.path); d && d->cloud) name += std::string("  [") + tr(Str::CloudTag) + "]";
+    }
+    return name;
 }
 
 std::uint64_t entryDurationMs(const playlist::Entry& e, const TrackMetaStore* meta)

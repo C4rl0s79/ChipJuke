@@ -143,6 +143,12 @@ constexpr Entry kTexts[] = {
     /*SetCtl5*/ {"Key and pad remapping: not available yet (fixed layout)", "Zmiana przypisań klawiszy i pada: jeszcze niedostępna (układ stały)"},
     /*SetCtl6*/ {"Playlists: F8 new   F9 rename   Shift+Del delete   Left/Right (in the list) switch", "Playlisty: F8 nowa   F9 nazwa   Shift+Del usuń   Lewo/Prawo (w liście) przełączanie"},
     /*DefaultListName*/ {"Playlist", "Playlista"},
+    /*CloudTag*/ {"cloud file, not downloaded", "plik w chmurze (nie pobrano)"},
+    /*MenuDownload*/ {"Download anyway (cloud file)", "Pobierz mimo to (plik w chmurze)"},
+    /*SetNetwork*/ {"Network paths (UNC)", "Ścieżki sieciowe (UNC)"},
+    /*SetOn*/ {"allowed", "dozwolone"},
+    /*SetOff*/ {"blocked", "zablokowane"},
+    /*SetNetworkNote*/ {"enable: --allow-network-paths", "włącz: --allow-network-paths"},
 };
 static_assert(sizeof(kTexts) / sizeof(kTexts[0]) == static_cast<std::size_t>(Str::Count),
               "tablica tekstow musi pokrywac cale enum Str");

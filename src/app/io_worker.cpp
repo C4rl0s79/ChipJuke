@@ -65,6 +65,15 @@ void IoWorker::queueMeta(std::vector<fs::path> paths)
     cv_.notify_one();
 }
 
+void IoWorker::queueMetaDownload(fs::path path)
+{
+    {
+        std::lock_guard lock(mutex_);
+        downloadQueue_.push_back(std::move(path));
+    }
+    cv_.notify_one();
+}
+
 void IoWorker::importM3u(fs::path file)
 {
     {
@@ -142,12 +151,13 @@ void IoWorker::loop()
         std::optional<fs::path> imp;
         std::optional<std::pair<fs::path, std::string>> exp;
         std::optional<fs::path> meta;
+        bool allowCloud = false;
         bool quitting = false;
         {
             std::unique_lock lock(mutex_);
             cv_.wait(lock, [&] {
                 return quit_ || pendingSettings_ || pendingPlaylists_ || loadPlaylists_ || !importQueue_.empty() ||
-                       !exportQueue_.empty() || !metaQueue_.empty();
+                       !exportQueue_.empty() || !metaQueue_.empty() || !downloadQueue_.empty();
             });
             quitting = quit_;
             st = std::move(pendingSettings_);
@@ -163,6 +173,10 @@ void IoWorker::loop()
                 } else if (!exportQueue_.empty()) {
                     exp = std::move(exportQueue_.front());
                     exportQueue_.pop_front();
+                } else if (!doLoad && !st && !pl && !downloadQueue_.empty()) {
+                    meta = std::move(downloadQueue_.front());
+                    downloadQueue_.pop_front();
+                    allowCloud = true;
                 } else if (!doLoad && !st && !pl && !metaQueue_.empty()) {
                     meta = std::move(metaQueue_.front());
                     metaQueue_.pop_front();
@@ -188,7 +202,7 @@ void IoWorker::loop()
         // 2) wczytanie playlist
         if (doLoad) {
             if (paths_.playlists.empty()) out.playlists.emplace(playlist::PlaylistModel{});
-            else out.playlists.emplace(playlist::loadPlaylistsFile(paths_.playlists));
+            else out.playlists.emplace(playlist::loadPlaylistsFile(paths_.playlists, playlist::PlaylistLoadOptions{paths_.allowNetworkPaths}));
         }
         // 3) M3U
         if (imp) {
@@ -229,21 +243,22 @@ void IoWorker::loop()
             if (!cacheLoaded) {
                 cacheLoaded = true;
                 if (!paths_.cache.empty()) {
-                    auto c = library::loadMetaCacheFile(paths_.cache);
+                    auto c = library::loadMetaCacheFile(paths_.cache, paths_.allowNetworkPaths);
                     if (c.ok()) cache = std::move(c.value());   // uszkodzony = pusty (nic waznego tam nie ma)
                 }
             }
             const std::size_t before = cache.size();
             MetaResult m;
             m.path = *meta;
-            auto r = cache.getOrRead(*meta, cancel_);
+            auto r = cache.getOrRead(*meta, cancel_, allowCloud);
             if (r.ok()) m.meta = std::move(r.value());
+            else m.cloud = library::isCloudPlaceholderError(r.error());
             if (cache.size() != before) ++cacheDirty;
             out.meta.push_back(std::move(m));
             bool more;
             {
                 std::lock_guard lock(mutex_);
-                more = !metaQueue_.empty();
+                more = !metaQueue_.empty() || !downloadQueue_.empty();
             }
             if (!more || cacheDirty >= 200) flushCache();
         }

@@ -85,6 +85,7 @@ struct PlayerView {
     playlist::RepeatMode repeat = playlist::RepeatMode::Off;
     bool playlistsLoading = false;       // playlists.json jeszcze sie wczytuje (worker)
     ScanStatus scan;
+    bool allowNetworkPaths = false;      // sciezki UNC w playlistach/cache (opcja startowa)
     std::optional<Notice> notice;
 
     [[nodiscard]] bool hasTrack() const { return track && info; }
@@ -135,6 +136,7 @@ public:
     virtual void requestExportM3u() {}
     virtual void cancelScan() {}
     virtual void applySettings(const settings::Settings&) {}
+    virtual void downloadEntry(std::size_t) {}       // "pobierz mimo to": wpis w chmurze (czyta plik)
     virtual void dismissNotice() {}                  // takze potwierdzenie (needsAck)
 };
 
