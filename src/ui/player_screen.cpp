@@ -3,6 +3,7 @@
 #include "vgmplay_ui/channel_mix.h"
 #include "vgmplay_ui/channel_widgets.h"
 #include "vgmplay_ui/format.h"
+#include "vgmplay_ui/scroll_layout.h"
 #include "vgmplay_ui/scope_buffer.h"
 #include "screen_util.h"
 #include "vgmplay_ui/strings.h"
@@ -113,6 +114,7 @@ namespace {
 using engine::TransportState;
 
 constexpr int kTransportButtons = 6; // prev, play, pause, stop, next, open
+constexpr float kSidePanelScale = 0.7f;   // [E4] szerokosc paneli Playlista/Info wzgledem E3
 constexpr double kSeekStepSeconds = 5.0;
 constexpr float kVolumeStep = 0.05f;
 constexpr std::size_t kScopeFrames = 1024;
@@ -152,7 +154,8 @@ struct ButtonState {
 bool PlayerScreen::wantsAnimation(const PlayerView& v) const
 {
     return v.transport.state == TransportState::Playing || v.transport.state == TransportState::Loading ||
-           v.loading || v.scan.active || v.playlistsLoading || dragging_ || seekDrag_ || volumeDrag_ || seekHold_ > 0 || vu_.active();
+           v.loading || v.scan.active || v.playlistsLoading || dragging_ || seekDrag_ || volumeDrag_ || seekHold_ > 0 || vu_.active() ||
+           (browser_.isOpen() && browser_.loading());
 }
 
 void PlayerScreen::applyTransport(const NavEvent& ev, const PlayerView& view, PlayerActions& actions)
@@ -257,10 +260,10 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
         applyPlaylist(ev, view, actions);
         break;
     case Panel::Info:
-        if (ev.action == Action::Up) infoScroll_ = std::max(0, infoScroll_ - 1);
-        else if (ev.action == Action::Down) ++infoScroll_;   // ogranicza rysowanie
-        else if (ev.action == Action::PageUp) infoScroll_ = std::max(0, infoScroll_ - 5);
-        else if (ev.action == Action::PageDown) infoScroll_ += 5;
+        if (ev.action == Action::Up) infoScrollPx_ -= infoStep_;   // obcina rysowanie (clampScroll)
+        else if (ev.action == Action::Down) infoScrollPx_ += infoStep_;
+        else if (ev.action == Action::PageUp) infoScrollPx_ -= std::max(infoStep_, infoViewH_ - infoStep_);
+        else if (ev.action == Action::PageDown) infoScrollPx_ += std::max(infoStep_, infoViewH_ - infoStep_);
         else if (ev.action == Action::Confirm && !ev.repeat) toggleGd3(view, actions);
         break;
     case Panel::Tracker:
@@ -316,7 +319,7 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
         }
     }
     pollCapture(nav, view, actions);
-    focusKbdOnly_ = false;
+    browser_.tick();
     for (const NavEvent& ev : nav.events()) {
         const bool modalBefore = modalOpen();
         apply(ev, nav.focus(), view, actions);
@@ -337,11 +340,14 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
     const float transportH = lh * 3.4f;
     const float statusH = lh * 1.5f;
     const float bodyY = transportH + 2 * gap;
-    const bool hints = nav.lastInputWasPad() || (view.settings && view.settings->ui.showButtonHints);
+    // [E4] pasek podpowiedzi tylko przy wlaczonym ustawieniu (domyslnie wylaczone), takze przy uzyciu pada.
+    const bool hints = view.settings && view.settings->ui.showButtonHints;
     const float hintH = hints ? lh * 1.7f : 0.0f;
     const float hintSpace = hints ? hintH + gap : 0.0f;
     const float bodyH = H - bodyY - statusH - 2 * gap - hintSpace;
-    const float leftW = std::clamp(W * 0.32f, lh * 14.0f, lh * 30.0f);
+    // [E4] panele Playlista i Info ~70% dawnej szerokosci (wiecej miejsca dla wzorca), z rozsadnym minimum.
+    const float leftW = std::clamp(W * 0.32f * kSidePanelScale, lh * 11.0f, lh * 21.0f);
+    sideW_ = leftW;
     const float rightX = leftW + 2 * gap;
     const float rightW = W - rightX - gap;
     const float playlistH = std::clamp(bodyH * 0.5f, lh * 9.0f, bodyH * 0.65f);
@@ -390,7 +396,8 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
     nav.setOverlay(bindingsOpen_ ? std::optional<input::ScreenId>(input::ScreenId::Bindings)
                    : settingsOpen_ && dlg_.kind != DlgKind::NetworkConfirm ? std::optional<input::ScreenId>(input::ScreenId::Settings)
                    : dlg_.kind != DlgKind::None ? std::optional<input::ScreenId>(input::ScreenId::Dialog)
-                                                : std::nullopt);
+                   : browser_.isOpen() ? std::optional<input::ScreenId>(input::ScreenId::FileBrowser)
+                                       : std::nullopt);
 }
 
 void PlayerScreen::updateMeters(const PlayerView& view, float dt)
@@ -475,10 +482,7 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
         tGrid_.reg(0, i);
         const bool ring = ringAt(tGrid_, focused, 0, i);
         const bool act = activatedAt(tGrid_, focused, 0, i) && enabled;
-        if (ring) {
-            drawFocusRing(dl, a, b, dpi);
-            if (i == 5) focusKbdOnly_ = true;   // okno wyboru plikow: klawiatura/mysz
-        }
+        if (ring) drawFocusRing(dl, a, b, dpi);
         const ImU32 ic = col32(!enabled ? withAlpha(p.textDim, 0.45f) : (active ? p.accent : p.text));
         const float m = bs * 0.28f;
         const float cx = bx + bs * 0.5f, cy = by + bs * 0.5f, r = bs * 0.5f - m;
@@ -508,7 +512,8 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
         }
         if (hover) ImGui::SetTooltip("%s", labels[i]);
         {
-            if (enabled && ((hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) || act)) {
+            const bool mouseHit = hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+            if (enabled && (mouseHit || act)) {
                 nav.setFocus(Panel::Transport);
                 switch (i) {
                 case 0: actions.playPrevious(); break;
@@ -516,7 +521,7 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
                 case 1: actions.play(); break;
                 case 2: actions.pause(); break;
                 case 3: actions.stop(); break;
-                case 5: actions.requestOpenFile(); break;
+                case 5: openPicker(BrowserMode::AddFiles, view, actions, !mouseHit && nav.lastInputWasPad()); break;
                 default: break;
                 }
             }
@@ -678,30 +683,52 @@ void PlayerScreen::drawInfo(NavInput& nav, const PlayerView& view, PlayerActions
         rows.push_back({"", tr(Str::NoFileHint), false, true});
     }
 
-    const float rowH = lh + 3.0f * dpi;
-    const int visible = std::max(1, static_cast<int>((h - bar - 6.0f * dpi) / rowH));
-    const int maxScroll = std::max(0, static_cast<int>(rows.size()) - visible);
+    // [E4] Wiersze sa zawijane do szerokosci panelu (tytuly, autorzy, notatki GD3, dlugie sciezki), wiec maja rozne
+    // wysokosci; przewijanie jest w pikselach (krok = jeden wiersz tekstu), wspolna funkcja clampScroll.
+    const float lineH = lh + 3.0f * dpi;
+    infoStep_ = lineH;
+    const float labelW = lh * 6.5f;
+    const float padX = 6.0f * dpi;
+    const float bodyTop = wp.y + bar + 4.0f * dpi;
+    const float bodyBottom = wp.y + h - 2.0f * dpi;
+    const float viewH = std::max(1.0f, bodyBottom - bodyTop);
+    const float sbW = 4.0f * dpi;
+    ImFont* font = ImGui::GetFont();
+    const float fontSize = ImGui::GetFontSize();
+    auto wrapWidthOf = [&](const Row& r) { return std::max(lh, w - padX - (r.wide ? 0.0f : labelW) - sbW - 4.0f * dpi); };
+    std::vector<float> heights(rows.size());
+    float content = 0.0f;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const Row& r = rows[i];
+        const float vh = r.value.empty() ? 0.0f : ImGui::CalcTextSize(r.value.c_str(), nullptr, false, wrapWidthOf(r)).y;
+        heights[i] = std::max(lh, vh) + 3.0f * dpi;
+        content += heights[i];
+    }
+    infoViewH_ = viewH;
+    infoContentH_ = content;
     if (ImGui::IsWindowHovered()) {
         const float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.0f) infoScroll_ -= static_cast<int>(wheel * 2);
+        if (wheel != 0.0f) infoScrollPx_ -= wheel * 2.0f * lineH;
     }
-    infoScroll_ = std::clamp(infoScroll_, 0, maxScroll);
+    infoScrollPx_ = std::round(clampScroll(infoScrollPx_, content, viewH));
 
-    const float labelW = lh * 6.5f;
-    float ry = wp.y + bar + 4.0f * dpi;
-    for (int i = infoScroll_; i < static_cast<int>(rows.size()); ++i) {
-        if (ry + lh > wp.y + h) break;
-        const Row& r = rows[static_cast<std::size_t>(i)];
-        dl->AddText(ImVec2(wp.x + 6.0f * dpi, ry), col32(p.textDim), r.label.c_str());
-        clippedText(dl, wp.x + 6.0f * dpi + (r.wide ? 0.0f : labelW), wp.x + w - 4.0f * dpi, ry,
-                    col32(r.notice ? p.notice : p.text), r.value.c_str());
-        ry += rowH;
+    dl->PushClipRect(ImVec2(wp.x + 1.0f, bodyTop), ImVec2(wp.x + w - 1.0f, bodyBottom), true);
+    float ry = bodyTop - infoScrollPx_;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const Row& r = rows[i];
+        if (ry + heights[i] >= bodyTop && ry <= bodyBottom) {
+            dl->AddText(ImVec2(wp.x + padX, ry), col32(p.textDim), r.label.c_str());
+            if (!r.value.empty())
+                dl->AddText(font, fontSize, ImVec2(wp.x + padX + (r.wide ? 0.0f : labelW), ry),
+                            col32(r.notice ? p.notice : p.text), r.value.c_str(), nullptr, wrapWidthOf(r));
+        }
+        ry += heights[i];
+        if (ry > bodyBottom) break;
     }
-    if (maxScroll > 0) { // wskaznik przewijania
-        const float th = h - bar - 6.0f * dpi;
-        const float bh = std::max(8.0f * dpi, th * visible / static_cast<float>(rows.size()));
-        const float by = wp.y + bar + 3.0f * dpi + (th - bh) * infoScroll_ / static_cast<float>(maxScroll);
-        dl->AddRectFilled(ImVec2(wp.x + w - 3.0f * dpi, by), ImVec2(wp.x + w - 1.0f * dpi, by + bh), col32(p.border));
+    dl->PopClipRect();
+    if (content > viewH) { // wskaznik przewijania
+        const Thumb t = scrollThumb(infoScrollPx_, content, viewH, viewH, 8.0f * dpi);
+        dl->AddRectFilled(ImVec2(wp.x + w - sbW - dpi, bodyTop + t.pos), ImVec2(wp.x + w - dpi, bodyTop + t.pos + t.len), col32(p.border));
     }
     ImGui::End();
 }
@@ -738,6 +765,7 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
         std::snprintf(title + len, sizeof title - static_cast<std::size_t>(len), "  %llX/%llX",
                       static_cast<unsigned long long>(cur),
                       static_cast<unsigned long long>(pat->rowCount ? pat->rowCount - 1 : 0));
+    trackerW_ = w;
     const float titleBar = drawFrame(dl, title, focused);
     const float dpi = ImGui::GetStyle().FontScaleDpi;
     const float lh = ImGui::GetTextLineHeight();
@@ -768,27 +796,28 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
     columnMap_ = mapPatternColumns(ti.layout, pat);
 
     // ---- geometria: [urzadzenia][pasek oscyloskopow][naglowki][wzorzec], kolumny wspolne ----
+    // [E4] Kolumny sa 2x szersze niz w E3; gdy ich suma nie miesci sie w panelu, wszystkie (oscyloskopy, naglowki
+    // M/S, wzorzec) przewijaja sie poziomo razem (colScroll_, piksele), a numery wierszy zostaja z lewej.
     const bool showFx = view.patternHasEffects;
     const float rowH = lh + 2.0f * dpi;
     const float headH = lh + 4.0f * dpi;
     const float devH = lh + 2.0f * dpi;
-    const float colW = std::floor(cw * (static_cast<float>(showFx ? kCellCharsFx : kCellCharsNoFx) + 1.5f));
+    const int cellChars = showFx ? kCellCharsFx : kCellCharsNoFx;
+    const float colW = channelColumnWidth(cw, cellChars);
+    colWidthPx_ = colW;
     int digits = 2;
     if (pat && pat->rowCount > 1)
         for (std::uint64_t v = (pat->rowCount - 1) >> 8; v != 0; v >>= 4) ++digits; // 2 cyfry do 0xFF
     if (digits < 2) digits = 2;
     const float numW = std::floor(cw * (static_cast<float>(digits) + 1.5f));
     const float left = wp.x + 4.0f * dpi;
-
-    const int visChans = std::clamp(static_cast<int>((w - numW - 8.0f * dpi) / colW), 1, nch);
-    visCols_ = visChans;
-    if (ImGui::IsWindowHovered()) { // kolko: przesuwa kursor kanalu (kolumny przewijaja sie za nim)
-        const float wheel = io.MouseWheel;
-        if (wheel != 0.0f) chan_ = std::clamp(chan_ + (wheel < 0 ? 1 : -1), 0, nch - 1);
-    }
-    if (chan_ < firstChan_) firstChan_ = chan_;
-    if (chan_ >= firstChan_ + visChans) firstChan_ = chan_ - visChans + 1;
-    firstChan_ = std::clamp(firstChan_, 0, nch - visChans);
+    const float viewL = left + numW;
+    const float rightEdge = wp.x + w - 4.0f * dpi;
+    const float viewW = std::max(1.0f, rightEdge - viewL);
+    const float content = contentWidth(nch, colW);
+    const bool scrollable = content > viewW + 0.5f;
+    const float sbH = scrollable ? 9.0f * dpi : 0.0f;
+    const float gap = std::max(2.0f, 2.0f * dpi);
 
     const float stripWanted = strip_ == ScopeStrip::Hidden ? 0.0f : lh * (strip_ == ScopeStrip::Large ? 8.4f : 4.2f);
     const float stripH = std::min(stripWanted, (h - bar) * 0.4f);
@@ -800,11 +829,54 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
     const float headTop = yy;
     yy += headH;
     const float gridTop = yy + dpi;
-    const float gridBottom = wp.y + h - dpi;
+    const float gridBottom = wp.y + h - dpi - sbH;
     const int visRows = std::max(1, static_cast<int>((gridBottom - gridTop) / rowH));
     const int cursorIdx = visRows / 2;
-    const float rightEdge = wp.x + w - 4.0f * dpi;
-    const float gap = std::max(2.0f, 2.0f * dpi);
+
+    // Kolko: z Shift przesuwa widok, bez Shift kursor kanalu (widok podaza za kursorem).
+    if (ImGui::IsWindowHovered()) {
+        const float wheel = io.MouseWheel;
+        if (wheel != 0.0f) {
+            if (io.KeyShift) colScroll_ = wheelScroll(colScroll_, wheel, colW * 0.5f, content, viewW);
+            else chan_ = std::clamp(chan_ + (wheel < 0 ? 1 : -1), 0, nch - 1);
+        }
+        if (io.MouseWheelH != 0.0f) colScroll_ = wheelScroll(colScroll_, io.MouseWheelH, colW * 0.5f, content, viewW);
+    }
+    // Pasek przewijania (u dolu panelu): klik w tor skacze, przeciaganie uchwytu.
+    const float sbY0 = wp.y + h - sbH, sbY1 = wp.y + h - dpi;
+    if (scrollable) {
+        const Thumb th = scrollThumb(colScroll_, content, viewW, viewW, 16.0f * dpi);
+        if (!colDrag_ && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+            ImGui::IsMouseHoveringRect(ImVec2(viewL, sbY0), ImVec2(rightEdge, sbY1))) {
+            colDrag_ = true;
+            const float mx = io.MousePos.x - viewL;
+            colDragGrab_ = (mx >= th.pos && mx <= th.pos + th.len) ? mx - th.pos : th.len * 0.5f;
+            nav.setFocus(Panel::Tracker);
+        }
+        if (colDrag_) {
+            if (!io.MouseDown[0]) colDrag_ = false;
+            else colScroll_ = offsetFromThumb(io.MousePos.x - viewL - colDragGrab_, content, viewW, viewW, th.len);
+        }
+    } else {
+        colDrag_ = false;
+    }
+    // Fokus (kursor kanalu) ZAWSZE na widocznej kolumnie: ruch kursora (pad/klawiatura/kolko) lub zmiana szerokosci
+    // okna przewija widok do kolumny; reczne przewiniecie (Shift+kolko, pasek) przesuwa kursor na widoczna kolumne.
+    colScroll_ = clampScroll(colScroll_, content, viewW);
+    if (chan_ != lastRevealChan_ || std::fabs(viewW - lastViewW_) > 0.5f) {
+        colScroll_ = revealColumn(colScroll_, chan_, nch, colW, viewW);
+    } else {
+        const ColumnRange fr = fullyVisibleColumns(colScroll_, nch, colW, viewW);
+        if (fr.count() > 0) chan_ = std::clamp(chan_, fr.first, fr.last);
+    }
+    colScroll_ = std::round(clampScroll(colScroll_, content, viewW));
+    lastRevealChan_ = chan_;
+    lastViewW_ = viewW;
+    chanFullyVisible_ = columnFullyVisible(chan_, colScroll_, colW, viewW);
+    const ColumnRange vis = columnsInView(colScroll_, nch, colW, viewW);
+    firstChan_ = vis.first;
+    visCols_ = vis.count();
+    auto colX = [&](int ch) { return viewL + static_cast<float>(ch) * colW - colScroll_; };
 
     // Auto-wzmocnienie przebiegow: stan zerowany przy nowym utworze.
     if (gainTrack_ != view.track.get() || autoGain_.size() != static_cast<std::size_t>(nch)) {
@@ -818,25 +890,25 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
                          view.transport.state != TransportState::Failed;
 
     // ---- kolumny: urzadzenie, oscyloskop + VU, naglowek z nazwa i M/S ----
-    for (int c = 0; c < visChans; ++c) {
-        const int ch = firstChan_ + c;
+    dl->PushClipRect(ImVec2(viewL, devTop), ImVec2(rightEdge + dpi, gridBottom + dpi), true);
+    for (int ch = vis.first; ch <= vis.last; ++ch) {
         const ChannelRef& ref = ti.layout.channels[static_cast<std::size_t>(ch)];
         const DeviceDesc* dev = ref.deviceIdx < ti.layout.devices.size() ? &ti.layout.devices[ref.deviceIdx] : nullptr;
-        const float cx = left + numW + static_cast<float>(c) * colW;
+        const float cx = colX(ch);
         const float x1 = cx + colW - gap;
         const bool selected = ch == chan_;
         const bool audible = !view.mix || view.mix->audible(ch);
         const ImVec4 chVec = p.channel[ch % kChannelCount];
 
-        // Nazwa ukladu nad pierwsza kolumna ukladu (przycieta do jego widocznych kolumn).
-        const bool newDev = c == 0 || ti.layout.channels[static_cast<std::size_t>(ch - 1)].deviceIdx != ref.deviceIdx;
+        // Nazwa ukladu nad pierwsza widoczna kolumna ukladu (przycieta do jego widocznych kolumn).
+        const bool newDev = ch == vis.first || ti.layout.channels[static_cast<std::size_t>(ch - 1)].deviceIdx != ref.deviceIdx;
         if (newDev && dev) {
             int run = 1;
-            while (c + run < visChans &&
+            while (ch + run <= vis.last &&
                    ti.layout.channels[static_cast<std::size_t>(ch + run)].deviceIdx == ref.deviceIdx)
                 ++run;
             const std::string dn = dev->name.empty() ? std::string(chipTypeName(dev->type)) : dev->name;
-            clippedText(dl, cx + cw * 0.5f, std::min(cx + static_cast<float>(run) * colW - gap, rightEdge),
+            clippedText(dl, std::max(cx, viewL) + cw * 0.5f, std::min(cx + static_cast<float>(run) * colW - gap, rightEdge),
                         devTop + dpi, col32(p.textDim), dn.c_str());
         }
 
@@ -867,7 +939,7 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
                 drawVuBar(dl, va, vb, vu_.channel(static_cast<std::size_t>(ch)), !audible);
         }
 
-        // Naglowek kolumny wzorca: nazwa kanalu (kolor kanalu) + M / S.
+        // Naglowek kolumny wzorca: nazwa kanalu (kolor kanalu) + M / S (przewijaja sie razem z kolumna).
         char hd[40];
         if (dev && ref.channelIdx < dev->channelNames.size())
             std::snprintf(hd, sizeof hd, "%s", dev->channelNames[ref.channelIdx].c_str());
@@ -880,18 +952,22 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
         const bool isMuted = view.mix && view.mix->muted(ch);
         const bool isSolo = view.mix && view.mix->solo(ch);
         bool boxClick = false;
-        if (drawToggleBox(dl, mPos, bs, "M", isMuted, p.muteOn, tr(Str::TipMute))) { actions.toggleChannelMute(ch); boxClick = true; }
-        if (drawToggleBox(dl, sPos, bs, "S", isSolo, p.soloOn, tr(Str::TipSolo))) { actions.toggleChannelSolo(ch); boxClick = true; }
-        clippedText(dl, cx + cw * 0.5f, mPos.x - 2.0f * dpi, headTop + dpi * 2.0f,
+        if (mPos.x >= viewL && sPos.x + bs <= rightEdge) {   // przyciete M/S (czesciowo poza widokiem) nie reaguja
+            if (drawToggleBox(dl, mPos, bs, "M", isMuted, p.muteOn, tr(Str::TipMute))) { actions.toggleChannelMute(ch); boxClick = true; }
+            if (drawToggleBox(dl, sPos, bs, "S", isSolo, p.soloOn, tr(Str::TipSolo))) { actions.toggleChannelSolo(ch); boxClick = true; }
+        }
+        clippedText(dl, std::max(cx, viewL) + cw * 0.5f, std::min(mPos.x - 2.0f * dpi, rightEdge), headTop + dpi * 2.0f,
                     col32(audible ? chVec : withAlpha(chVec, 0.45f)), hd);
 
         // Klik w kolumne (poza M/S): wybor kanalu.
         if (!boxClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-            ImGui::IsMouseHoveringRect(ImVec2(cx, stripH > 0.0f ? stripTop : headTop), ImVec2(x1, gridBottom))) {
+            ImGui::IsMouseHoveringRect(ImVec2(std::max(cx, viewL), stripH > 0.0f ? stripTop : headTop),
+                                       ImVec2(std::min(x1, rightEdge), gridBottom))) {
             chan_ = ch;
             nav.setFocus(Panel::Tracker);
         }
     }
+    dl->PopClipRect();
 
     // ---- wzorzec: kursor odtwarzania w srodku, wiersze przesuwaja sie razem z pozycja slyszana ----
     dl->PushClipRect(ImVec2(wp.x, gridTop), ImVec2(wp.x + w, gridBottom + dpi), true);
@@ -917,10 +993,10 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
         std::snprintf(rn, sizeof rn, "%0*llX", digits, static_cast<unsigned long long>(*dr));
         dl->AddText(ImVec2(left + cw * 0.5f, ry + dpi), col32(isCursor || *dr % 4 == 0 ? p.text : p.textDim), rn);
 
-        for (int c = 0; c < visChans; ++c) {
-            const int ch = firstChan_ + c;
-            const float cx = left + numW + static_cast<float>(c) * colW;
-            const float tx = cx + cw * 0.75f;
+        dl->PushClipRect(ImVec2(viewL, ry), ImVec2(rightEdge + dpi, ry + rowH), true);   // komorki przewijaja sie pod numerami
+        for (int ch = vis.first; ch <= vis.last; ++ch) {
+            const float cx = colX(ch);
+            const float tx = cx + std::max(cw * 0.75f, (colW - gap - static_cast<float>(cellChars) * cw) * 0.5f);
             const bool sel = isCursor && ch == chan_;
             if (sel)
                 dl->AddRectFilled(ImVec2(cx, ry), ImVec2(cx + colW - gap, ry + rowH),
@@ -957,13 +1033,24 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
             field(7.0f, t.vol, cell.volume != chipstate::kValueNone, p.textDim);
             if (showFx) field(10.0f, t.fx, cell.effect != 0 || cell.effectParam != 0, p.accent);
         }
+        dl->PopClipRect();
     }
     // Pionowe separatory kolumn (w osi z ramkami oscyloskopow).
-    for (int c = 0; c <= visChans; ++c) {
-        const float sx = left + numW + static_cast<float>(c) * colW - gap * 0.5f;
+    for (int c = vis.first; c <= vis.last + 1 && c <= nch; ++c) {
+        const float sx = colX(c) - gap * 0.5f;
+        if (sx < viewL - 1.0f || sx > rightEdge + 1.0f) continue;
         dl->AddLine(ImVec2(sx, gridTop), ImVec2(sx, gridBottom + dpi), col32(p.border));
     }
     dl->PopClipRect();
+
+    // Pasek przewijania poziomego (wspolny dla oscyloskopow i wzorca).
+    if (scrollable) {
+        const Thumb th = scrollThumb(colScroll_, content, viewW, viewW, 16.0f * dpi);
+        const bool hoverBar = colDrag_ || ImGui::IsMouseHoveringRect(ImVec2(viewL, sbY0), ImVec2(rightEdge, sbY1));
+        dl->AddRectFilled(ImVec2(viewL, sbY0), ImVec2(rightEdge, sbY1), col32(withAlpha(p.border, 0.5f)));
+        dl->AddRectFilled(ImVec2(viewL + th.pos, sbY0), ImVec2(viewL + th.pos + th.len, sbY1),
+                          col32(hoverBar ? p.accent : p.textDim));
+    }
     kGrid_.reg(1, 0);
     kGrid_.end();
     ImGui::End();

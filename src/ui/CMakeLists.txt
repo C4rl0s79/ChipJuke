@@ -15,6 +15,8 @@ add_library(vgmplay_ui STATIC
     playlist_panel.cpp
     dialogs.cpp
     bindings_screen.cpp
+    file_browser.cpp
+    file_browser_screen.cpp
 )
 add_library(vgmplay::ui ALIAS vgmplay_ui)
 target_include_directories(vgmplay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

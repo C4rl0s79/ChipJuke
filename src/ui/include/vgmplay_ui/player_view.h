@@ -13,6 +13,7 @@
 #include "vgmplay_ui/track_meta.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
@@ -151,6 +152,12 @@ public:
     virtual void downloadEntry(std::size_t) {}       // "pobierz mimo to": wpis w chmurze (czyta plik)
     virtual void dismissNotice() {}                  // takze potwierdzenie (needsAck)
     virtual void refreshAudioDevices() {}            // [E3] odswieza PlayerView::audioDevices (blokuje do ~100 ms)
+
+    // [E4] Wybory z wbudowanej przegladarki plikow (pad). Sciezki sa dopiero WYBRANE przez uzytkownika; kontroler
+    // sam waliduje je jak te z okna systemowego (rozszerzenia, UNC, skan folderu w tle).
+    virtual void addPaths(std::vector<std::filesystem::path>) {}     // pliki i foldery -> aktywna playlista
+    virtual void importM3uFile(const std::filesystem::path&) {}      // import M3U do nowej playlisty
+    virtual void exportM3uFile(const std::filesystem::path&) {}      // zapis aktywnej playlisty (plik nie istnieje)
 };
 
 } // namespace vgmplay::ui
