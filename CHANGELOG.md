@@ -3,6 +3,17 @@
 Format: [Keep a Changelog](https://keepachangelog.com/). Versioning: [Semantic Versioning](https://semver.org/).
 Pre-release suffixes (`-rc1`) are stored in `VGMPLAY_VERSION_SUFFIX` in `CMakeLists.txt`.
 
+## [1.0.0-rc2] - 2026-11-24
+
+### Added
+- Note decoding for **YM2608 (OPNA)** and **YM2610 / YM2610B (OPNB)**: FM channels (incl. CH3 special mode and the
+  YM2608 prescaler), SSG (AY-compatible), YM2608 rhythm, ADPCM-A and ADPCM-B. PC-9801 and Neo Geo music now shows
+  notes in the pattern (reported with Brandish 3 for PC-9801, which previously showed only `...`).
+
+### Verified
+- Note pitch matches the libvgm output for YM2608, YM2610, YM2203 and YM2612 (FFT, ratio 0.9999-1.0002).
+- No change in decoded notes for YM2612 and YM2203 files.
+
 ## [1.0.0-rc1] - 2026-11-24
 
 First release candidate. Distribution: portable ZIP only (Windows 10 22H2+, x64, single `ChipJuke.exe`).
@@ -38,4 +49,5 @@ First release candidate. Distribution: portable ZIP only (Windows 10 22H2+, x64,
 - Licences of some libvgm cores are not declared upstream (see `docs/licensing/libvgm-audit.md`).
   Enabled by decision: NSFPlay-derived NES cores, Maxim SN76489, Gens YM2612/SCD PCM, superctr QSound.
 
+[1.0.0-rc2]: https://github.com/C4rl0s79/ChipJuke/releases/tag/v1.0.0-rc2
 [1.0.0-rc1]: https://github.com/C4rl0s79/ChipJuke/releases/tag/v1.0.0-rc1

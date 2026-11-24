@@ -4,7 +4,7 @@
 > w `ChipJuke.exe`. Wcześniejsza robocza nazwa to *vgmplay*: ustawienia z `%APPDATA%\vgmplay` są przy pierwszym
 > uruchomieniu przenoszone do `%APPDATA%\ChipJuke`.
 
-ChipJuke to odtwarzacz plików VGM / VGZ w stylu trackera dla Windows. Wersja 1.0.0-rc1 (kandydat na wydanie).
+ChipJuke to odtwarzacz plików VGM / VGZ w stylu trackera dla Windows. Wersja 1.0.0-rc2 (kandydat na wydanie).
 Licencja: GPL-2.0-only. Angielski opis projektu: [README.md](../README.md).
 
 ## Wymagania
@@ -60,7 +60,7 @@ Cztery panele: **Transport** (przyciski, pozycja, głośność), **Wzorzec** (os
 **Playlista** i **Info** (GD3 i dane pliku). Między panelami przełączasz Tab / Shift+Tab (pad: RB / LB).
 
 Wzorzec pokazuje prawdziwe nuty, instrumenty i głośności odczytane z rejestrów układów dźwiękowych. Nuty są
-dekodowane dla: SN76489, YM2612 (+DAC), YM2151, YM2203, YM2413, YM3812/YM3526, YMF262, AY8910, NES APU/FDS,
+dekodowane dla: SN76489, YM2612 (+DAC), YM2151, YM2203, YM2608 (OPNA), YM2610/B (OPNB), YM2413, YM3812/YM3526, YMF262, AY8910, NES APU/FDS,
 OKIM6295, OKIM6258, C140, K054539, K053260, SegaPCM, GA20. Dla układów PCM nuta jest względna (ta sama próbka
 i tempo = ta sama nuta). Pozostałe układy mają kolumnę „...” z podpisem n/a, a dźwięk gra normalnie.
 
