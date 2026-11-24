@@ -1,11 +1,12 @@
 // vgmplay - engine: dekoder VGM (IDecoder) na libvgm (PlayerA + TapVgmPlayer).
 // Naglowek nie zalezy od libvgm. Uzywany przez Engine, tools/vgmrender i testy.
 //
-// Zalozenia open(): bufor jest JUZ rozpakowany i zwalidowany (loader/format). Dekoder kopiuje go z
-// dopelnieniem format::kParserPadding zer na czas wczytania do libvgm i zwalnia kopie po open().
-// TODO(merge format/loader): dolozyc obrone w glab - format::parseVgmHeader +
-// validateCommandStream w open(); TrackInfo::totalFrames/tags wypelniac wtedy z wlasnego skanu
-// (do tego czasu: z naglowka libvgm, a Engine nadpisuje je z LoadedTrack).
+// open(): wolajacy podaje bufor rozpakowany (LoadedTrack::raw()), ale dekoder waliduje go SAM (obrona
+// w glebi, ADR 0002 pkt 8): format::parseVgmHeader + format::validateCommandStream; bledy zwraca bez
+// dotykania libvgm. Wypelnia z wlasnego skanu: TrackInfo::totalFrames/introFrames/loopFrames, tags (GD3)
+// i warnings. Dekoder kopiuje bufor z dopelnieniem format::kParserPadding zer na czas wczytania do
+// libvgm i zwalnia kopie po open(). Gdy skan zglosi loopDisabled (blok PCM w/za punktem petli), pola
+// petli 0x1C/0x20 sa zerowane w tej kopii (jak w loaderze).
 #pragma once
 
 #include <memory>

@@ -20,3 +20,7 @@ CMakeUserPresets.json
 CMakeCache.txt
 CMakeFiles/
 compile_commands.json
+
+# Python
+__pycache__/
+*.pyc

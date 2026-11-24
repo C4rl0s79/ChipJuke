@@ -24,7 +24,10 @@ struct Palette {
     ImVec4 cursorCell;  // komorka kursora
     ImVec4 cursorText;  // tekst na komorce kursora
     ImVec4 scopeGrid;
-    ImVec4 scopeLine;
+    ImVec4 scopeLine;   // kanal L
+    ImVec4 scopeLineR;  // kanal R
+    ImVec4 error;       // komunikat bledu
+    ImVec4 notice;      // dyskretna informacja (ostrzezenia)
     ImVec4 channel[kChannelCount];
 };
 

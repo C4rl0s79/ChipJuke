@@ -1,8 +1,7 @@
 # Plan testow E1 (format, loader, silnik - korpus syntetyczny)
 
-Status: PLAN. Testy C++ powstaja PO scaleniu galezi `e1-corpus` (dane) z galeziami format/loader
-i silnika. Ten dokument opisuje, co i jak testowac na korpusie z `tests/data/`
-(opis korpusu i manifestu: `tests/data/README.md`; generator: `tools/vgmgen/`).
+Status: ZREALIZOWANE (E1, galaz `e1-tests`); stan faktyczny w sekcji 8, odstepstwa od planu tamze.
+Opis korpusu i manifestu: `tests/data/README.md`; generator: `tools/vgmgen/`.
 
 ## 1. Zasady
 
@@ -138,3 +137,36 @@ buildzie ASan z libvgm) ma padac, a z walidatorem przechodzic (ADR 0002, "Fuzzin
   rdzenie ROM inne niz okim6295/c352 (H3), zapisy RAM 0xC0+ w wersji poprawnej.
 - Zapisy `ym2612`/`ym2151` itd. nie sa walidowane semantycznie (parser ich nie interpretuje).
 - Brzmienia i strojenie nut nie byly odsluchane.
+
+## 8. Stan faktyczny (2026-11-24)
+
+Testy: 114 przypadkow doctest (bylo 102), trzy buildy zielone: `msvc-x64-release`, `msvc-x64-debug`, `clang-cl-asan-fuzz`
+(testy pod ASan: 0 raportow). Jeden przypadek jest `may_fail` (znany blad implementacji, nizej) i raportuje 1 niezaliczona asercje.
+
+- `tests/corpus_test.cpp`: kazdy wpis `files[]` (83) i `limitCases[]` (7): `loadTrackFromFile` + lancuch `format::*`,
+  porownanie wyniku/kodow/ostrzezen (rownosc zbiorow)/pol header-stream-gd3, niezmienniki (offsety, padding, determinizm,
+  loopDisabled <=> BlockAfterLoop), brak sierot, sha256 plikow, `rawSha256` dla .vgz, macierz pokrycia kodow. Wpisy,
+  w ktorych zaszla alternatywa, sa wypisywane jako MESSAGE `[ALTERNATYWA]` (13 wpisow).
+- `tests/golden_test.cpp` + `tests/golden/golden.json` + `tools/golden/update_golden.py`: 13 plikow z tagiem `golden`;
+  SHA-256 PCM int16 / 44100 Hz / 2 petle / fade 1000 ms; render przez dekoder bezposrednio, zgodny bitowo z `vgmrender`
+  (skrypt liczy skroty z WAV). TEST REGRESJI, nie poprawnosci (korpus nieodsluchany). Niezgodnosc: raport ramek, RMS, szczytu,
+  RMS roznicy obwiedni 100 ms i instrukcja aktualizacji; `VGMPLAY_GOLDEN_TOLERANT=1` dopuszcza tolerancje (RMS 1%, szczyt 1 dB).
+- `tests/decoder_validation_test.cpp`: obrona w glebi `IDecoder::open` (walidacja jak format, BlockAfterLoop => brak petli,
+  totalFrames i tagi z wlasnego skanu).
+- Fuzz (`fuzz/`): `fuzz_vgm_header`, `fuzz_gd3`, `fuzz_gzip`, `fuzz_stream`, `fuzz_decode`; slownik `fuzz/vgm.dict`; seed = korpus.
+  Preset `clang-cl-asan-fuzz` dziala po poprawkach: statyczne CRT (libFuzzer z VS jest /MT), ASan = `clang_rt.asan_dynamic` +
+  `asan_static_runtime_thunk`, `/EHsc`, `/D_DISABLE_*_ANNOTATION`; wymaga clang-cl w PATH (VS BuildTools, `VC\Tools\Llvm\x64\bin`),
+  zmiennej `VGMPLAY_CLANG_RT_DIR` (katalog `lib\windows` kompilatora) i `clang_rt.asan_dynamic-x86_64.dll` w PATH.
+  60 s na cel, 0 crashy (fuzz_decode: tylko ~550 uruchomien, ~9/s). Reproduktory znanych awarii libvgm:
+  `tests/data/fuzz-crashes/` (README tamze).
+- Zmiany korpusu (generator): `blk_after_set_data` = blok po 0x91 banku z danymi => BadDataBlock (zgodnie z decyzja);
+  nowy `blk_after_set_data_empty_bank` (ok, alt BadDataBlock); `blk_rom_budget_sum` uzywa roznych typow ROM (implementacja liczy
+  max na (typ, uklad)); nowy `blk_rom_same_slot_not_summed`; dopisane alternatywy: Truncated dla uczietej ostatniej komendy,
+  ok+Other dla loopOfs poza zakresem, ok dla gd3_no_terminators; `edge_no_chips_only_end_v100` => ok+Other.
+- Znany blad implementacji (may_fail): `valid/sn76489_loop_zero_samples_v150.vgm` daje ostrzezenie `Other`
+  ("zero-length loop; loop ignored"), a `valid/` ma byc bez ostrzezen.
+
+### Nie zrobione / odstepstwa od planu
+Sekcja 4 (seek), pomiar szczytowej alokacji przy bombach gzip, test regresyjny "pada na nieprzefiltrowanym wejsciu w libvgm",
+nocny fuzz 10 min / 1 h oraz golden dla `ym2612_dac_compressed` (tylko regresja - nie tagowany). Seek jest czesciowo pokryty
+w `engine_test.cpp`. `BlockAfterSetData` nigdy nie jest emitowane (implementacja odrzuca).

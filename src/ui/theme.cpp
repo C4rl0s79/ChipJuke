@@ -34,6 +34,9 @@ const Palette& palette()
         /*cursorText*/ rgb(0x10131A),
         /*scopeGrid*/ rgb(0x232A38),
         /*scopeLine*/ rgb(0x69F0AE),
+        /*scopeLineR*/ rgb(0x4FC3F7),
+        /*error*/ rgb(0xFF6B6B),
+        /*notice*/ rgb(0xFFD180),
         /*channel*/
         {rgb(0xFF6B6B), rgb(0xFFB74D), rgb(0xFFEB6B), rgb(0x69F0AE), rgb(0x4FC3F7),
          rgb(0xC792EA)},

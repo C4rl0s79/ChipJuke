@@ -6,18 +6,20 @@
 // Wyjscie: stereo, 16-bit PCM (domyslnie) lub 32-bit float (--float). Rdzenie wg polityki vgmplay
 // (docs/licensing/libvgm-audit.md). --loops 0 = bez konca (wymaga --max-seconds).
 //
-// TODO(merge format/loader): obsluga gzip (.vgz) i walidacja przez loader::loadTrackFromFile -
-// na tej galezi czytamy tylko nieskompresowany .vgm, a walidacje robi sam dekoder (minimalnie).
+// Plik jest wczytywany przez loader::loadTrackFromFile (gzip/.vgz, pelna walidacja, limity); dekoder
+// dodatkowo waliduje bufor sam (obrona w glebi). Ostrzezenia loadera ida na stderr.
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
-#include <iterator>
+#include <fstream>
 #include <string>
 #include <vector>
 
+#include "vgmplay/loader.hpp"
 #include "vgmplay/vgm_decoder.hpp"
 
 namespace {
@@ -61,10 +63,20 @@ bool writeWav(const std::string& path, const std::vector<float>& pcm, std::uint3
     return static_cast<bool>(f);
 }
 
+const char* errorCodeName(ErrorCode c)
+{
+    static const char* const names[] = {"?", "InvalidArgument", "Io", "NotFound", "AccessDenied", "TooLarge",
+        "DecompressionFailed", "Truncated", "BadSignature", "UnsupportedVersion", "BadHeader", "BadCommandStream",
+        "BadDataBlock", "LimitExceeded", "OutOfMemory", "Cancelled", "PathRejected", "ParseError",
+        "UnsupportedSchema", "DecoderFailure", "Internal"};
+    const auto i = static_cast<unsigned>(c);
+    return i < sizeof(names) / sizeof(names[0]) ? names[i] : "?";
+}
+
 void usage()
 {
     std::fprintf(stderr,
-        "usage: vgmrender in.vgm out.wav [--rate 44100] [--loops N] [--fade MS] [--float]\n"
+        "usage: vgmrender in.vgm|in.vgz out.wav [--rate 44100] [--loops N] [--fade MS] [--float]\n"
         "                                [--max-seconds S]\n"
         "       vgmrender --list-cores\n");
 }
@@ -114,22 +126,20 @@ int main(int argc, char** argv)
         return 2;
     }
 
-    std::ifstream f(in, std::ios::binary);
-    if (!f) { std::fprintf(stderr, "cannot open %s\n", in.c_str()); return 1; }
-    std::vector<std::uint8_t> raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (raw.size() >= 2 && raw[0] == 0x1F && raw[1] == 0x8B) {
-        std::fprintf(stderr, "gzip (.vgz) is not supported yet (waiting for loader merge)\n");
+    auto track = loader::loadTrackFromFile(std::filesystem::path(in));
+    if (!track.ok()) {
+        std::fprintf(stderr, "load failed (%s): %s\n", errorCodeName(track.error().code), track.error().message.c_str());
         return 1;
     }
+    for (const auto& w : track.value().warnings) std::fprintf(stderr, "warning: %s\n", w.message.c_str());
 
     DecoderConfig cfg;
     cfg.sampleRate = rate;
     cfg.loopCount = loops;
     cfg.fadeMs = fadeMs;
     auto dec = engine::makeVgmDecoder();
-    auto info = dec->open(raw, cfg);
+    auto info = dec->open(track.value().raw(), cfg);
     if (!info.ok()) { std::fprintf(stderr, "open failed: %s\n", info.error().message.c_str()); return 1; }
-    for (const auto& w : info.value().warnings) std::fprintf(stderr, "warning: %s\n", w.message.c_str());
     if (auto s = dec->start(); !s.ok()) { std::fprintf(stderr, "start failed: %s\n", s.error().message.c_str()); return 1; }
 
     const std::uint64_t maxFrames = maxSeconds > 0 ? static_cast<std::uint64_t>(maxSeconds * rate) : ~std::uint64_t{0};
