@@ -89,6 +89,13 @@ namespace vgmplay::fsutil {
     return w ? std::filesystem::path(*w) : std::filesystem::path();
 }
 
+// Klucz do map: lancuch zamieniony na wielkie litery (tablica systemu, jak w CompareStringOrdinal).
+[[nodiscard]] inline std::wstring foldPathKey(std::wstring s)
+{
+    if (!s.empty()) ::CharUpperBuffW(s.data(), static_cast<DWORD>(s.size()));
+    return s;
+}
+
 // Porownanie bez rozrozniania wielkosci liter (Unicode, wg tabel systemu).
 [[nodiscard]] inline bool equalsIgnoreCase(std::wstring_view a, std::wstring_view b)
 {

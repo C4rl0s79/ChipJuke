@@ -195,6 +195,11 @@ constexpr Entry kTexts[] = {
     /*HkSwap*/ {"Swap", "Zamień"},
     /*HkNeedsKbd*/ {"System window: needs keyboard or mouse", "Okno systemowe: wymaga klawiatury lub myszy"},
     /*HkTextKbd*/ {"Name editing needs a keyboard", "Edycja nazwy wymaga klawiatury"},
+    /*DlgNetworkWarn*/ {"Warning: opening a network path (\\\\server\\share) can make Windows send your login credentials "
+                        "to the server named in a playlist or settings file. Enable network paths only for files you trust.",
+                        "Uwaga: otwarcie ścieżki sieciowej (\\\\serwer\\udział) może sprawić, że Windows wyśle dane logowania "
+                        "do serwera wskazanego w pliku playlisty lub ustawień. Włącz ścieżki sieciowe tylko dla zaufanych plików."},
+    /*SetAudioNoOutput*/ {"no audio output - retrying", "brak wyjścia audio - ponawiam"},
 };
 static_assert(sizeof(kTexts) / sizeof(kTexts[0]) == static_cast<std::size_t>(Str::Count),
               "tablica tekstow musi pokrywac cale enum Str");

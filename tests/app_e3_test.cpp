@@ -157,4 +157,21 @@ TEST_SUITE("app/e3")
         c.pump();
         CHECK(c.view().audioError.empty());
     }
+
+    TEST_CASE("sciezki sieciowe: wylaczenie i wlaczenie przez applySettings zmienia wartosc efektywna bez restartu [E3-sec]")
+    {
+        ControllerOptions o;
+        o.nullAudio = true;
+        AppController c(o);
+        REQUIRE(c.start());
+        settings::Settings s = c.settings();
+        s.library.allowNetworkPaths = true;
+        c.applySettings(s);
+        c.pump();
+        CHECK(c.view().allowNetworkPaths);
+        s.library.allowNetworkPaths = false;
+        c.applySettings(s);
+        c.pump();
+        CHECK_FALSE(c.view().allowNetworkPaths);
+    }
 }

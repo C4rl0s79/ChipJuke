@@ -96,6 +96,7 @@ struct PlayerView {
     bool networkForcedByFlag = false;    // [E3] --allow-network-paths wlaczone z wiersza polecen
     std::vector<AudioDeviceItem> audioDevices;   // [E3] lista z ostatniego refreshAudioDevices()
     bool audioDevicesLoaded = false;
+    bool audioNoOutput = false;          // [E3-sec] zadne urzadzenie nie dziala (cisza); app ponawia otwarcie
     bool audioFellBackToDefault = false; // [E3] zadanego urzadzenia nie znaleziono -> otwarto domyslne
     std::optional<Notice> notice;
 

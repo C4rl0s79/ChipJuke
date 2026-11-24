@@ -388,7 +388,7 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
     if (hints) drawHints(nav, view, gap, H - hintH - gap, W - 2 * gap, hintH);
     activate_ = false;
     nav.setOverlay(bindingsOpen_ ? std::optional<input::ScreenId>(input::ScreenId::Bindings)
-                   : settingsOpen_ ? std::optional<input::ScreenId>(input::ScreenId::Settings)
+                   : settingsOpen_ && dlg_.kind != DlgKind::NetworkConfirm ? std::optional<input::ScreenId>(input::ScreenId::Settings)
                    : dlg_.kind != DlgKind::None ? std::optional<input::ScreenId>(input::ScreenId::Dialog)
                                                 : std::nullopt);
 }

@@ -83,12 +83,17 @@ public:
     void importM3u(std::filesystem::path file);
     void exportM3u(std::filesystem::path file, std::string text);
     [[nodiscard]] IoResults take();
+    // [E3-sec] Efektywna zgoda na sciezki UNC (playlisty, cache); watkowo-bezpieczne (atomik), dziala od
+    // nastepnej operacji workera, bez restartu. Wywolywane z watku UI po zmianie ustawienia.
+    void setAllowNetworkPaths(bool allow) noexcept { allowNetwork_.store(allow, std::memory_order_relaxed); }
+    [[nodiscard]] bool allowNetworkPaths() const noexcept { return allowNetwork_.load(std::memory_order_relaxed); }
 
 private:
     void loop();
     void post(IoResults& add);
 
-    Paths paths_;
+    Paths paths_;   // paths_.allowNetworkPaths = tylko wartosc poczatkowa; biezaca: allowNetwork_
+    std::atomic<bool> allowNetwork_;
     std::function<void()> wake_;
     std::mutex mutex_;
     std::condition_variable cv_;

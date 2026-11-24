@@ -11,7 +11,7 @@ namespace vgmplay::app {
 namespace fs = std::filesystem;
 
 IoWorker::IoWorker(Paths paths, std::function<void()> wake)
-    : paths_(std::move(paths)), wake_(std::move(wake)), thread_([this] { loop(); })
+    : paths_(std::move(paths)), allowNetwork_(paths_.allowNetworkPaths), wake_(std::move(wake)), thread_([this] { loop(); })
 {
 }
 
@@ -202,7 +202,7 @@ void IoWorker::loop()
         // 2) wczytanie playlist
         if (doLoad) {
             if (paths_.playlists.empty()) out.playlists.emplace(playlist::PlaylistModel{});
-            else out.playlists.emplace(playlist::loadPlaylistsFile(paths_.playlists, playlist::PlaylistLoadOptions{paths_.allowNetworkPaths}));
+            else out.playlists.emplace(playlist::loadPlaylistsFile(paths_.playlists, playlist::PlaylistLoadOptions{allowNetwork_.load(std::memory_order_relaxed)}));
         }
         // 3) M3U
         if (imp) {
@@ -243,7 +243,7 @@ void IoWorker::loop()
             if (!cacheLoaded) {
                 cacheLoaded = true;
                 if (!paths_.cache.empty()) {
-                    auto c = library::loadMetaCacheFile(paths_.cache, paths_.allowNetworkPaths);
+                    auto c = library::loadMetaCacheFile(paths_.cache, allowNetwork_.load(std::memory_order_relaxed));
                     if (c.ok()) cache = std::move(c.value());   // uszkodzony = pusty (nic waznego tam nie ma)
                 }
             }

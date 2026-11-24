@@ -80,6 +80,24 @@ bool publishConst(PcmRing& ring, std::uint64_t epoch, std::uint64_t start, std::
 
 TEST_SUITE("audio_out/pcm_ring")
 {
+    TEST_CASE("discardPending: odrzuca zawartosc przy zatrzymanym konsumencie [E3-sec]")
+    {
+        PcmRing ring;
+        ring.beginEpoch(1);
+        REQUIRE(publishConst(ring, 1, 0, 512, 0.5f));
+        REQUIRE(publishConst(ring, 1, 512, 512, 0.5f));
+        std::vector<float> out(2 * 100);
+        ring.consume(out.data(), 100);   // nadgryziony pierwszy blok
+        CHECK(ring.queuedFrames() == 924);
+        ring.discardPending();
+        CHECK(ring.queuedFrames() == 0);
+        ring.consume(out.data(), 100);   // pusty pierscien: cisza (bez zaniku ze starej tresci)
+        for (float v : out) CHECK(v == 0.0f);
+        REQUIRE(publishConst(ring, 1, 2000, 512, 0.25f));   // producent dziala dalej
+        ring.consume(out.data(), 100);
+        CHECK(out[199] != 0.0f);
+    }
+
     TEST_CASE("dane przechodza 1:1 po narastaniu; pozycja slyszana z klatek zuzytych")
     {
         PcmRing ring;

@@ -38,7 +38,7 @@ public:
     bool wantsAnimation(const PlayerView& view) const;
 
     // --- Playlista / okna (E2); akcesory glownie dla testow ---
-    enum class DlgKind { None, NewList, RenameList, DeleteList, DeleteEntry, EntryMenu, Report };
+    enum class DlgKind { None, NewList, RenameList, DeleteList, DeleteEntry, EntryMenu, Report, NetworkConfirm };
     DlgKind dialog() const { return dlg_.kind; }
     bool settingsOpen() const { return settingsOpen_; }
     void openSettings() { settingsOpen_ = true; setSel_ = 0; needDeviceRefresh_ = true; }
@@ -137,6 +137,9 @@ private:
     void drawSettings(const PlayerView& view, PlayerActions& actions, float W, float H);
     void drawDialog(const PlayerView& view, PlayerActions& actions, float W, float H);
     void changeSetting(int row, int dir, const PlayerView& view, PlayerActions& actions);
+    // Confirm / klik w wierszu ustawien: jak changeSetting, ale wiersz "Sciezki sieciowe" przy WLACZANIU
+    // otwiera dialog potwierdzenia (wylaczanie bez potwierdzenia). Left/Right/kolko nigdy nie wlacza.
+    void activateSetting(int row, int dir, const PlayerView& view, PlayerActions& actions);
     void openDialog(DlgKind k, std::size_t index = 0, std::string text = {});
     void closeDialog();
     void confirmDialog(const PlayerView& view, PlayerActions& actions);

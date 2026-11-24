@@ -339,10 +339,10 @@ void PlayerScreen::drawHints(NavInput& nav, const PlayerView&, float x, float y,
         else if (bindPending_) hints = {{Action::Confirm, Str::HkSwap}, {Action::Back, Str::HkCancel}};
         else hints = {{Action::Up, Str::HkMove, true}, {Action::Confirm, Str::HkAssign}, {Action::ToggleSolo, Str::HkClear},
                       {Action::Back, Str::HkBack}};
-    } else if (settingsOpen_) {
+    } else if (settingsOpen_ && dlg_.kind != DlgKind::NetworkConfirm) {
         hints = {{Action::Up, Str::HkAdjust, true}, {Action::Confirm, Str::HkSelect}, {Action::Back, Str::HkBack}};
     } else if (dlg_.kind != DlgKind::None) {
-        if (dlg_.kind == DlgKind::DeleteList || dlg_.kind == DlgKind::DeleteEntry)
+        if (dlg_.kind == DlgKind::DeleteList || dlg_.kind == DlgKind::DeleteEntry || dlg_.kind == DlgKind::NetworkConfirm)
             hints = {{Action::Left, Str::HkSelect, true}, {Action::Confirm, Str::HkOk}, {Action::Back, Str::HkCancel}};
         else if (dlg_.kind == DlgKind::EntryMenu)
             hints = {{Action::Up, Str::HkSelect, true}, {Action::Confirm, Str::HkOk}, {Action::Back, Str::HkBack}};

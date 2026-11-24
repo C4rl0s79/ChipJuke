@@ -40,7 +40,7 @@ void PlayerScreen::openDialog(DlgKind k, std::size_t index, std::string text)
     dlg_.index = index;
     dlg_.text = std::move(text);
     dlg_.focusText = k == DlgKind::NewList || k == DlgKind::RenameList;
-    dlg_.sel = k == DlgKind::DeleteList || k == DlgKind::DeleteEntry ? 1 : 0;
+    dlg_.sel = k == DlgKind::DeleteList || k == DlgKind::DeleteEntry ? 1 : 0;   // NetworkConfirm: domyslnie "Nie"
 }
 
 void PlayerScreen::closeDialog() { dlg_ = Dialog{}; }
@@ -55,6 +55,13 @@ void PlayerScreen::confirmDialog(const PlayerView& view, PlayerActions& actions)
     case DlgKind::DeleteList: actions.deletePlaylist(d.index); break;
     case DlgKind::DeleteEntry: actions.removeEntry(d.index); break;
     case DlgKind::Report: actions.dismissNotice(); break;
+    case DlgKind::NetworkConfirm:
+        if (view.settings) {   // [E3-sec] jedyna droga WLACZENIA: jawne potwierdzenie
+            settings::Settings s = *view.settings;
+            s.library.allowNetworkPaths = true;
+            actions.applySettings(s);
+        }
+        break;
     case DlgKind::EntryMenu:
         switch (d.sel) {
         case 0: actions.playEntry(d.index); break;
@@ -103,17 +110,29 @@ void PlayerScreen::changeSetting(int row, int dir, const PlayerView& view, Playe
     case 5: s.ui.language = s.ui.language == i18n::Language::Pl ? i18n::Language::En : i18n::Language::Pl; break;
     case 6: s.ui.gd3Language = s.ui.gd3Language == format::Gd3Language::Jp ? format::Gd3Language::En : format::Gd3Language::Jp; break;
     case 7: s.ui.rowTicks = stepRowTicks(nearestRowTicks(s.ui.rowTicks), -dir); break;   // Prawo = dluzszy wiersz
-    case 8: s.library.allowNetworkPaths = !s.library.allowNetworkPaths; break;
+    case 8:   // [E3-sec] strzalki tylko WYLACZAJA; wlaczanie wylacznie przez activateSetting (dialog potwierdzenia)
+        if (!s.library.allowNetworkPaths) return;
+        s.library.allowNetworkPaths = false;
+        break;
     case 9: s.ui.showButtonHints = !s.ui.showButtonHints; break;
     default: return;
     }
     actions.applySettings(s);
 }
 
+void PlayerScreen::activateSetting(int row, int dir, const PlayerView& view, PlayerActions& actions)
+{
+    if (row == 8 && view.settings && !view.settings->library.allowNetworkPaths) {
+        openDialog(DlgKind::NetworkConfirm);
+        return;
+    }
+    changeSetting(row, dir, view, actions);
+}
+
 void PlayerScreen::applyModal(const NavEvent& ev, const PlayerView& view, PlayerActions& actions)
 {
     if (bindingsOpen_) { applyBindings(ev, view, actions); return; }
-    if (settingsOpen_) {
+    if (settingsOpen_ && dlg_.kind != DlgKind::NetworkConfirm) {
         switch (ev.action) {
         case Action::Back:
         case Action::ToggleSettings:
@@ -127,7 +146,7 @@ void PlayerScreen::applyModal(const NavEvent& ev, const PlayerView& view, Player
             if (ev.repeat) break;
             if (setSel_ == 0) { actions.refreshAudioDevices(); break; }   // odswiezenie listy urzadzen
             if (setSel_ == 10) { openBindings(view); break; }
-            changeSetting(setSel_, +1, view, actions);
+            activateSetting(setSel_, +1, view, actions);
             break;
         case Action::PlayPause: if (!ev.repeat) actions.togglePlay(); break;
         default: break;
@@ -141,12 +160,14 @@ void PlayerScreen::applyModal(const NavEvent& ev, const PlayerView& view, Player
         closeDialog();   // potwierdzenie (needsAck) wymaga Accept
         break;
     case Action::Confirm:
-        if ((dlg_.kind == DlgKind::DeleteList || dlg_.kind == DlgKind::DeleteEntry) && dlg_.sel == 0) closeDialog();   // "Nie"
+        if ((dlg_.kind == DlgKind::DeleteList || dlg_.kind == DlgKind::DeleteEntry || dlg_.kind == DlgKind::NetworkConfirm) &&
+            dlg_.sel == 0)
+            closeDialog();   // "Nie"
         else confirmDialog(view, actions);
         break;
     case Action::Left:
     case Action::Right:
-        if (dlg_.kind == DlgKind::DeleteList || dlg_.kind == DlgKind::DeleteEntry)
+        if (dlg_.kind == DlgKind::DeleteList || dlg_.kind == DlgKind::DeleteEntry || dlg_.kind == DlgKind::NetworkConfirm)
             dlg_.sel = ev.action == Action::Left ? 0 : 1;
         break;
     case Action::Up:
@@ -173,7 +194,7 @@ void PlayerScreen::drawModal(NavInput& nav, const PlayerView& view, PlayerAction
     ImDrawList* dl = ImGui::GetWindowDrawList();
     dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), col32(p.overlay));
     if (bindingsOpen_) drawBindings(nav, view, actions, W, H);
-    else if (settingsOpen_) drawSettings(view, actions, W, H);
+    else if (settingsOpen_ && dlg_.kind != DlgKind::NetworkConfirm) drawSettings(view, actions, W, H);
     else drawDialog(view, actions, W, H);
     ImGui::End();
 }
@@ -218,7 +239,8 @@ void PlayerScreen::drawSettings(const PlayerView& view, PlayerActions& actions, 
             for (const AudioDeviceItem& d : view.audioDevices)
                 if (d.id == s.audio.device) dev = sanitizeForDisplay(d.name);
         }
-        if (view.audioFellBackToDefault) dev += "  [" + std::string(tr(Str::SetAudioFallback)) + "]";
+        if (view.audioNoOutput) dev += "  [" + std::string(tr(Str::SetAudioNoOutput)) + "]";
+        else if (view.audioFellBackToDefault) dev += "  [" + std::string(tr(Str::SetAudioFallback)) + "]";
         rows.push_back({Str::SetAudio, dev, true});
     }
     if (s.playback.loopCount == 0) rows.push_back({Str::SetLoops, tr(Str::SetLoopsInf), true});
@@ -246,10 +268,11 @@ void PlayerScreen::drawSettings(const PlayerView& view, PlayerActions& actions, 
             if (i == 10) openBindings(view);
             else if (r.adjustable) {
                 const float mx = io.MousePos.x;
-                if (mx >= valX0) changeSetting(i, mx < (valX0 + valX1) * 0.5f ? -1 : +1, view, actions);
+                if (mx >= valX0) activateSetting(i, mx < (valX0 + valX1) * 0.5f ? -1 : +1, view, actions);
             }
         }
-        if (hover && r.adjustable && io.MouseWheel != 0.0f) changeSetting(i, io.MouseWheel > 0 ? +1 : -1, view, actions);
+        // [E3-sec] kolko nie przelacza urzadzenia audio (0) ani sciezek sieciowych (8): przypadkowa zmiana jest kosztowna.
+        if (hover && r.adjustable && i != 0 && i != 8 && io.MouseWheel != 0.0f) changeSetting(i, io.MouseWheel > 0 ? +1 : -1, view, actions);
         const bool isSel = i == setSel_;
         if (isSel) dl->AddRectFilled(a, b, col32(p.cursorCell));
         const ImU32 tc = col32(isSel ? p.cursorText : p.text);
@@ -310,6 +333,11 @@ void PlayerScreen::drawDialog(const PlayerView& view, PlayerActions& actions, fl
         buttons = {tr(Str::DlgNo), tr(Str::DlgYes)};
         break;
     }
+    case DlgKind::NetworkConfirm:
+        title = tr(Str::SetNetwork);
+        body = tr(Str::DlgNetworkWarn);
+        buttons = {tr(Str::DlgNo), tr(Str::DlgYes)};
+        break;
     case DlgKind::EntryMenu:
         title = tr(Str::PanelPlaylist);
         items = {tr(Str::MenuPlay), tr(Str::MenuRemove), tr(Str::MenuMoveUp), tr(Str::MenuMoveDown), tr(Str::MenuDownload), tr(Str::MenuCancel)};

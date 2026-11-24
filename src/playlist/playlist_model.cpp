@@ -6,6 +6,7 @@
 #include <new>
 #include <numeric>
 #include <random>
+#include <unordered_map>
 
 #include "fs_util.hpp"
 
@@ -259,18 +260,40 @@ Result<std::size_t> PlaylistModel::previous(RepeatMode repeat)
 std::size_t PlaylistModel::updateEntryMeta(const std::filesystem::path& path, std::string_view title,
                                            std::uint64_t durationMs)
 {
-    if (path.empty()) return 0;
-    const std::string cleanTitle = fsutil::sanitizeTitle(title);
-    const std::uint64_t dur = fsutil::clampDurationMs(durationMs);
+    const EntryMetaUpdate u{path, std::string(title), durationMs};
+    return updateEntryMeta(std::span<const EntryMetaUpdate>(&u, 1));
+}
+
+std::size_t PlaylistModel::updateEntryMeta(std::span<const EntryMetaUpdate> updates)
+{
+    struct Val {
+        std::string title;   // oczyszczony; pusty = nie zmieniaj tytulu
+        std::uint64_t durationMs;
+    };
     // Klucz jak przy deduplikacji skanu: sciezka znormalizowana (separatory), bez rozrozniania wielkosci liter.
-    const std::wstring key = path.lexically_normal().native();
+    std::unordered_map<std::wstring, Val> map;
+    map.reserve(updates.size());
+    for (const EntryMetaUpdate& u : updates) {
+        if (u.path.empty()) continue;
+        std::wstring key = fsutil::foldPathKey(u.path.lexically_normal().native());
+        std::string clean = fsutil::sanitizeTitle(u.title);
+        const std::uint64_t dur = fsutil::clampDurationMs(u.durationMs);
+        auto [it, inserted] = map.try_emplace(std::move(key), Val{clean, dur});
+        if (!inserted) {   // kolejna aktualizacja tej samej sciezki: jak zastosowanie po kolei
+            if (!clean.empty()) it->second.title = std::move(clean);
+            it->second.durationMs = dur;
+        }
+    }
+    if (map.empty()) return 0;
     std::size_t changed = 0;
     for (Playlist& p : lists_) {
         for (Entry& e : p.entries) {
-            if (!fsutil::equalsIgnoreCase(e.path.lexically_normal().native(), key)) continue;
-            if (e.title == cleanTitle && e.durationMs == dur) continue;
-            e.title = cleanTitle;
-            e.durationMs = dur;
+            const auto it = map.find(fsutil::foldPathKey(e.path.lexically_normal().native()));
+            if (it == map.end()) continue;
+            const std::string& newTitle = it->second.title.empty() ? e.title : it->second.title;
+            if (e.title == newTitle && e.durationMs == it->second.durationMs) continue;
+            e.title = newTitle;
+            e.durationMs = it->second.durationMs;
             ++changed;
         }
     }

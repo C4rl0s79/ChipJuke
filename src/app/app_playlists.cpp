@@ -110,6 +110,8 @@ void AppController::applySettings(const settings::Settings& s)
     n.playback.fadeMs = std::min<std::uint32_t>(n.playback.fadeMs, 30000u);
     n.ui.rowTicks = std::clamp<std::uint32_t>(n.ui.rowTicks, 64u, ui::kVgmTickRate);
     settings_ = std::move(n);
+    if (io_ && old.library.allowNetworkPaths != settings_.library.allowNetworkPaths)   // [E3-sec] od razu, bez restartu
+        io_->setAllowNetworkPaths(options_.allowNetworkPaths || settings_.library.allowNetworkPaths);
     applyRuntimeSettings(old, false);
     markSettingsDirty();
 }
@@ -330,6 +332,15 @@ void AppController::restoreSession()
     const playlist::Playlist& l = model_.playlist(model_.activeIndex());
     if (l.cursor < 0 || static_cast<std::size_t>(l.cursor) >= l.entries.size()) return;
     const fs::path path = l.entries[static_cast<std::size_t>(l.cursor)].path;
+    {   // [E3-sec] sciezka UNC (takze z trackPath sesji) nie jest wznawiana automatycznie bez --allow-network-paths:
+        // otwarcie moze wyslac dane logowania Windows do serwera wskazanego w pliku.
+        const auto isUnc = [](const std::wstring& w) {
+            const auto sep = [](wchar_t ch) { return ch == L'\\' || ch == L'/'; };
+            return w.size() >= 2 && sep(w[0]) && sep(w[1]);
+        };
+        const std::wstring sess = fs::path(std::u8string(settings_.session.trackPath.begin(), settings_.session.trackPath.end())).native();
+        if (!options_.allowNetworkPaths && (isUnc(path.native()) || isUnc(sess))) return;
+    }
     Restore r;
     r.path = path;
     const bool same = !settings_.session.trackPath.empty() &&
@@ -517,7 +528,13 @@ void AppController::handleIo()
             d.failed = true;   // nie ponawiamy; lista pokaze nazwe pliku
         }
         metaStore_.put(m.path, std::move(d));
-        syncEntryMeta(m.path);   // [E3] tytul i dlugosc ze skanu trafiaja do wpisow (zapis playlisty)
+    }
+    if (!r.meta.empty()) {   // [E3-sec] jedno przejscie po playlistach dla calego batcha (nie O(wyniki x wpisy))
+        std::vector<playlist::EntryMetaUpdate> ups;
+        ups.reserve(r.meta.size());
+        for (const MetaResult& m : r.meta)
+            if (auto u = entryMetaUpdate(m.path)) ups.push_back(std::move(*u));
+        if (model_.updateEntryMeta(ups) > 0) markPlaylistsDirty();   // [E3] tytul i dlugosc ze skanu do wpisow
     }
     for (ImportDone& d : r.imports) importM3uDone(d);
     for (ExportDone& d : r.exports) {
@@ -609,13 +626,19 @@ void AppController::setRepeat(playlist::RepeatMode mode)
     }
 }
 
-void AppController::syncEntryMeta(const std::filesystem::path& path)
+std::optional<playlist::EntryMetaUpdate> AppController::entryMetaUpdate(const std::filesystem::path& path) const
 {
     const ui::TrackDisplay* d = metaStore_.find(path);
-    if (!d || d->failed) return;
+    if (!d || d->failed) return std::nullopt;
     const std::string& title = !d->trackEn.empty() ? d->trackEn : d->trackJp;
-    if (title.empty() && d->durationMs == 0) return;
-    if (model_.updateEntryMeta(path, title, d->durationMs) > 0) markPlaylistsDirty();
+    if (title.empty() && d->durationMs == 0) return std::nullopt;
+    return playlist::EntryMetaUpdate{path, title, d->durationMs};
+}
+
+void AppController::syncEntryMeta(const std::filesystem::path& path)
+{
+    if (auto u = entryMetaUpdate(path))
+        if (model_.updateEntryMeta(std::span<const playlist::EntryMetaUpdate>(&*u, 1)) > 0) markPlaylistsDirty();
 }
 
 void AppController::refreshAudioDevices()
@@ -625,24 +648,51 @@ void AppController::refreshAudioDevices()
     if (r.ok())
         for (const audio_out::DeviceEntry& e : r.value()) audioDevices_.push_back({e.id, e.name, e.isDefault});
     audioDevicesLoaded_ = true;
+    if (audioNoOutput_) switchAudioDevice();   // [E3-sec] reczne ponowienie (Confirm w wierszu urzadzenia / otwarcie ustawien)
 }
 
 void AppController::switchAudioDevice()
 {
     audio_.stop();
+    pcm_.discardPending();   // [E3-sec] konsument zatrzymany: stare PCM nie trafi do nowego urzadzenia
     audioCfg_.deviceId = settings_.audio.device;
     audioCfg_.sampleRate = view_.sampleRate;   // silnik renderuje w stalej czestotliwosci; konwersje robi WASAPI
     auto r = audio_.open(audioCfg_);
+    bool fellBack = r.ok() && r.value().fellBackToDefault;
+    std::string firstError = r.ok() ? std::string() : r.error().message;
     if (!r.ok() && !audioCfg_.deviceId.empty()) {   // wybrane urzadzenie niedostepne: wracamy do domyslnego
-        audioCfg_.deviceId.clear();
-        r = audio_.open(audioCfg_);
-        audioFellBack_ = true;
-    } else {
-        audioFellBack_ = r.ok() && r.value().fellBackToDefault;
+        audio_out::Config def = audioCfg_;
+        def.deviceId.clear();
+        r = audio_.open(def);
+        fellBack = r.ok();   // [E3-sec] tylko po UDANYM drugim open
     }
-    if (!r.ok()) { audioError_ = r.error().message; return; }
+    if (!r.ok() && audioCfg_.backend != audio_out::Config::Backend::Null) {   // oba nieudane: wyjscie Null (bez dzwieku)
+        audio_out::Config nul = audioCfg_;
+        nul.backend = audio_out::Config::Backend::Null;
+        nul.deviceId.clear();
+        auto rn = audio_.open(nul);
+        if (rn.ok()) {
+            const std::string msg = r.error().message.empty() ? firstError : r.error().message;
+            audioFellBack_ = false;
+            audioNoOutput_ = true;   // UI pokazuje "brak wyjscia"; ponawiane w pump() i przy Confirm w wierszu urzadzenia
+            audioRetryAt_ = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            audioError_ = msg;
+            const auto s = audio_.start();
+            if (!s.ok()) audioError_ = s.error().message;
+            return;
+        }
+    }
+    audioFellBack_ = fellBack;
+    if (!r.ok()) {
+        audioNoOutput_ = true;   // takze Null nie dziala: ponawiaj
+        audioRetryAt_ = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        audioError_ = r.error().message;
+        return;
+    }
+    const bool wasNoOutput = audioNoOutput_;
+    audioNoOutput_ = false;
     audioError_.clear();
-    if (audioFellBack_) postNotice(ui::tr(ui::Str::SetAudioFallback), {settings_.audio.device});
+    if (audioFellBack_ && !wasNoOutput) postNotice(ui::tr(ui::Str::SetAudioFallback), {settings_.audio.device});
     const auto s = audio_.start();
     if (!s.ok()) audioError_ = s.error().message;
 }

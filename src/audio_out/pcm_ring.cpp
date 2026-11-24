@@ -137,4 +137,25 @@ void PcmRing::consume(float* out, std::uint32_t frames) noexcept
     }
 }
 
+void PcmRing::discardPending() noexcept
+{
+    const std::uint64_t w = write_.load(std::memory_order_acquire);
+    std::uint64_t r = read_.load(std::memory_order_relaxed);
+    while (r != w) {
+        const Block& b = blocks_[static_cast<std::size_t>(r & kMask)];
+        const std::uint32_t left = b.frames - cursor_;
+        queued_.fetch_sub(static_cast<std::int64_t>(left), std::memory_order_relaxed);
+        consumed_.fetch_add(left, std::memory_order_relaxed);
+        cursor_ = 0;
+        ++r;
+        read_.store(r, std::memory_order_release);
+    }
+    cursor_ = 0;
+    tail_ = 0;
+    fadeIn_ = 0;
+    hadData_ = false;
+    lastL_ = 0.0f;
+    lastR_ = 0.0f;
+}
+
 } // namespace vgmplay
