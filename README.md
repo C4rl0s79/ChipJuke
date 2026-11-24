@@ -1,6 +1,6 @@
 # vgmplay
 
-<!-- Banner: docs/images/banner.png (to be added) -->
+![VGMPlay](docs/images/banner.png)
 
 A tracker-style player for VGM / VGZ files on Windows. Chip emulation is provided by
 [libvgm](https://github.com/ValleyBell/libvgm); the interface uses SDL3 and Dear ImGui (Direct3D 11),

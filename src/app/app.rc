@@ -3,6 +3,8 @@
 #include "app_resources.h"
 #include <vgmplay/version_rc.h>   // generowany przez CMake (wersja z project(VERSION))
 
+IDI_APP_ICON ICON "vgmplay.ico"
+
 IDR_FONT_UI RCDATA "../../assets/fonts/BIZUDGothic-Regular.ttf"
 
 VS_VERSION_INFO VERSIONINFO
