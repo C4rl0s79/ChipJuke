@@ -468,6 +468,8 @@ struct FakeActions final : PlayerActions {
     void unmuteAllChannels() override { log.push_back("unmuteall"); }
     void clearSolo() override { log.push_back("clearsolo"); }
     void setChannelScopesVisible(bool v) override { visible = v ? 1 : 0; }
+    std::uint32_t rowTicks = 0;   // ostatnie zadane rowTicks (0 = nie wolano)
+    void setPatternRowTicks(std::uint32_t t) override { rowTicks = t; }
 };
 
 struct ImGuiHeadless {
@@ -553,7 +555,7 @@ TEST_SUITE("ui/channel_screen")
         CHECK(act.log == want);
     }
 
-    TEST_CASE("PlayerScreen: F4 przelacza widok; w widoku wzorca Up/Down nie rusza kanalu")
+    TEST_CASE("PlayerScreen: F4 przelacza wysokosc paska oscyloskopow; Up/Down nie rusza kanalu")
     {
         ImGuiHeadless g;
         ChannelMix mix;
@@ -563,25 +565,57 @@ TEST_SUITE("ui/channel_screen")
         PlayerScreen screen;
         NavInput nav;
         nav.setFocus(Panel::Tracker);
-        CHECK(screen.scopesView());
+        auto run = [&] {
+            ImGui::NewFrame();
+            screen.frame(nav, v, act, {});
+            ImGui::Render();
+        };
+        CHECK(screen.scopeStrip() == ScopeStrip::Small);
         nav.events().push_back({Action::ToggleChannelsView, false});
-        ImGui::NewFrame();
-        screen.frame(nav, v, act, {});
-        ImGui::Render();
-        CHECK_FALSE(screen.scopesView());
+        run();
+        CHECK(screen.scopeStrip() == ScopeStrip::Large);
+        CHECK(act.visible == 1);
+        nav.events().push_back({Action::ToggleChannelsView, false});
+        run();
+        CHECK(screen.scopeStrip() == ScopeStrip::Hidden);
+        CHECK(act.visible == 0);              // ukryty pasek: silnik nie liczy strumieni kanalow
+        nav.events().push_back({Action::ToggleChannelsView, false});
+        run();
+        CHECK(screen.scopeStrip() == ScopeStrip::Small);
+        CHECK(act.visible == 1);
         nav.events().push_back({Action::Down, false});
         nav.events().push_back({Action::ToggleMute, false});
-        ImGui::NewFrame();
-        screen.frame(nav, v, act, {});
-        ImGui::Render();
+        run();
         CHECK(act.log.back() == "mute0");
     }
 
-    TEST_CASE("PlayerScreen: rysowanie 4..24 kanalow w obu widokach bez bledow (headless)")
+    TEST_CASE("PlayerScreen: +/- zmieniaja rowTicks po presetach")
+    {
+        ImGuiHeadless g;
+        ChannelMix mix;
+        ChannelScopeBuffer cs;
+        PlayerView v = makeView(mix, cs);
+        v.patternRowTicks = 735;
+        FakeActions act;
+        PlayerScreen screen;
+        NavInput nav;
+        nav.events().push_back({Action::PatternFaster, false});   // dziala w kazdym panelu
+        ImGui::NewFrame();
+        screen.frame(nav, v, act, {});
+        ImGui::Render();
+        CHECK(act.rowTicks == 368);
+        nav.events().push_back({Action::PatternSlower, false});
+        ImGui::NewFrame();
+        screen.frame(nav, v, act, {});
+        ImGui::Render();
+        CHECK(act.rowTicks == 882);
+    }
+
+    TEST_CASE("PlayerScreen: rysowanie 0..24 kanalow w trzech wysokosciach paska bez bledow (headless)")
     {
         ImGuiHeadless g;
         for (int n : {0, 1, 4, 13, 24}) {
-            for (bool scopes : {true, false}) {
+            for (ScopeStrip strip : {ScopeStrip::Small, ScopeStrip::Large, ScopeStrip::Hidden}) {
                 auto info = std::make_shared<TrackInfo>();
                 DeviceDesc d;
                 d.channelCount = static_cast<std::uint16_t>(n);
@@ -606,7 +640,7 @@ TEST_SUITE("ui/channel_screen")
                 }
                 FakeActions act;
                 PlayerScreen screen;
-                screen.setScopesView(scopes);
+                screen.setScopeStrip(strip);
                 NavInput nav;
                 for (int f = 0; f < 3; ++f) {
                     ImGui::NewFrame();

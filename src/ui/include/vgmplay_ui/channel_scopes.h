@@ -59,9 +59,31 @@ private:
     std::uint64_t lastEnd_ = 0;
 };
 
-// Poziom 0..1 ze szczytu amplitudy (liniowa, 1.0 = pelna skala): skala dB od -kVuFloorDb do 0.
+// Poziom 0..1 ze szczytu amplitudy (liniowa, 1.0 = pelna skala): skala dB od (topDb - kVuFloorDb)
+// do topDb. Master: topDb = 0 (szczyt mastera ok. 0,6 = -4 dB). Kanaly: strumienie kanalow sa
+// cichsze niz suma (szczyt do ok. 0,26, typowo 0,06-0,2), wiec ich skala konczy sie wyzej
+// (kChannelVuTopDb) - glosny kanal dobija do gory, a kanal o szczycie 0,02 nadal zapala segmenty.
 inline constexpr float kVuFloorDb = 36.0f;
-float vuLevelFromPeak(float peak);
+inline constexpr float kChannelVuTopDb = -9.0f;
+float vuLevelFromPeak(float peak, float topDb = 0.0f);
+
+// Automatyczne wzmocnienie przebiegu kanalu (wspolne dla wszystkich ramek, per kanal): obwiednia
+// szczytu rosnie natychmiast, opada wolno (kEnvDecaySec), a wzmocnienie = kFill / obwiednia w
+// granicach [kMinGain, kMaxGain]. Dzieki temu glosny kanal nie przycina sie, a cichy jest czytelny;
+// wolne opadanie nie "pompuje" obrazu (jak AGC w trackerach/odtwarzaczach, a nie normalizacja
+// klatka po klatce). Stale wzmocnienie jest zawsze kompromisem: x4 przycina szczyty 0,26 i niemal
+// nie pokazuje kanalow o szczycie 0,02.
+struct ScopeAutoGain {
+    static constexpr float kFill = 0.85f;        // czesc polowy wysokosci zajmowana przez szczyt
+    static constexpr float kMinGain = 1.0f;
+    static constexpr float kMaxGain = 16.0f;
+    static constexpr float kEnvDecaySec = 1.5f;  // stala czasowa opadania obwiedni
+
+    float env = 0.0f;
+    // windowPeak: szczyt |x| w rysowanym oknie; zwraca wzmocnienie do uzycia w tej klatce.
+    float update(float windowPeak, float dtSeconds);
+    float gain() const;
+};
 
 // Wskaznik poziomu: atak natychmiastowy, opadanie liniowe (kFallPerSec / s), szczyt trzymany
 // kPeakHoldSec, potem opada szybciej niz poziom.

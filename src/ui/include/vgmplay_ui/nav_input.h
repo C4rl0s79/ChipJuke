@@ -23,7 +23,9 @@ enum class Action {
     Up, Down, Left, Right, PageUp, PageDown,
     Accept, Back, TogglePlay, ToggleLang, ToggleGd3Lang, ToggleDiag,
     // Widok kanalow (panel Tracker): MUTE/SOLO aktywnego kanalu, ogolne wylaczniki, zmiana widoku.
-    ToggleMute, ToggleSolo, UnmuteAll, ClearSolo, ResetMix, ToggleChannelsView,
+    ToggleMute, ToggleSolo, UnmuteAll, ClearSolo, ResetMix,
+    ToggleChannelsView,           // F4 / Select: pasek oscyloskopow maly -> duzy -> ukryty
+    PatternFaster, PatternSlower, // +/-: krotszy / dluzszy wiersz wzorca (rowTicks)
     MuteChannel, SoloChannel   // arg = numer kanalu 0..9 (klawisze 1..9,0)
 };
 

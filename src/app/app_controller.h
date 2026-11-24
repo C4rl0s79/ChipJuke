@@ -11,6 +11,9 @@
 //  * Watek workera: loader::loadTrackFromFile (blokujace I/O); wynik trafia do kolejki pod
 //    mutexem, odbieranej w pump() na watku UI; dopiero tam powstaje cmd::Load.
 //  * loadFile() jest bezpieczne z dowolnego watku (np. callback okna wyboru pliku SDL).
+//  * Wzorzec (chipstate::buildPattern) liczy ten sam watek workera, tuz po zaladowaniu pliku i po
+//    kazdej zmianie rowTicks (zadanie "latest wins" po numerze generacji); wynik trafia do kolejki
+//    pod mutexem i jest odbierany w pump(). Blad lub pusty wzorzec nie blokuja odtwarzania.
 //  * Wiele zadan ladowania: wygrywa ostatnie ("latest wins"); poprzednie sa anulowane
 //    (CancelToken), a ich wyniki odrzucane po id.
 #pragma once
@@ -20,6 +23,7 @@
 #include "vgmplay/pcm_ring.hpp"
 #include "vgmplay_ui/channel_mix.h"
 #include "vgmplay_ui/channel_scopes.h"
+#include "vgmplay/chipstate.hpp"
 #include "vgmplay_ui/player_view.h"
 #include "vgmplay_ui/scope_buffer.h"
 
@@ -42,6 +46,9 @@ struct ControllerOptions {
     // do bloku scope syntetyczne sinusy na kanal (do testow i zrzutow ekranu). Dziala tylko po
     // setChannelScopesVisible(true), tak jak silnik po cmd::SetChannelScopes.
     bool fakeChannelScopes = false;
+    // DIAGNOSTYKA: zamiast chipstate::buildPattern - sztuczny wzorzec z nutami dla kanalow ukladu.
+    bool fakePattern = false;
+    std::uint32_t rowTicks = 735;   // poczatkowa dlugosc wiersza wzorca (ticki VGM 44100 Hz)
 };
 
 class AppController final : public ui::PlayerActions {
@@ -83,6 +90,7 @@ public:
     void unmuteAllChannels() override;
     void clearSolo() override;
     void setChannelScopesVisible(bool visible) override;
+    void setPatternRowTicks(std::uint32_t ticks) override;
 
     // Stan komendy SetChannelScopes wyslanej do silnika (dla testow): ostatnia wartosc i liczba wyslan.
     [[nodiscard]] bool channelScopesRequested() const { return scopesRequested_; }
@@ -94,6 +102,21 @@ private:
         std::filesystem::path path;
         CancelToken cancel;
     };
+    struct PatternJob {
+        std::uint64_t gen = 0;
+        std::shared_ptr<const loader::LoadedTrack> track;
+        std::shared_ptr<const TrackInfo> info;   // uklad kanalow (tylko dla --fake-pattern)
+        std::uint32_t rowTicks = 735;
+        std::uint32_t sampleRate = 48000;
+        bool fake = false;
+    };
+    struct PatternDone {
+        std::uint64_t gen = 0;
+        std::shared_ptr<const loader::LoadedTrack> track;
+        std::shared_ptr<const chipstate::Pattern> pattern;   // pusty = blad
+        std::uint32_t requestedTicks = 0;
+        bool hasEffects = false;
+    };
     struct Done {
         std::uint64_t id = 0;
         std::filesystem::path path;
@@ -101,6 +124,9 @@ private:
     };
 
     void workerLoop();
+    static PatternDone buildPatternJob(const PatternJob& job);
+    void requestPattern(const std::shared_ptr<const loader::LoadedTrack>& track,
+                        const std::shared_ptr<const TrackInfo>& info);
     void send(engine::Command c);
     bool canEditMix() const { return info_ && inflight_.empty(); }
     void sendMute(DeviceId device);
@@ -126,6 +152,8 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::optional<Request> pending_;      // chroniony mutex_
+    std::optional<PatternJob> patternJob_; // chroniony mutex_
+    std::vector<PatternDone> patternDone_; // chroniony mutex_
     std::vector<Done> done_;              // chroniony mutex_
     CancelToken currentCancel_;           // chroniony mutex_
     std::uint64_t latestId_ = 0;          // chroniony mutex_
@@ -149,6 +177,13 @@ private:
     ui::ChannelScopeBuffer channelScopes_;
     bool scopesRequested_ = false;   // ostatnia wartosc zadana przez UI (wyslana do silnika)
     unsigned scopesCommands_ = 0;
+    // Wzorzec (watek UI): ostatnia przyjeta generacja, utwor, do ktorego nalezy, i zadane rowTicks.
+    std::uint64_t patternGen_ = 0;         // ostatnio zlecona generacja
+    std::uint64_t patternGenDone_ = 0;     // ostatnio odebrana generacja
+    std::shared_ptr<const chipstate::Pattern> pattern_;
+    std::shared_ptr<const loader::LoadedTrack> patternTrack_;
+    bool patternHasEffects_ = false;
+    std::uint32_t rowTicks_ = 735;
     bool seekInFlight_ = false;
     std::uint64_t seekTarget_ = 0;
     std::uint64_t seekEpoch_ = 0;

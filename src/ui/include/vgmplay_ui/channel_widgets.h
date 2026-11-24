@@ -28,7 +28,4 @@ void drawWave(ImDrawList* dl, ImVec2 a, ImVec2 b, const std::vector<float>& samp
 // Tekst wysrodkowany w prostokacie, z polprzezroczystym tlem.
 void drawCenteredTag(ImDrawList* dl, ImVec2 a, ImVec2 b, const char* text, const ImVec4& color, bool backdrop);
 
-// Wspolny mnoznik wyswietlania przebiegow kanalowych (strumienie kanalu sa cichsze niz suma).
-inline constexpr float kChannelScopeGain = 4.0f;
-
 } // namespace vgmplay::ui

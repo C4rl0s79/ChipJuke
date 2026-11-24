@@ -1,10 +1,13 @@
-// Glowny ekran odtwarzacza (E1): transport, panel playlisty (jeden plik), GD3/info, siatka
-// trackera (makieta z prawdziwa lista kanalow) i oscyloskop. Czyta PlayerView, steruje wylacznie
-// przez PlayerActions; nie zna silnika ani watkow.
+// Glowny ekran odtwarzacza (E1/E1.5): transport, panel playlisty (jeden plik), GD3/info, panel
+// kanalow w ukladzie FastTrackera 2 (pasek oscyloskopow kanalow NA GORZE, pod nim ZAWSZE wzorzec
+// z kursorem odtwarzania w srodku, kolumny wyrownane z ramkami oscyloskopow) i oscyloskop ogolny
+// L/R z VU mastera. Czyta PlayerView, steruje wylacznie przez PlayerActions; nie zna silnika ani
+// watkow.
 #pragma once
 
 #include "vgmplay_ui/channel_scopes.h"
 #include "vgmplay_ui/nav_input.h"
+#include "vgmplay_ui/pattern_view.h"
 #include "vgmplay_ui/player_view.h"
 
 #include <imgui.h>
@@ -18,6 +21,10 @@ struct FrameInfo {
     bool idle = false;  // petla jest w trybie bezczynnosci
 };
 
+// Wysokosc paska oscyloskopow kanalow nad wzorcem (F4 przechodzi Small -> Large -> Hidden).
+// Hidden: brak paska i VU kanalow, silnik nie liczy strumieni kanalow.
+enum class ScopeStrip { Small, Large, Hidden };
+
 class PlayerScreen {
 public:
     // Wolac miedzy ImGui::NewFrame() a ImGui::Render(). Zuzywa nav.events().
@@ -29,11 +36,20 @@ public:
     bool diagnosticsVisible() const { return diag_; }
     void setDiagnosticsVisible(bool v) { diag_ = v; }
     void setTagsJapanese(bool jp) { gd3Jp_ = jp; }
-    // Widok panelu kanalow: true = oscyloskopy kanalow (domyslnie), false = podglad wzorca (F4).
-    bool scopesView() const { return scopesView_; }
-    void setScopesView(bool v) { scopesView_ = v; }
+    ScopeStrip scopeStrip() const { return strip_; }
+    void setScopeStrip(ScopeStrip s) { strip_ = s; }
+    // Wiersz wzorca pod kursorem odtwarzania w ostatniej narysowanej klatce (testy); -1 = brak wzorca.
+    long long currentRow() const { return currentRow_; }
+    // Liczba kolumn widocznych w ostatniej klatce (testy) i pierwsza widoczna.
+    int visibleColumns() const { return visCols_; }
+    int firstColumn() const { return firstChan_; }
 
 private:
+    void cycleStrip()
+    {
+        strip_ = strip_ == ScopeStrip::Small ? ScopeStrip::Large
+                 : strip_ == ScopeStrip::Large ? ScopeStrip::Hidden : ScopeStrip::Small;
+    }
     void apply(const NavEvent& ev, Panel focus, const PlayerView& view, PlayerActions& actions);
     void drawTransport(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
                        float w, float h);
@@ -43,8 +59,6 @@ private:
                      float w, float h);
     void drawChannelToolbar(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
                             float w, float h, bool focused);
-    void drawChannelGrid(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
-                         float w, float h, bool focused);
     void updateMeters(const PlayerView& view, float dtSeconds);
     void drawScope(const PlayerView& view, float x, float y, float w, float h);
     void drawStatus(const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h);
@@ -57,16 +71,18 @@ private:
     bool volumeDrag_ = false;
     static constexpr int kSeekHoldFrames = 12; // klatki ciaglego rysowania po seeku (czekamy na silnik)
     int seekHold_ = 0;
-    int row_ = 0;
     int chan_ = 0;
     int firstChan_ = 0;
-    int trackerVisibleRows_ = 16;
+    int visCols_ = 0;
+    long long currentRow_ = -1;
     int infoScroll_ = 0;
     std::vector<float> scopeL_, scopeR_;
-    bool scopesView_ = true;
-    int gridCols_ = 1;                 // kolumny siatki oscyloskopow z ostatniej klatki (nawigacja)
+    ScopeStrip strip_ = ScopeStrip::Small;
     VuBank vu_;
     std::vector<float> vuTargets_, wave_;
+    std::vector<ScopeAutoGain> autoGain_;      // per kanal; zerowane przy nowym utworze
+    const void* gainTrack_ = nullptr;
+    std::vector<int> columnMap_;               // kanal globalny -> kolumna wzorca (-1 = n/a)
     std::vector<ImVec2> wavePts_;
 };
 

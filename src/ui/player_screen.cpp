@@ -10,6 +10,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <optional>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -20,7 +21,6 @@ namespace {
 
 using engine::TransportState;
 
-constexpr int kPatternRows = 64;
 constexpr int kTransportButtons = 6; // prev, play, pause, stop, next, open
 constexpr double kSeekStepSeconds = 5.0;
 constexpr float kVolumeStep = 0.05f;
@@ -93,27 +93,6 @@ std::string trackTitle(const PlayerView& v, bool jp)
     return sanitizeForDisplay(fileNameUtf8(v.track->path));
 }
 
-const char* const kNoteNames[12] = {"C-", "C#", "D-", "D#", "E-", "F-",
-                                    "F#", "G-", "G#", "A-", "A#", "B-"};
-
-// Deterministyczne dane wzorca (PODGLAD, nie dekodowanie): nuta (-1 = pusto) i glosnosc.
-void cellData(int row, int ch, int& note, int& vol)
-{
-    static const int period[kChannelCount] = {4, 2, 8, 4, 16, 2};
-    static const int scale[7] = {0, 2, 3, 5, 7, 8, 10};
-    const int p = period[ch % kChannelCount];
-    if (row % p != 0) {
-        note = -1;
-        vol = 0;
-        return;
-    }
-    const int step = row / p;
-    const int idx = (step + ch * 2) % 7;
-    const int octave = 2 + (ch % kChannelCount) / 2 + ((step / 7) & 1);
-    note = scale[idx] + 12 * octave;
-    vol = 0x40 - ((step * 5) % 0x20);
-}
-
 int channelCount(const PlayerView& v)
 {
     return v.info ? static_cast<int>(v.info->layout.channels.size()) : 0;
@@ -139,7 +118,9 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
     case Action::ToggleLang: setLang(lang() == Lang::En ? Lang::Pl : Lang::En); return;
     case Action::ToggleGd3Lang: gd3Jp_ = !gd3Jp_; return;
     case Action::ToggleDiag: diag_ = !diag_; return;
-    case Action::ToggleChannelsView: scopesView_ = !scopesView_; return;
+    case Action::ToggleChannelsView: cycleStrip(); return;
+    case Action::PatternFaster: actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, 1)); return;
+    case Action::PatternSlower: actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, -1)); return;
     case Action::Back:
         if (view.error || !view.audioError.empty()) { actions.dismissError(); return; }
         if (focus == Panel::Transport && !ev.repeat) actions.stop();
@@ -162,14 +143,9 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
         if (ev.action == Action::Accept && !ev.repeat) actions.requestOpenFile();
         break;
     case Panel::Tracker:
-        if (ev.action == Action::Up) {
-            if (scopesView_) chan_ = moveGridCursor(chan_, 0, -1, gridCols_, channels);
-            else row_ = std::max(0, row_ - 1);
-        } else if (ev.action == Action::Down) {
-            if (scopesView_) chan_ = moveGridCursor(chan_, 0, 1, gridCols_, channels);
-            else row_ = std::min(kPatternRows - 1, row_ + 1);
-        }
-        else if (ev.action == Action::Left) chan_ = std::max(0, chan_ - 1);
+        // Wzorzec przewija sie razem z pozycja slyszana (seek: panel Odtwarzanie); Gora/Dol bez efektu,
+        // kursor kanalu: Lewo/Prawo.
+        if (ev.action == Action::Left) chan_ = std::max(0, chan_ - 1);
         else if (ev.action == Action::Right) chan_ = std::min(std::max(0, channels - 1), chan_ + 1);
         else if (ev.action == Action::Accept || ev.action == Action::ToggleMute) actions.toggleChannelMute(chan_);
         else if (ev.action == Action::ToggleSolo) actions.toggleChannelSolo(chan_);
@@ -183,9 +159,6 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
                 else actions.toggleChannelSolo(ev.arg);
             }
         }
-        else if (ev.action == Action::PageUp) row_ = std::max(0, row_ - trackerVisibleRows_);
-        else if (ev.action == Action::PageDown)
-            row_ = std::min(kPatternRows - 1, row_ + trackerVisibleRows_);
         break;
     default: break;
     }
@@ -200,7 +173,7 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
 
     const ImGuiIO& io = ImGui::GetIO();
     updateMeters(view, std::clamp(io.DeltaTime, 0.0f, 0.1f));
-    actions.setChannelScopesVisible(view.hasTrack()); // oscyloskopy i VU kanalow widoczne w obu widokach
+    actions.setChannelScopesVisible(view.hasTrack() && strip_ != ScopeStrip::Hidden); // pasek oscyloskopow i VU kanalow
     const float W = io.DisplaySize.x;
     const float H = io.DisplaySize.y;
     const float lh = ImGui::GetTextLineHeight();
@@ -244,7 +217,7 @@ void PlayerScreen::updateMeters(const PlayerView& view, float dt)
                 const ChannelRef& r = view.info->layout.channels[static_cast<std::size_t>(g)];
                 float pk = 0.0f;
                 if (cs->peak(r.deviceIdx, r.channelIdx, t.audibleFrame, win, pk))
-                    vuTargets_[static_cast<std::size_t>(g)] = vuLevelFromPeak(pk);
+                    vuTargets_[static_cast<std::size_t>(g)] = vuLevelFromPeak(pk, kChannelVuTopDb);
             }
         }
         const ScopeBuffer* sb = view.scope;
@@ -562,14 +535,29 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
     if (clickedInside()) nav.setFocus(Panel::Tracker);
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const bool focused = nav.focus() == Panel::Tracker;
+    const ImGuiIO& io = ImGui::GetIO();
 
     const int nch = channelCount(view);
-    char title[96];
-    if (scopesView_)
-        std::snprintf(title, sizeof title, "%s  %d ch", tr(Str::PanelChannels), nch);
-    else
-        std::snprintf(title, sizeof title, "%s (%s)  %02X/%02X  %d ch", tr(Str::PanelTracker), tr(Str::Preview),
-                      row_, kPatternRows - 1, nch);
+    const chipstate::Pattern* pat = view.pattern.get();
+    const bool hasLoop = view.info && view.info->loopFrames > 0;
+    PatternTiming timing;
+    std::uint64_t cur = 0;
+    currentRow_ = -1;
+    if (pat) {
+        timing = timingOf(*pat, hasLoop);
+        cur = rowAtFrame(view.transport.audibleFrame, view.sampleRate, timing);
+        currentRow_ = static_cast<long long>(cur);
+    }
+
+    char title[128];
+    int len = std::snprintf(title, sizeof title, "%s  %d ch", tr(Str::PanelTracker), nch);
+    if (visCols_ > 0 && visCols_ < nch && len > 0 && len < static_cast<int>(sizeof title)) // przewijanie poziome (z poprzedniej klatki)
+        len += std::snprintf(title + len, sizeof title - static_cast<std::size_t>(len), " (%d-%d)", firstChan_ + 1,
+                             firstChan_ + visCols_);
+    if (pat && len > 0 && len < static_cast<int>(sizeof title))
+        std::snprintf(title + len, sizeof title - static_cast<std::size_t>(len), "  %llX/%llX",
+                      static_cast<unsigned long long>(cur),
+                      static_cast<unsigned long long>(pat->rowCount ? pat->rowCount - 1 : 0));
     const float titleBar = drawFrame(dl, title, focused);
     const float dpi = ImGui::GetStyle().FontScaleDpi;
     const float lh = ImGui::GetTextLineHeight();
@@ -589,125 +577,209 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
     if (nch == 0) {
         clippedText(dl, wp.x + 8.0f * dpi, wp.x + w - 4.0f * dpi, wp.y + bar + 6.0f * dpi, col32(p.textDim),
                     tr(Str::NoChannels));
+        visCols_ = 0;
         ImGui::End();
         return;
     }
     const TrackInfo& ti = *view.info;
     chan_ = std::clamp(chan_, 0, nch - 1);
-    if (scopesView_) {
-        drawChannelGrid(nav, view, actions, wp.x, wp.y + bar, w, h - bar, focused);
-        ImGui::End();
-        return;
-    }
+    columnMap_ = mapPatternColumns(ti.layout, pat);
 
-    if (ImGui::IsWindowHovered()) {
-        const float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.0f) row_ = std::clamp(row_ - static_cast<int>(wheel * 3), 0, kPatternRows - 1);
-    }
-
+    // ---- geometria: [urzadzenia][pasek oscyloskopow][naglowki][wzorzec], kolumny wspolne ----
+    const bool showFx = view.patternHasEffects;
     const float rowH = lh + 2.0f * dpi;
-    const float headH = rowH + 2.0f * dpi;
-    const float vuH = headH * 1.6f;   // pasek VU nad naglowkami kanalow (jak w ProTrackerze)
-    const float numW = cw * 4.0f;
-    const float chanW = cw * 10.0f;
+    const float headH = lh + 4.0f * dpi;
+    const float devH = lh + 2.0f * dpi;
+    const float colW = std::floor(cw * (static_cast<float>(showFx ? kCellCharsFx : kCellCharsNoFx) + 1.5f));
+    int digits = 2;
+    if (pat && pat->rowCount > 1)
+        for (std::uint64_t v = (pat->rowCount - 1) >> 8; v != 0; v >>= 4) ++digits; // 2 cyfry do 0xFF
+    if (digits < 2) digits = 2;
+    const float numW = std::floor(cw * (static_cast<float>(digits) + 1.5f));
     const float left = wp.x + 4.0f * dpi;
-    const float vuTop = wp.y + bar + 2.0f * dpi;
-    const float top = vuTop + vuH + 2.0f * dpi;
 
-    trackerVisibleRows_ = std::max(1, static_cast<int>((h - bar - vuH - 2 * headH - 8.0f * dpi) / rowH));
-    const int visChans = std::clamp(static_cast<int>((w - numW - 8.0f * dpi) / chanW), 1, nch);
+    const int visChans = std::clamp(static_cast<int>((w - numW - 8.0f * dpi) / colW), 1, nch);
+    visCols_ = visChans;
+    if (ImGui::IsWindowHovered()) { // kolko: przesuwa kursor kanalu (kolumny przewijaja sie za nim)
+        const float wheel = io.MouseWheel;
+        if (wheel != 0.0f) chan_ = std::clamp(chan_ + (wheel < 0 ? 1 : -1), 0, nch - 1);
+    }
     if (chan_ < firstChan_) firstChan_ = chan_;
     if (chan_ >= firstChan_ + visChans) firstChan_ = chan_ - visChans + 1;
     firstChan_ = std::clamp(firstChan_, 0, nch - visChans);
 
-    // Kursor pozostaje w srodku widoku, gdy tylko to mozliwe.
-    const int firstRow = std::clamp(row_ - trackerVisibleRows_ / 2, 0,
-                                    std::max(0, kPatternRows - trackerVisibleRows_));
+    const float stripWanted = strip_ == ScopeStrip::Hidden ? 0.0f : lh * (strip_ == ScopeStrip::Large ? 8.4f : 4.2f);
+    const float stripH = std::min(stripWanted, (h - bar) * 0.4f);
+    float yy = wp.y + bar + 2.0f * dpi;
+    const float devTop = yy;
+    yy += devH;
+    const float stripTop = yy;
+    yy += stripH > 0.0f ? stripH + 2.0f * dpi : 0.0f;
+    const float headTop = yy;
+    yy += headH;
+    const float gridTop = yy + dpi;
+    const float gridBottom = wp.y + h - dpi;
+    const int visRows = std::max(1, static_cast<int>((gridBottom - gridTop) / rowH));
+    const int cursorIdx = visRows / 2;
+    const float rightEdge = wp.x + w - 4.0f * dpi;
+    const float gap = std::max(2.0f, 2.0f * dpi);
 
-    // Naglowki: wiersz ukladow (nazwa przy pierwszym kanale ukladu) i wiersz kanalow.
+    // Auto-wzmocnienie przebiegow: stan zerowany przy nowym utworze.
+    if (gainTrack_ != view.track.get() || autoGain_.size() != static_cast<std::size_t>(nch)) {
+        autoGain_.assign(static_cast<std::size_t>(nch), ScopeAutoGain{});
+        gainTrack_ = view.track.get();
+    }
+    const float dt = std::clamp(io.DeltaTime, 0.0f, 0.1f);
+    const ChannelScopeBuffer* cs = view.channelScopes;
+    const bool epochOk = cs && cs->epoch() == view.transport.epoch &&
+                         view.transport.state != TransportState::Idle &&
+                         view.transport.state != TransportState::Failed;
+
+    // ---- kolumny: urzadzenie, oscyloskop + VU, naglowek z nazwa i M/S ----
     for (int c = 0; c < visChans; ++c) {
         const int ch = firstChan_ + c;
         const ChannelRef& ref = ti.layout.channels[static_cast<std::size_t>(ch)];
         const DeviceDesc* dev = ref.deviceIdx < ti.layout.devices.size() ? &ti.layout.devices[ref.deviceIdx] : nullptr;
+        const float cx = left + numW + static_cast<float>(c) * colW;
+        const float x1 = cx + colW - gap;
+        const bool selected = ch == chan_;
+        const bool audible = !view.mix || view.mix->audible(ch);
+        const ImVec4 chVec = p.channel[ch % kChannelCount];
+
+        // Nazwa ukladu nad pierwsza kolumna ukladu (przycieta do jego widocznych kolumn).
         const bool newDev = c == 0 || ti.layout.channels[static_cast<std::size_t>(ch - 1)].deviceIdx != ref.deviceIdx;
-        const float cx = left + numW + c * chanW;
         if (newDev && dev) {
-            std::string dn = dev->name.empty() ? std::string(chipTypeName(dev->type)) : dev->name;
-            const float ex = cx + chanW * 4.0f;
-            clippedText(dl, cx + cw, std::min(ex, wp.x + w - 4.0f * dpi), top + dpi, col32(p.textDim), dn.c_str());
+            int run = 1;
+            while (c + run < visChans &&
+                   ti.layout.channels[static_cast<std::size_t>(ch + run)].deviceIdx == ref.deviceIdx)
+                ++run;
+            const std::string dn = dev->name.empty() ? std::string(chipTypeName(dev->type)) : dev->name;
+            clippedText(dl, cx + cw * 0.5f, std::min(cx + static_cast<float>(run) * colW - gap, rightEdge),
+                        devTop + dpi, col32(p.textDim), dn.c_str());
         }
-        char hd[32];
+
+        // Oscyloskop kanalu (rzad na gorze) z VU przy prawej krawedzi ramki.
+        if (stripH > 0.0f) {
+            const float y0 = stripTop, y1 = stripTop + stripH;
+            dl->AddRectFilled(ImVec2(cx, y0), ImVec2(x1, y1), col32(p.scopeCell));
+            dl->AddRect(ImVec2(cx, y0), ImVec2(x1, y1),
+                        col32(selected ? (focused ? p.focusBorder : p.textDim) : p.border), 0.0f, 0,
+                        selected ? 2.0f * dpi : 1.0f);
+            const float vuW = std::clamp(colW * 0.07f, 5.0f * dpi, 9.0f * dpi);
+            const ImVec2 wa(cx + 2.0f * dpi, y0 + 2.0f * dpi), wb(x1 - vuW - 4.0f * dpi, y1 - 2.0f * dpi);
+            const ImVec2 va(x1 - vuW - 2.0f * dpi, y0 + 2.0f * dpi), vb(x1 - 2.0f * dpi, y1 - 2.0f * dpi);
+            const bool live = epochOk && cs->live(ref.deviceIdx, ref.channelIdx);
+            const bool have = live && cs->extract(ref.deviceIdx, ref.channelIdx, view.transport.audibleFrame,
+                                                  kChannelScopeFrames, wave_);
+            if (have) {
+                float winPeak = 0.0f;
+                for (const float v : wave_) winPeak = std::max(winPeak, std::fabs(v));
+                const float gain = autoGain_[static_cast<std::size_t>(ch)].update(winPeak, dt);
+                drawWave(dl, wa, wb, wave_, gain, audible ? chVec : withAlpha(chVec, 0.30f), wavePts_);
+            } else {
+                drawWave(dl, wa, wb, {}, 1.0f, chVec, wavePts_); // sama linia srodkowa
+                if (!live) drawCenteredTag(dl, wa, wb, tr(Str::ScopeNa), withAlpha(p.textDim, 0.8f), false);
+            }
+            if (!audible) drawCenteredTag(dl, wa, wb, tr(Str::MuteTag), p.muteOn, true);
+            if (vb.y - va.y > 6.0f && static_cast<std::size_t>(ch) < vu_.size())
+                drawVuBar(dl, va, vb, vu_.channel(static_cast<std::size_t>(ch)), !audible);
+        }
+
+        // Naglowek kolumny wzorca: nazwa kanalu (kolor kanalu) + M / S.
+        char hd[40];
         if (dev && ref.channelIdx < dev->channelNames.size())
             std::snprintf(hd, sizeof hd, "%s", dev->channelNames[ref.channelIdx].c_str());
         else std::snprintf(hd, sizeof hd, "CH%d", ch + 1);
-        const bool audible = !view.mix || view.mix->audible(ch);
-        const ImVec4 chVec = p.channel[ch % kChannelCount];
-        const ImU32 chc = col32(audible ? chVec : withAlpha(chVec, 0.4f));
-        const float hy = top + headH;
-        dl->AddRectFilled(ImVec2(cx, hy), ImVec2(cx + chanW - 2.0f * dpi, hy + headH - 2.0f * dpi),
-                          col32(withAlpha(chVec, ch == chan_ ? 0.35f : 0.15f)));
-        // VU nad naglowkiem.
-        if (static_cast<std::size_t>(ch) < vu_.size())
-            drawVuBar(dl, ImVec2(cx + chanW * 0.28f, vuTop), ImVec2(cx + chanW * 0.72f, vuTop + vuH),
-                      vu_.channel(static_cast<std::size_t>(ch)), !audible);
-        // M / S w naglowku.
+        dl->AddRectFilled(ImVec2(cx, headTop), ImVec2(x1, headTop + headH),
+                          col32(withAlpha(chVec, selected ? 0.35f : 0.15f)));
         const float bs = headH - 4.0f * dpi;
-        const float bx1 = cx + chanW - 2.0f * dpi - 2.0f;
-        const ImVec2 sPos(bx1 - bs, hy + dpi), mPos(bx1 - 2.0f * bs - 2.0f * dpi, hy + dpi);
+        const ImVec2 sPos(x1 - bs - 2.0f * dpi, headTop + 2.0f * dpi);
+        const ImVec2 mPos(sPos.x - bs - 2.0f * dpi, sPos.y);
         const bool isMuted = view.mix && view.mix->muted(ch);
         const bool isSolo = view.mix && view.mix->solo(ch);
         bool boxClick = false;
         if (drawToggleBox(dl, mPos, bs, "M", isMuted, p.muteOn, tr(Str::TipMute))) { actions.toggleChannelMute(ch); boxClick = true; }
         if (drawToggleBox(dl, sPos, bs, "S", isSolo, p.soloOn, tr(Str::TipSolo))) { actions.toggleChannelSolo(ch); boxClick = true; }
+        clippedText(dl, cx + cw * 0.5f, mPos.x - 2.0f * dpi, headTop + dpi * 2.0f,
+                    col32(audible ? chVec : withAlpha(chVec, 0.45f)), hd);
+
+        // Klik w kolumne (poza M/S): wybor kanalu.
         if (!boxClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-            ImGui::IsMouseHoveringRect(ImVec2(cx, hy), ImVec2(mPos.x - 2.0f, hy + headH)))
+            ImGui::IsMouseHoveringRect(ImVec2(cx, stripH > 0.0f ? stripTop : headTop), ImVec2(x1, gridBottom))) {
             chan_ = ch;
-        clippedText(dl, cx + cw, mPos.x - 2.0f * dpi, hy + dpi, chc, hd);
+            nav.setFocus(Panel::Tracker);
+        }
     }
 
-    const float gy = top + 2 * headH;
-    dl->PushClipRect(ImVec2(wp.x, gy), ImVec2(wp.x + w, wp.y + h - dpi), true);
-    for (int i = 0; i < trackerVisibleRows_; ++i) {
-        const int row = firstRow + i;
-        if (row >= kPatternRows) break;
-        const float ry = gy + i * rowH;
-        const ImVec2 a(left, ry), b(wp.x + w - 4.0f * dpi, ry + rowH);
-        if (row % 16 == 0) dl->AddRectFilled(a, b, col32(p.gridBar));
-        else if (row % 4 == 0) dl->AddRectFilled(a, b, col32(p.gridBeat));
-        if (row == row_) dl->AddRectFilled(a, b, col32(p.cursorRow));
+    // ---- wzorzec: kursor odtwarzania w srodku, wiersze przesuwaja sie razem z pozycja slyszana ----
+    dl->PushClipRect(ImVec2(wp.x, gridTop), ImVec2(wp.x + w, gridBottom + dpi), true);
+    if (!pat) {
+        clippedText(dl, left + cw, rightEdge, gridTop + rowH * static_cast<float>(cursorIdx), col32(p.textDim),
+                    tr(view.patternBuilding || view.loading ? Str::PatternBuilding : Str::PatternNone));
+    }
+    static const char* const kDots = "\xC2\xB7\xC2\xB7\xC2\xB7";
+    const ImU32 dimEmpty = col32(withAlpha(p.textDim, 0.40f));
+    for (int i = 0; pat && i < visRows; ++i) {
+        const float ry = gridTop + static_cast<float>(i) * rowH;
+        const bool isCursor = i == cursorIdx;
+        const std::optional<std::uint64_t> dr = displayRow(static_cast<std::int64_t>(cur) + (i - cursorIdx), timing);
+        const ImVec2 a(left, ry), b(rightEdge, ry + rowH);
+        if (dr) {
+            if (*dr % 16 == 0) dl->AddRectFilled(a, b, col32(p.gridBar));
+            else if (*dr % 4 == 0) dl->AddRectFilled(a, b, col32(p.gridBeat));
+        }
+        if (isCursor) dl->AddRectFilled(a, b, col32(p.cursorRow));
+        if (!dr) continue;
 
-        char rn[8];
-        std::snprintf(rn, sizeof rn, "%02X", row);
-        dl->AddText(ImVec2(left + cw, ry + dpi), col32(row % 4 == 0 ? p.text : p.textDim), rn);
+        char rn[24];
+        std::snprintf(rn, sizeof rn, "%0*llX", digits, static_cast<unsigned long long>(*dr));
+        dl->AddText(ImVec2(left + cw * 0.5f, ry + dpi), col32(isCursor || *dr % 4 == 0 ? p.text : p.textDim), rn);
 
         for (int c = 0; c < visChans; ++c) {
             const int ch = firstChan_ + c;
-            const float cx = left + numW + c * chanW;
-            int note, vol;
-            cellData(row, ch, note, vol);
-            char ns[8], vs[8];
-            if (note < 0) {
-                std::snprintf(ns, sizeof ns, "---");
-                std::snprintf(vs, sizeof vs, "..");
-            } else {
-                std::snprintf(ns, sizeof ns, "%s%d", kNoteNames[note % 12], note / 12);
-                std::snprintf(vs, sizeof vs, "%02X", vol);
-            }
-            const bool cursor = row == row_ && ch == chan_;
-            if (cursor)
-                dl->AddRectFilled(ImVec2(cx, ry), ImVec2(cx + chanW - 2.0f * dpi, ry + rowH),
+            const float cx = left + numW + static_cast<float>(c) * colW;
+            const float tx = cx + cw * 0.75f;
+            const bool sel = isCursor && ch == chan_;
+            if (sel)
+                dl->AddRectFilled(ImVec2(cx, ry), ImVec2(cx + colW - gap, ry + rowH),
                                   col32(focused ? p.cursorCell : withAlpha(p.cursorCell, 0.45f)));
-            const ImVec4 chCol = withAlpha(p.channel[ch % kChannelCount], 0.6f); // przygaszone: podglad
-            const ImU32 nc = cursor ? col32(p.cursorText) : col32(note < 0 ? p.textDim : chCol);
-            const ImU32 vc = cursor ? col32(p.cursorText) : col32(p.textDim);
-            dl->AddText(ImVec2(cx + cw, ry + dpi), nc, ns);
-            dl->AddText(ImVec2(cx + cw * 6.0f, ry + dpi), vc, vs);
+            const bool audible = !view.mix || view.mix->audible(ch);
+            const ImVec4 chVec = p.channel[ch % kChannelCount];
+            const int col = columnMap_[static_cast<std::size_t>(ch)];
+            const std::size_t idx = col >= 0 ? static_cast<std::size_t>(*dr) * pat->channels.size() +
+                                                   static_cast<std::size_t>(col)
+                                             : 0;
+            if (col < 0 || idx >= pat->cells.size()) { // kanal bez dekodera (lub brak w danych): n/a
+                dl->AddText(ImVec2(tx, ry + dpi), sel ? col32(p.cursorText) : dimEmpty, kDots);
+                if (isCursor)
+                    dl->AddText(ImVec2(tx + cw * 4.0f, ry + dpi), sel ? col32(p.cursorText) : col32(p.textDim),
+                                tr(Str::ScopeNa));
+                continue;
+            }
+            const chipstate::Cell& cell = pat->cells[idx];
+            if (!cellHasEvent(cell)) {
+                const ImU32 ec = sel ? col32(p.cursorText) : dimEmpty;
+                dl->AddText(ImVec2(tx, ry + dpi), ec, showFx ? "--- .. .. ..." : "--- .. ..");
+                continue;
+            }
+            const CellText t = formatCell(cell);
+            const float a_ = audible ? 1.0f : 0.4f;
+            const ImU32 noteC = sel ? col32(p.cursorText)
+                                    : (cell.note == chipstate::kNoteNone ? dimEmpty : col32(withAlpha(chVec, a_)));
+            auto field = [&](float off, const char* s, bool present, const ImVec4& color) {
+                dl->AddText(ImVec2(tx + cw * off, ry + dpi),
+                            sel ? col32(p.cursorText) : (present ? col32(withAlpha(color, a_)) : dimEmpty), s);
+            };
+            dl->AddText(ImVec2(tx, ry + dpi), noteC, t.note);
+            field(4.0f, t.inst, cell.instrument != chipstate::kValueNone, p.text);
+            field(7.0f, t.vol, cell.volume != chipstate::kValueNone, p.textDim);
+            if (showFx) field(10.0f, t.fx, cell.effect != 0 || cell.effectParam != 0, p.accent);
         }
     }
-    // Pionowe separatory kanalow.
+    // Pionowe separatory kolumn (w osi z ramkami oscyloskopow).
     for (int c = 0; c <= visChans; ++c) {
-        const float cx = left + numW + c * chanW - dpi;
-        dl->AddLine(ImVec2(cx, gy), ImVec2(cx, wp.y + h), col32(p.border));
+        const float sx = left + numW + static_cast<float>(c) * colW - gap * 0.5f;
+        dl->AddLine(ImVec2(sx, gridTop), ImVec2(sx, gridBottom + dpi), col32(p.border));
     }
     dl->PopClipRect();
     ImGui::End();
@@ -722,27 +794,57 @@ void PlayerScreen::drawChannelToolbar(NavInput& nav, const PlayerView& view, Pla
     const float lh = ImGui::GetTextLineHeight();
     const float ty = y + (h - lh) * 0.5f;
     const bool hasCh = view.mix && view.mix->channelCount() > 0;
-    float cx = x + 6.0f * dpi;
-    const float right = x + w - 6.0f * dpi;
     (void)focused;
 
-    // Przelacznik widoku (klik lub F4): [Oscyloskopy] Wzorzec.
-    {
-        char lbl[64];
-        if (scopesView_) std::snprintf(lbl, sizeof lbl, "[%s] %s", tr(Str::ViewScopes), tr(Str::ViewPattern));
-        else std::snprintf(lbl, sizeof lbl, "%s [%s]", tr(Str::ViewScopes), tr(Str::ViewPattern));
-        const ImVec2 ts = ImGui::CalcTextSize(lbl);
-        const ImVec2 a(cx, y), b(cx + ts.x + 8.0f * dpi, y + h);
-        const bool hover = ImGui::IsMouseHoveringRect(a, b);
-        dl->AddText(ImVec2(cx + 4.0f * dpi, ty), col32(hover ? p.accent : p.text), lbl);
-        if (hover) {
-            ImGui::SetTooltip("%s", tr(Str::ViewToggle));
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                scopesView_ = !scopesView_;
-                nav.setFocus(Panel::Tracker);
-            }
+    // Przycisk-ramka. Zwraca: -1 = nie miesci sie (nic nie rysuje), 0 = rysowany, 1 = klikniety.
+    auto button = [&](float& cx, float right, const std::string& label, bool enabled, const char* tip) {
+        const char* text = label.c_str();
+        const ImVec2 ts = ImGui::CalcTextSize(text);
+        const ImVec2 a(cx, y + dpi), b(cx + ts.x + 12.0f * dpi, y + h - dpi);
+        if (b.x > right) return -1;
+        const bool hover = enabled && ImGui::IsMouseHoveringRect(a, b);
+        dl->AddRectFilled(a, b, col32(p.panelHeader));
+        dl->AddRect(a, b, col32(hover ? p.focusBorder : p.border));
+        dl->AddText(ImVec2(a.x + 6.0f * dpi, ty),
+                    col32(!enabled ? withAlpha(p.textDim, 0.5f) : (hover ? p.accent : p.text)), text);
+        if (hover && tip) ImGui::SetTooltip("%s", tip);
+        cx = b.x + 6.0f * dpi;
+        return hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left) ? 1 : 0;
+    };
+
+    // Prawa strona: dlugosc wiersza wzorca  [-] Row 1/60 s [+]  (krotszy wiersz = szybciej).
+    const std::string rowLabel = std::string(tr(Str::RowSpeed)) + " " + rowTicksLabel(view.patternRowTicks);
+    const float rw = ImGui::CalcTextSize(rowLabel.c_str()).x;
+    const float btnW = ImGui::CalcTextSize("+").x + 12.0f * dpi;
+    const float rowGroupW = btnW * 2.0f + rw + 18.0f * dpi;
+    float right = x + w - 6.0f * dpi;
+    float rx = right - rowGroupW;
+    if (rx > x + lh * 8.0f) {
+        const bool slowerOk = view.patternRowTicks < kRowTickPresets[kRowTickPresetCount - 1];
+        const bool fasterOk = view.patternRowTicks > kRowTickPresets[0];
+        if (button(rx, right, "-", slowerOk, tr(Str::RowSpeedTip)) == 1) {
+            actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, -1));
+            nav.setFocus(Panel::Tracker);
         }
-        cx = b.x + 10.0f * dpi;
+        dl->AddText(ImVec2(rx + 2.0f * dpi, ty), col32(p.text), rowLabel.c_str());
+        rx += rw + 10.0f * dpi;
+        if (button(rx, right + 1.0f, "+", fasterOk, tr(Str::RowSpeedTip)) == 1) {
+            actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, 1));
+            nav.setFocus(Panel::Tracker);
+        }
+        right = x + w - 6.0f * dpi - rowGroupW - 8.0f * dpi;
+    }
+
+    float cx = x + 6.0f * dpi;
+    // Wysokosc paska oscyloskopow (klik lub F4): maly -> duzy -> ukryty.
+    {
+        const Str st = strip_ == ScopeStrip::Small ? Str::StripSmall
+                       : strip_ == ScopeStrip::Large ? Str::StripLarge : Str::StripHidden;
+        const std::string lbl = std::string(tr(Str::ViewScopes)) + ": " + tr(st);
+        if (button(cx, right, lbl, true, tr(Str::ViewToggle)) == 1) {
+            cycleStrip();
+            nav.setFocus(Panel::Tracker);
+        }
     }
 
     // Ogolne wylaczniki.
@@ -753,127 +855,13 @@ void PlayerScreen::drawChannelToolbar(NavInput& nav, const PlayerView& view, Pla
         {Str::BtnMuteAll, hasCh, 2},
     };
     for (const Btn& bt : btns) {
-        const char* label = tr(bt.label);
-        const ImVec2 ts = ImGui::CalcTextSize(label);
-        const ImVec2 a(cx, y + dpi), b(cx + ts.x + 12.0f * dpi, y + h - dpi);
-        if (b.x > right) break;
-        const bool hover = bt.enabled && ImGui::IsMouseHoveringRect(a, b);
-        dl->AddRectFilled(a, b, col32(p.panelHeader));
-        dl->AddRect(a, b, col32(hover ? p.focusBorder : p.border));
-        dl->AddText(ImVec2(a.x + 6.0f * dpi, ty),
-                    col32(!bt.enabled ? withAlpha(p.textDim, 0.5f) : (hover ? p.accent : p.text)), label);
-        if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        const int r = button(cx, right, tr(bt.label), bt.enabled, nullptr);
+        if (r < 0) break;
+        if (r == 1) {
             nav.setFocus(Panel::Tracker);
             if (bt.id == 0) actions.unmuteAllChannels();
             else if (bt.id == 1) actions.clearSolo();
             else actions.muteAllChannels();
-        }
-        cx = b.x + 6.0f * dpi;
-    }
-}
-
-void PlayerScreen::drawChannelGrid(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x,
-                                   float y, float w, float h, bool focused)
-{
-    const Palette& p = palette();
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float dpi = ImGui::GetStyle().FontScaleDpi;
-    const float lh = ImGui::GetTextLineHeight();
-    const TrackInfo& ti = *view.info;
-    const int nch = channelCount(view);
-
-    const float margin = 4.0f * dpi;
-    const float gap = std::max(2.0f, 3.0f * dpi);
-    const GridLayout grid = chooseScopeGrid(nch, w - 2.0f * margin, h - margin - 2.0f * dpi, gap);
-    if (grid.cols == 0) return;
-    gridCols_ = grid.cols;
-
-    // Mysz: kolko przesuwa kursor kanalu po siatce.
-    if (ImGui::IsWindowHovered()) {
-        const float wheel = ImGui::GetIO().MouseWheel;
-        if (wheel != 0.0f) chan_ = moveGridCursor(chan_, wheel < 0 ? 1 : -1, 0, gridCols_, nch);
-    }
-
-    const ChannelScopeBuffer* cs = view.channelScopes;
-    const bool epochOk = cs && cs->epoch() == view.transport.epoch &&
-                         view.transport.state != TransportState::Idle &&
-                         view.transport.state != TransportState::Failed;
-    const float headH = lh + 2.0f * dpi;
-    const float boxS = lh * 0.95f;
-
-    for (int g = 0; g < nch; ++g) {
-        const ChannelRef& ref = ti.layout.channels[static_cast<std::size_t>(g)];
-        const DeviceDesc* dev = ref.deviceIdx < ti.layout.devices.size() ? &ti.layout.devices[ref.deviceIdx] : nullptr;
-        const float x0 = x + margin + grid.cellX(g), y0 = y + grid.cellY(g);
-        const float x1 = x0 + grid.cellW, y1 = y0 + grid.cellH;
-        const bool selected = g == chan_;
-        const bool audible = !view.mix || view.mix->audible(g);
-        const bool isMuted = view.mix && view.mix->muted(g);
-        const bool isSolo = view.mix && view.mix->solo(g);
-        const ImVec4 chVec = p.channel[g % kChannelCount];
-
-        dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y1), col32(p.scopeCell));
-        dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x1, y0 + headH), col32(withAlpha(chVec, selected ? 0.32f : 0.14f)));
-        dl->AddRect(ImVec2(x0, y0), ImVec2(x1, y1), col32(selected ? (focused ? p.focusBorder : p.textDim) : p.border),
-                    0.0f, 0, selected ? 2.0f * dpi : 1.0f);
-
-        // Naglowek: nazwa kanalu (+ uklad, gdy jest miejsce) i przelaczniki M / S.
-        const bool showBoxes = grid.cellW >= lh * 5.0f && grid.cellH >= headH + 6.0f * dpi;
-        const float bx1 = x1 - 3.0f * dpi;
-        const ImVec2 sPos(bx1 - boxS, y0 + (headH - boxS) * 0.5f);
-        const ImVec2 mPos(sPos.x - boxS - 3.0f * dpi, sPos.y);
-        bool boxClick = false;
-        if (showBoxes) {
-            if (drawToggleBox(dl, mPos, boxS, "M", isMuted, p.muteOn, tr(Str::TipMute))) {
-                actions.toggleChannelMute(g);
-                boxClick = true;
-            }
-            if (drawToggleBox(dl, sPos, boxS, "S", isSolo, p.soloOn, tr(Str::TipSolo))) {
-                actions.toggleChannelSolo(g);
-                boxClick = true;
-            }
-        }
-        char nm[40];
-        if (dev && ref.channelIdx < dev->channelNames.size())
-            std::snprintf(nm, sizeof nm, "%s", dev->channelNames[ref.channelIdx].c_str());
-        else std::snprintf(nm, sizeof nm, "CH%d", g + 1);
-        const float textR = showBoxes ? mPos.x - 3.0f * dpi : x1 - 3.0f * dpi;
-        const ImU32 nameCol = col32(audible ? chVec : withAlpha(chVec, 0.45f));
-        clippedText(dl, x0 + 4.0f * dpi, textR, y0 + dpi, nameCol, nm);
-        if (dev) {
-            const float nw = ImGui::CalcTextSize(nm).x;
-            const float dx = x0 + 4.0f * dpi + nw + 6.0f * dpi;
-            if (textR - dx > lh * 3.0f) {
-                std::string dn = dev->name.empty() ? std::string(chipTypeName(dev->type)) : dev->name;
-                clippedText(dl, dx, textR, y0 + dpi, col32(withAlpha(p.textDim, 0.8f)), dn.c_str());
-            }
-        }
-
-        // Pole przebiegu + VU po prawej.
-        const float vuW = std::clamp(grid.cellW * 0.07f, 5.0f * dpi, 11.0f * dpi);
-        const float wy0 = y0 + headH + dpi, wy1 = y1 - 2.0f * dpi;
-        const ImVec2 wa(x0 + 2.0f * dpi, wy0), wb(x1 - vuW - 5.0f * dpi, wy1);
-        const ImVec2 va(x1 - vuW - 2.0f * dpi, wy0), vb(x1 - 2.0f * dpi, wy1);
-        if (wb.x - wa.x > 8.0f && wb.y - wa.y > 6.0f) {
-            const bool live = epochOk && cs->live(ref.deviceIdx, ref.channelIdx);
-            const bool have = live && cs->extract(ref.deviceIdx, ref.channelIdx, view.transport.audibleFrame,
-                                                  kChannelScopeFrames, wave_);
-            if (have) {
-                drawWave(dl, wa, wb, wave_, kChannelScopeGain, audible ? chVec : withAlpha(chVec, 0.30f), wavePts_);
-            } else {
-                drawWave(dl, wa, wb, {}, 1.0f, chVec, wavePts_); // sama linia srodkowa
-                if (!live) drawCenteredTag(dl, wa, wb, tr(Str::ScopeNa), withAlpha(p.textDim, 0.8f), false);
-            }
-            if (!audible) drawCenteredTag(dl, wa, wb, tr(Str::MuteTag), p.muteOn, true);
-        }
-        if (vb.y - va.y > 6.0f && static_cast<std::size_t>(g) < vu_.size())
-            drawVuBar(dl, va, vb, vu_.channel(static_cast<std::size_t>(g)), !audible);
-
-        // Klik w ramke (poza przelacznikami): wybor kanalu.
-        if (!boxClick && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-            ImGui::IsMouseHoveringRect(ImVec2(x0, y0), ImVec2(x1, y1))) {
-            chan_ = g;
-            nav.setFocus(Panel::Tracker);
         }
     }
 }

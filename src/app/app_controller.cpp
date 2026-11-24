@@ -1,6 +1,7 @@
 #include "app_controller.h"
 
 #include "vgmplay_ui/format.h"
+#include "vgmplay_ui/pattern_view.h"
 
 #include <algorithm>
 #include <cmath>
@@ -48,7 +49,11 @@ void fillFakeChannels(ScopeBlock& b, const TrackInfo& info, std::uint32_t sample
 
 } // namespace
 
-AppController::AppController(ControllerOptions options) : options_(options) {}
+AppController::AppController(ControllerOptions options) : options_(options)
+{
+    rowTicks_ = std::clamp<std::uint32_t>(options.rowTicks, 64u, ui::kVgmTickRate);
+    view_.patternRowTicks = rowTicks_;
+}
 
 AppController::~AppController()
 {
@@ -118,19 +123,34 @@ void AppController::loadFile(const std::filesystem::path& path)
 void AppController::workerLoop()
 {
     for (;;) {
-        Request req;
+        std::optional<Request> req;
+        std::optional<PatternJob> job;
         {
             std::unique_lock lock(mutex_);
-            cv_.wait(lock, [this] { return quit_ || pending_.has_value(); });
+            cv_.wait(lock, [this] { return quit_ || pending_.has_value() || patternJob_.has_value(); });
             if (quit_) return;
-            req = std::move(*pending_);
-            pending_.reset();
+            if (pending_) { // ladowanie ma pierwszenstwo przed przeliczaniem wzorca
+                req = std::move(pending_);
+                pending_.reset();
+            } else {
+                job = std::move(patternJob_);
+                patternJob_.reset();
+            }
+        }
+        if (job) {
+            PatternDone pd = buildPatternJob(*job);
+            {
+                std::lock_guard lock(mutex_);
+                patternDone_.push_back(std::move(pd));
+            }
+            if (wake_) wake_();
+            continue;
         }
         Done done;
-        done.id = req.id;
-        done.path = req.path;
+        done.id = req->id;
+        done.path = req->path;
         try {
-            done.result.emplace(loader::loadTrackFromFile(req.path, {}, req.cancel));
+            done.result.emplace(loader::loadTrackFromFile(req->path, {}, req->cancel));
         } catch (const std::exception& e) {
             done.result.emplace(makeError(ErrorCode::Internal, e.what()));
         } catch (...) {
@@ -142,6 +162,55 @@ void AppController::workerLoop()
         }
         if (wake_) wake_();
     }
+}
+
+// Watek workera. Funkcja czysta wzgledem stanu kontrolera; nie rzuca (wyjatek -> brak wzorca).
+AppController::PatternDone AppController::buildPatternJob(const PatternJob& job)
+{
+    PatternDone out;
+    out.gen = job.gen;
+    out.track = job.track;
+    out.requestedTicks = job.rowTicks;
+    try {
+        if (job.fake) {
+            if (job.info) {
+                const TrackInfo& ti = *job.info;
+                std::uint64_t frames = ti.introFrames + ti.loopFrames;
+                if (frames == 0) frames = ti.totalFrames;
+                out.pattern = ui::makeFakePattern(ti.layout, ui::framesToTicks(frames, job.sampleRate),
+                                                  ui::framesToTicks(ti.introFrames, job.sampleRate),
+                                                  ti.loopFrames > 0, job.rowTicks);
+            }
+        } else if (job.track) {
+            chipstate::PatternOptions opt;
+            opt.rowTicks = job.rowTicks;
+            auto r = chipstate::buildPattern(job.track->raw(), job.track->header, job.track->stream, opt);
+            if (r.ok()) out.pattern = std::make_shared<const chipstate::Pattern>(std::move(r.value()));
+        }
+        if (out.pattern) out.hasEffects = ui::patternHasEffects(*out.pattern);
+    } catch (...) {
+        out.pattern.reset();   // blad wzorca nie blokuje odtwarzania
+    }
+    return out;
+}
+
+// Watek UI: zlecenie przeliczenia wzorca (nowsze zadanie zastepuje poprzednie).
+void AppController::requestPattern(const std::shared_ptr<const loader::LoadedTrack>& track,
+                                   const std::shared_ptr<const TrackInfo>& info)
+{
+    if (!track) return;
+    PatternJob j;
+    j.gen = ++patternGen_;
+    j.track = track;
+    j.info = info;
+    j.rowTicks = rowTicks_;
+    j.sampleRate = view_.sampleRate;
+    j.fake = options_.fakePattern;
+    {
+        std::lock_guard lock(mutex_);
+        patternJob_ = std::move(j);
+    }
+    cv_.notify_one();
 }
 
 // ------------------------------------------------------------------ watek UI
@@ -176,6 +245,7 @@ void AppController::handleDone(Done& d)
     auto track = std::make_shared<const loader::LoadedTrack>(std::move(d.result->value()));
     inflight_.push_back(track);
     send(engine::cmd::Load{track, options_.autoplay});
+    if (!options_.fakePattern) requestPattern(track, nullptr);   // worker liczy wzorzec od razu po loaderze
 }
 
 void AppController::handleEvent(const engine::EngineEvent& e)
@@ -186,6 +256,7 @@ void AppController::handleEvent(const engine::EngineEvent& e)
             inflight_.pop_front();
         }
         info_ = loaded->info;
+        if (options_.fakePattern) requestPattern(track_, info_);   // sztuczny wzorzec potrzebuje ukladu kanalow
         mix_.setLayout(info_->layout); // silnik zeruje MUTE/SOLO przy Load
         if (scopesRequested_) sendChannelScopes(true); // stan silnika po Load nie jest gwarantowany
         error_.reset();
@@ -201,6 +272,9 @@ void AppController::handleEvent(const engine::EngineEvent& e)
         track_.reset();
         info_.reset();
         mix_.clear();
+        patternGenDone_ = ++patternGen_;   // spozniony wynik wzorca jest przestarzaly
+        pattern_.reset();
+        patternTrack_.reset();
     }
     // TrackEnded: stan widoczny w snapshot (Ended); Underrun: licznik w snapshot/PcmRing.
 }
@@ -210,13 +284,26 @@ void AppController::pump()
     if (!engine_) return;
 
     std::vector<Done> done;
+    std::vector<PatternDone> patterns;
     std::uint64_t latest = 0, handled = 0;
     std::filesystem::path latestPath;
     {
         std::lock_guard lock(mutex_);
         done.swap(done_);
+        patterns.swap(patternDone_);
     }
     for (Done& d : done) handleDone(d);
+    for (PatternDone& pd : patterns) {
+        if (pd.gen != patternGen_) continue;   // przestarzaly (nowszy utwor lub rowTicks)
+        patternGenDone_ = pd.gen;
+        pattern_ = pd.pattern;
+        patternTrack_ = pd.track;
+        patternHasEffects_ = pd.hasEffects;
+        if (pd.requestedTicks != rowTicks_) { // rowTicks zmienione w czasie liczenia
+            const bool sameTrack = pd.track == track_;
+            if (!options_.fakePattern || sameTrack) requestPattern(pd.track, sameTrack ? info_ : nullptr);
+        }
+    }
     flushOutbox();
 
     engine::EngineEvent ev;
@@ -258,6 +345,10 @@ void AppController::pump()
     view_.scope = scope_.get();
     view_.channelScopes = &channelScopes_;
     view_.mix = &mix_;
+    view_.pattern = (patternTrack_ && patternTrack_ == track_) ? pattern_ : nullptr;
+    view_.patternHasEffects = view_.pattern && patternHasEffects_;
+    view_.patternBuilding = patternGen_ != patternGenDone_;
+    view_.patternRowTicks = rowTicks_;
     if (audio_.isOpen()) {
         const audio_out::DeviceInfo& di = audio_.info();
         view_.audio.device = di.name;
@@ -361,6 +452,16 @@ void AppController::setChannelScopesVisible(bool visible)
     if (visible == scopesRequested_) return;
     scopesRequested_ = visible;
     sendChannelScopes(visible);
+}
+
+void AppController::setPatternRowTicks(std::uint32_t ticks)
+{
+    ticks = std::clamp<std::uint32_t>(ticks, 64u, ui::kVgmTickRate);
+    if (ticks == rowTicks_) return;
+    rowTicks_ = ticks;
+    view_.patternRowTicks = ticks;
+    if (track_ && patternTrack_ == track_) requestPattern(track_, info_);   // przeliczenie w tle
+    // Wzorzec utworu jeszcze ladowanego dostanie nowe rowTicks po odebraniu wyniku (pump).
 }
 
 void AppController::toggleChannelMute(int channel)

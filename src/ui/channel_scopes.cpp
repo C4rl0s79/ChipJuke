@@ -120,11 +120,24 @@ bool ChannelScopeBuffer::peak(DeviceId device, std::uint16_t channel, std::uint6
 
 // ------------------------------------------------------------------ VU
 
-float vuLevelFromPeak(float peak)
+float vuLevelFromPeak(float peak, float topDb)
 {
     if (!(peak > 0.0f)) return 0.0f;
     const float db = 20.0f * std::log10(std::min(peak, 1.0f));
-    return std::clamp((db + kVuFloorDb) / kVuFloorDb, 0.0f, 1.0f);
+    return std::clamp((db - topDb + kVuFloorDb) / kVuFloorDb, 0.0f, 1.0f);
+}
+
+float ScopeAutoGain::gain() const
+{
+    return std::clamp(kFill / std::max(env, 1e-4f), kMinGain, kMaxGain);
+}
+
+float ScopeAutoGain::update(float windowPeak, float dt)
+{
+    dt = std::clamp(dt, 0.0f, 1.0f);
+    env *= std::exp(-dt / kEnvDecaySec);
+    if (windowPeak > env) env = windowPeak;
+    return gain();
 }
 
 void VuMeter::update(float target, float dt)
