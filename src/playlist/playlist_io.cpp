@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include "fs_util.hpp"
+#include "json_limits.hpp"
 #include "vgmplay/playlist.hpp"
 
 namespace vgmplay::playlist {
@@ -17,24 +18,9 @@ using nlohmann::json;
 
 constexpr std::size_t kMaxPlaylists = 1000;
 constexpr std::size_t kMaxEntries = 100000;
-constexpr std::uint64_t kMaxFileBytes = 256ull << 20;   // 100000 wpisow * 1000 list to teoretyczny sufit
-
-// Wpis JSON jest odrzucany, gdy wyglada na URL (schemat://) albo sciezke urzadzenia (\\?\, \\.\).
-// UNC (\\serwer\udzial) w JSON jest dozwolone - to dane zapisane przez sama aplikacje.
-bool isUnsafeStoredPath(const std::string& s)
-{
-    if (s.empty() || s.find('\0') != std::string::npos) return true;
-    auto isSep = [](char c) { return c == '/' || c == '\\'; };
-    if (s.size() >= 4 && isSep(s[0]) && isSep(s[1]) && (s[2] == '?' || s[2] == '.') && isSep(s[3])) return true;
-    // schemat: litera, potem litery/cyfry/+-. i "://"
-    if (std::isalpha(static_cast<unsigned char>(s[0]))) {
-        std::size_t i = 1;
-        while (i < s.size() && (std::isalnum(static_cast<unsigned char>(s[i])) || s[i] == '+' || s[i] == '-' || s[i] == '.'))
-            ++i;
-        if (i + 2 < s.size() && s[i] == ':' && s[i + 1] == '/' && s[i + 2] == '/') return true;
-    }
-    return false;
-}
+constexpr std::uint64_t kMaxFileBytes = 64ull << 20;
+constexpr int kMaxJsonDepth = 8;                 // root, playlists, lista, entries, wpis = 5 poziomow
+constexpr std::size_t kMaxJsonValues = 4000000;  // liczone przed zbudowaniem calego DOM
 
 bool readUint(const json& j, const char* key, std::uint64_t& out)
 {
@@ -73,14 +59,16 @@ std::string saveJson(const PlaylistModel& model)
     return root.dump(1, ' ', false, json::error_handler_t::replace) + "\n";
 }
 
-Result<PlaylistModel> loadJson(std::string_view text)
+Result<PlaylistModel> loadJson(std::string_view text, const PlaylistLoadOptions& options)
 {
     try {
         if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
             static_cast<unsigned char>(text[2]) == 0xBF)
             text.remove_prefix(3);
-        json root = json::parse(text.begin(), text.end(), nullptr, /*allow_exceptions=*/false);
-        if (root.is_discarded() || !root.is_object()) return makeError(ErrorCode::ParseError, "invalid playlist JSON");
+        auto parsed = fsutil::parseJsonLimited(text, kMaxJsonDepth, kMaxJsonValues);
+        if (!parsed.ok()) return parsed.error();
+        json root = std::move(parsed.value());
+        if (!root.is_object()) return makeError(ErrorCode::ParseError, "invalid playlist JSON");
 
         std::uint64_t ver = 0;
         if (!readUint(root, "schemaVersion", ver)) return makeError(ErrorCode::ParseError, "missing schemaVersion");
@@ -113,12 +101,12 @@ Result<PlaylistModel> loadJson(std::string_view text)
                 auto pa = je.find("path");
                 if (pa == je.end() || !pa->is_string()) return makeError(ErrorCode::ParseError, "entry without path");
                 const std::string path = pa->get<std::string>();
-                if (isUnsafeStoredPath(path)) continue;   // URL / urzadzenie: wpis pomijany
+                if (fsutil::isUnsafeStoredPath(path, options.allowNetworkPaths)) continue;   // URL / urzadzenie: wpis pomijany
                 Entry e;
                 e.path = fsutil::pathFromUtf8(path);
                 if (e.path.empty()) continue;
-                if (auto t = je.find("title"); t != je.end() && t->is_string()) e.title = t->get<std::string>();
-                if (auto d = je.find("durationMs"); d != je.end() && d->is_number_unsigned()) e.durationMs = d->get<std::uint64_t>();
+                if (auto t = je.find("title"); t != je.end() && t->is_string()) e.title = fsutil::sanitizeTitle(t->get<std::string>());
+                if (auto d = je.find("durationMs"); d != je.end() && d->is_number_unsigned()) e.durationMs = fsutil::clampDurationMs(d->get<std::uint64_t>());
                 if (rawCursor == static_cast<std::int64_t>(k)) newCursor = static_cast<std::int64_t>(entries.size());
                 entries.push_back(std::move(e));
             }
@@ -135,7 +123,7 @@ Result<PlaylistModel> loadJson(std::string_view text)
     }
 }
 
-Result<PlaylistModel> loadPlaylistsFile(const std::filesystem::path& file)
+Result<PlaylistModel> loadPlaylistsFile(const std::filesystem::path& file, const PlaylistLoadOptions& options)
 {
     auto text = fsutil::readFileLimited(file, kMaxFileBytes);
     if (!text.ok()) {
@@ -143,7 +131,7 @@ Result<PlaylistModel> loadPlaylistsFile(const std::filesystem::path& file)
         if (text.error().code == ErrorCode::NotFound) return PlaylistModel{};
         return text.error();
     }
-    auto model = loadJson(text.value());
+    auto model = loadJson(text.value(), options);
     if (!model.ok()) {
         // Nie gubimy danych: oryginal zostaje nietkniety, obok powstaje kopia .bak; wywolujacy dostaje
         // blad (takze przy UnsupportedSchema - plik nowszej wersji tez wolno nadpisac dopiero po kopii).

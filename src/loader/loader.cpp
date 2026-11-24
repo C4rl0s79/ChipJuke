@@ -163,8 +163,18 @@ struct Handle {
     const std::wstring bs(1, static_cast<wchar_t>(0x5C));
     const std::wstring dev = bs + bs + L"." + bs;                 // prefiks urzadzen Win32
     const std::wstring ext = bs + bs + L"?" + bs;                 // prefiks "extended-length"
-    return starts(dev.c_str()) || starts((ext + L"pipe" + bs).c_str()) || starts((ext + L"globalroot").c_str()) ||
-           starts((bs + L"??" + bs).c_str());
+    // Potok pod hostem: UNC (bs bs host bs pipe bs ...) oraz rozszerzone (ext UNC bs host bs pipe bs ...).
+    auto pipeUnderHost = [&](std::size_t hostStart) {
+        const std::size_t hostEnd = s.find(static_cast<wchar_t>(0x5C), hostStart);
+        if (hostEnd == std::wstring::npos) return false;
+        const std::wstring rest = s.substr(hostEnd + 1);
+        return rest == L"pipe" || rest.rfind(L"pipe" + bs, 0) == 0;
+    };
+    const std::wstring extUnc = ext + L"unc" + bs;
+    if (starts(extUnc.c_str()) && pipeUnderHost(extUnc.size())) return true;
+    if (starts((bs + bs).c_str()) && !starts(dev.c_str()) && !starts(ext.c_str()) && pipeUnderHost(2)) return true;
+    return starts(dev.c_str()) || starts((ext + L"pipe" + bs).c_str()) || starts((ext + L"global" + bs).c_str()) ||
+           starts((ext + L"globalroot").c_str()) || starts((bs + L"??" + bs).c_str());
 }
 
 Result<ByteBuffer> readFile(const std::filesystem::path& path, const format::Limits& limits,

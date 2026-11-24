@@ -795,3 +795,194 @@ TEST_CASE("M3U: struktura paczki vgmrips w kopii (plik .m3u obok .vgz)")
     CHECK(r.value().rejected == 0);
     CHECK(r.value().entries[11].path.parent_path() == pack.lexically_normal());
 }
+
+// ===========================================================================
+// E2-sec: limity parsera, UNC, tytuly, pliki tymczasowe i .bak
+// ===========================================================================
+
+namespace {
+
+// Ustawia czas ostatniego zapisu pliku na `secondsAgo` s temu.
+bool setAge(const fs::path& p, std::uint64_t secondsAgo)
+{
+    HANDLE h = ::CreateFileW(p.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    FILETIME now{};
+    ::GetSystemTimeAsFileTime(&now);
+    ULARGE_INTEGER u{};
+    u.LowPart = now.dwLowDateTime;
+    u.HighPart = now.dwHighDateTime;
+    u.QuadPart -= secondsAgo * 10000000ull;
+    FILETIME ft{u.LowPart, static_cast<DWORD>(u.HighPart)};
+    const BOOL ok = ::SetFileTime(h, nullptr, nullptr, &ft);
+    ::CloseHandle(h);
+    return ok != FALSE;
+}
+
+// Symlink do pliku bez praw administratora (tryb dewelopera); false = brak uprawnien.
+bool makeFileSymlink(const fs::path& link, const fs::path& target)
+{
+    return ::CreateSymbolicLinkW(link.c_str(), target.c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE) != 0;
+}
+
+std::string oneEntryJson(const std::string& pathJson, const std::string& extra = "")
+{
+    return R"({"schemaVersion":1,"playlists":[{"name":"A","entries":[{"path":")" + pathJson + "\"" + extra + "}]}]}";
+}
+
+} // namespace
+
+TEST_CASE("playlist JSON sec: 100000 zagniezdzonych '[' konczy sie bledem, bez przepelnienia stosu")
+{
+    CHECK(loadJson(std::string(100000, '[')).error().code == ErrorCode::LimitExceeded);
+    CHECK(loadJson(R"({"schemaVersion":1,"playlists":)" + std::string(100000, '[')).error().code == ErrorCode::LimitExceeded);
+    std::string deepObj;
+    for (int i = 0; i < 50000; ++i) deepObj += R"({"a":)";
+    CHECK(loadJson(deepObj).error().code == ErrorCode::LimitExceeded);
+    // glebokosc 9 (root=0) odrzucona, normalna struktura (glebokosc 5) przechodzi
+    CHECK(loadJson(R"({"schemaVersion":1,"playlists":[],"x":[[[[[[[[1]]]]]]]]})").error().code == ErrorCode::LimitExceeded);
+    CHECK(loadJson(saveJson(sampleModel())).ok());
+}
+
+TEST_CASE("playlist JSON sec: limit liczby wartosci przed zbudowaniem calego DOM")
+{
+    std::string big = R"({"schemaVersion":1,"playlists":[],"x":[)";
+    for (int i = 0; i < 4000100; ++i) big += i ? ",0" : "0";
+    big += "]}";
+    CHECK(loadJson(big).error().code == ErrorCode::LimitExceeded);
+}
+
+TEST_CASE("playlist plik sec: plik > 64 MiB -> TooLarge, bez kopii .bak")
+{
+    TempDir td;
+    const fs::path f = td.path / "playlists.json";
+    writeFile(f, std::string((64u << 20) + 1, ' '));
+    auto r = loadPlaylistsFile(f);
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().code == ErrorCode::TooLarge);
+    CHECK_FALSE(fs::exists(td.path / "playlists.json.bak"));
+}
+
+TEST_CASE("playlist JSON sec: UNC domyslnie odrzucane, opcja allowNetworkPaths; URL i urzadzenia zawsze")
+{
+    const std::string unc = R"(\\\\serwer\\udzial\\a.vgm)";    // JSON: \\serwer\udzial\a.vgm
+    const std::string unc2 = "//serwer/udzial/a.vgm";
+    const std::string dev = R"(\\\\?\\C:\\a.vgm)";
+    const std::string pipe = R"(\\\\host\\pipe\\x)";
+    const std::string uncExt = R"(\\\\?\\UNC\\host\\share\\a.vgm)";
+    const std::string url = "http://example.com/a.vgm";
+
+    PlaylistLoadOptions allow;
+    allow.allowNetworkPaths = true;
+    for (const std::string& p : {unc, unc2}) {
+        auto def = loadJson(oneEntryJson(p));
+        REQUIRE(def.ok());
+        CHECK(def.value().playlist(0).entries.empty());
+        auto net = loadJson(oneEntryJson(p), allow);
+        REQUIRE(net.ok());
+        CHECK(net.value().playlist(0).entries.size() == 1);
+    }
+    for (const std::string& p : {dev, pipe, uncExt, url}) {
+        CHECK(loadJson(oneEntryJson(p)).value().playlist(0).entries.empty());
+        CHECK(loadJson(oneEntryJson(p), allow).value().playlist(0).entries.empty());
+    }
+    // zwykla sciezka nadal przechodzi
+    CHECK(loadJson(oneEntryJson("C:/ok.vgm")).value().playlist(0).entries.size() == 1);
+}
+
+TEST_CASE("playlist JSON sec: tytuly czyszczone, durationMs przycinane do 24 h")
+{
+    // U+202E (RLO), U+200B, BEL, TAB, LF w tytule
+    const std::string title = R"(,"title":"a\u202Eb\u200Bc\u0007d\te\nf\u2066g")";
+    auto r = loadJson(oneEntryJson("a.vgm", title + R"(,"durationMs":99999999999999)"));
+    REQUIRE(r.ok());
+    const Entry& e = r.value().playlist(0).entries[0];
+    CHECK(e.title == "abcd efg");
+    CHECK(e.durationMs == 24ull * 3600 * 1000);
+
+    // limit 512 B na granicy znaku (znak 3-bajtowy nie jest ciety)
+    std::string longTitle;
+    for (int i = 0; i < 400; ++i) longTitle += "\xE6\x9B\xB2";   // U+66F2, 3 B
+    auto r2 = loadJson(oneEntryJson("a.vgm", ",\"title\":\"" + longTitle + "\""));
+    REQUIRE(r2.ok());
+    const std::string& t2 = r2.value().playlist(0).entries[0].title;
+    CHECK(t2.size() == 510);   // 170 znakow * 3 B <= 512
+    CHECK(t2.size() % 3 == 0);
+}
+
+TEST_CASE("M3U sec: wejscie > 16 MiB -> TooLarge; limit linii; tytul EXTINF czyszczony")
+{
+    TempDir td;
+    CHECK(importM3u(std::string((16u << 20) + 1, '\n'), opts(td.path)).error().code == ErrorCode::TooLarge);
+    CHECK(importM3u(std::string(16u << 20, '\n'), opts(td.path)).ok());   // dokladnie na limicie
+
+    auto lines = importM3u(std::string(1100000, '\n') + "late.vgz\n", opts(td.path));
+    REQUIRE(lines.ok());
+    CHECK(lines.value().entries.empty());   // za limitem linii
+    bool limitWarn = false;
+    for (const auto& w : lines.value().warnings) limitWarn = limitWarn || w.code == WarningCode::LimitReached;
+    CHECK(limitWarn);
+
+    // RLO (E2 80 AE), ZWSP (E2 80 8B), BEL i TAB w tytule
+    auto r = importM3u(std::string("#EXTINF:10,a\xE2\x80\xAE" "b\xE2\x80\x8B" "c\x07" "d\te\nf.vgz\n"), opts(td.path));
+    REQUIRE(r.ok());
+    REQUIRE(r.value().entries.size() == 1);
+    CHECK(r.value().entries[0].title == "abcd e");
+}
+
+TEST_CASE("playlist plik sec: nazwy zarezerwowane i koncowa kropka w M3U odrzucane wspolnym predykatem")
+{
+    TempDir td;
+    auto r = importM3u(std::string("aux.vgz\ndir ./a.vgz\nCOM3.txt\nok.vgz\nLPT0.vgz\n"), opts(td.path));
+    REQUIRE(r.ok());
+    CHECK(r.value().rejected == 3);   // aux, "dir ." , COM3; LPT0 nie jest zarezerwowane
+    CHECK(r.value().entries.size() == 2);
+}
+
+TEST_CASE("playlist plik sec: symlink w miejscu .bak nie przekierowuje kopii")
+{
+    TempDir td;
+    const fs::path f = td.path / "playlists.json";
+    const fs::path victim = td.path / "victim.txt";
+    writeFile(victim, "WAZNE");
+    fs::path bak = f;
+    bak += ".bak";
+    if (!makeFileSymlink(bak, victim)) {
+        MESSAGE("brak uprawnien do tworzenia dowiazan symbolicznych - test pominiety");
+        return;
+    }
+    writeFile(f, "{ to nie jest json");
+    auto r = loadPlaylistsFile(f);
+    REQUIRE_FALSE(r.ok());
+    CHECK(readFile(victim) == "WAZNE");                      // cel dowiazania nietkniety
+    CHECK(readFile(bak) == "{ to nie jest json");            // .bak to teraz zwykly plik z kopia
+    CHECK((::GetFileAttributesW(bak.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) == 0);
+}
+
+TEST_CASE("playlist plik sec: osierocone pliki tymczasowe sprzatane tylko wg wlasnego wzorca i wieku")
+{
+    TempDir td;
+    const fs::path f = td.path / "playlists.json";
+    const std::string hex = "0123456789abcdef0123456789abcdef";
+    const fs::path oldHex = td.path / ("playlists.json.tmp" + hex);
+    const fs::path oldLegacy = td.path / "playlists.json.tmp123_4";
+    const fs::path newHex = td.path / "playlists.json.tmpfedcba9876543210fedcba9876543210";
+    const fs::path foreign = td.path / "playlists.json.tmpNOTOURS";
+    const fs::path otherFile = td.path / ("other.json.tmp" + hex);
+    const fs::path shortHex = td.path / "playlists.json.tmpabc";
+    for (const auto& p : {oldHex, oldLegacy, newHex, foreign, otherFile, shortHex}) writeFile(p, "x");
+    for (const auto& p : {oldHex, oldLegacy, foreign, otherFile, shortHex}) REQUIRE(setAge(p, 2 * 24 * 3600));
+
+    REQUIRE(savePlaylistsFile(f, sampleModel()).ok());
+    CHECK_FALSE(fs::exists(oldHex));
+    CHECK_FALSE(fs::exists(oldLegacy));
+    CHECK(fs::exists(newHex));      // swiezy - moze nalezec do trwajacego zapisu
+    CHECK(fs::exists(foreign));     // obcy wzorzec
+    CHECK(fs::exists(otherFile));   // inny plik
+    CHECK(fs::exists(shortHex));
+    // zapis nie zostawia wlasnych plikow tymczasowych
+    int tmps = 0;
+    for (const auto& e : fs::directory_iterator(td.path))
+        if (e.path().filename().string().rfind("playlists.json.tmp", 0) == 0) ++tmps;
+    CHECK(tmps == 3);   // newHex, foreign, shortHex
+}

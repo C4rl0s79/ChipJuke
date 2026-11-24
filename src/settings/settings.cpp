@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "fs_util.hpp"
+#include "json_limits.hpp"
 
 namespace vgmplay::settings {
 
@@ -17,6 +18,8 @@ namespace {
 using nlohmann::json;
 
 constexpr std::uint64_t kMaxFileBytes = 4ull << 20;
+constexpr int kMaxJsonDepth = 8;               // root, sekcja, tablica, obiekt = 4 poziomy
+constexpr std::size_t kMaxJsonValues = 50000;
 constexpr std::size_t kMaxBindings = 1024;
 constexpr std::size_t kMaxCores = 128;
 constexpr std::size_t kMaxStringBytes = 4096;
@@ -146,15 +149,17 @@ void migrate(json& root, std::uint64_t from, const Ctx& c)
 
 } // namespace
 
-Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings)
+Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings, bool allowNetworkPaths)
 {
     const Ctx c{warnings};
     try {
         if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB &&
             static_cast<unsigned char>(text[2]) == 0xBF)
             text.remove_prefix(3);
-        json root = json::parse(text.begin(), text.end(), nullptr, /*allow_exceptions=*/false);
-        if (root.is_discarded() || !root.is_object()) return makeError(ErrorCode::ParseError, "invalid settings JSON");
+        auto parsed = fsutil::parseJsonLimited(text, kMaxJsonDepth, kMaxJsonValues);
+        if (!parsed.ok()) return parsed.error();
+        json root = std::move(parsed.value());
+        if (!root.is_object()) return makeError(ErrorCode::ParseError, "invalid settings JSON");
 
         std::uint64_t ver = 0;
         if (auto it = root.find("schemaVersion"); it != root.end()) {
@@ -252,7 +257,10 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings)
         s.input.repeatRateMs = clampWarn<std::uint32_t>(c, "input.repeatRateMs", s.input.repeatRateMs, 10, 1000);
 
         if (const json* se = getObject(c, root, "session")) {
-            if (getString(c, *se, "trackPath", str)) s.session.trackPath = str;
+            if (getString(c, *se, "trackPath", str)) {
+                if (str.empty() || !fsutil::isUnsafeStoredPath(str, allowNetworkPaths)) s.session.trackPath = str;
+                else c.warn("session.trackPath rejected (URL, network or device path)");
+            }
             if (getUint(c, *se, "positionMs", u)) s.session.positionMs = (std::min<std::uint64_t>)(u, 24ull * 3600 * 1000);
         }
         return s;
@@ -308,7 +316,8 @@ bool isDirectoryWritable(const std::filesystem::path& dir)
     static std::atomic<std::uint32_t> counter{0};
     std::filesystem::path probe = dir / (L".vgmplay-write-test-" + std::to_wstring(::GetCurrentProcessId()) + L"-" +
                                          std::to_wstring(counter.fetch_add(1)) + L".tmp");
-    HANDLE h = ::CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+    // DELETE jest wymagane przez FILE_FLAG_DELETE_ON_CLOSE (bez niego folder zapisywalny moglby byc uznany za niezapisywalny).
+    HANDLE h = ::CreateFileW(probe.c_str(), GENERIC_WRITE | DELETE, 0, nullptr, CREATE_NEW,
                              FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
     if (h == INVALID_HANDLE_VALUE) return false;
     ::CloseHandle(h);
@@ -318,18 +327,19 @@ bool isDirectoryWritable(const std::filesystem::path& dir)
 SettingsLocation resolveSettingsLocation(const std::filesystem::path& exeDir, const std::filesystem::path& appDataDir)
 {
     if (isDirectoryWritable(exeDir)) return SettingsLocation{exeDir / kSettingsFileName, true};
-    if (appDataDir.empty()) return SettingsLocation{exeDir / kSettingsFileName, false};   // ostatnia deska ratunku
+    // appDataDir ze sciezka sieciowa / przestrzenia urzadzen (UNC, \?\, \.\) jest odrzucany: traktujemy jak brak.
+    if (appDataDir.empty() || fsutil::startsWithDoubleSeparator(appDataDir.native())) return SettingsLocation{exeDir / kSettingsFileName, false};   // ostatnia deska ratunku
     return SettingsLocation{appDataDir / L"vgmplay" / kSettingsFileName, false};
 }
 
-Result<Settings> loadSettings(const std::filesystem::path& file, std::vector<Warning>* warnings)
+Result<Settings> loadSettings(const std::filesystem::path& file, std::vector<Warning>* warnings, bool allowNetworkPaths)
 {
     auto text = fsutil::readFileLimited(file, kMaxFileBytes);
     if (!text.ok()) {
         if (text.error().code == ErrorCode::NotFound) return Settings{};   // pierwsze uruchomienie
         return text.error();
     }
-    auto s = fromJson(text.value(), warnings);
+    auto s = fromJson(text.value(), warnings, allowNetworkPaths);
     if (!s.ok()) {
         // Oryginal zostaje; kopia .bad pozwala uzytkownikowi odzyskac reczne zmiany.
         (void)fsutil::preserveCorruptCopy(file, L".bad");
