@@ -1,4 +1,5 @@
-// vgmplay - modul chipstate: dekodery rodziny OPN/OPM - YM2612 (+DAC), YM2203 (FM + SSG), YM2151.
+// vgmplay - modul chipstate: dekodery rodziny OPN/OPM - YM2612 (+DAC), YM2203 (FM + SSG), YM2608 (OPNA), YM2610/B (OPNB),
+// YM2151.
 //
 // Wspolne zasady (FM 4-operatorowe):
 //  * key-on = przejscie maski operatorow z 0 na niezerowa; key-off = z niezerowej na 0; zmiana tonu przy
@@ -104,14 +105,18 @@ protected:
 // --- YM2612 / YM2203 --------------------------------------------------------------------------
 class Opn final : public ChipDecoder, private FmVoiceOps {
 public:
-    enum class Kind { Ym2612, Ym2203 };
+    enum class Kind { Ym2612, Ym2203, Ym2608, Ym2610, Ym2610B };
+
+    // Uklad kanalow (== ChannelLayout silnika): YM2612: FM1-6, DAC; YM2203: FM1-3, SSG1-3;
+    // YM2608/YM2610/B: FM1-6, ADPCM-A 1-6 (YM2608: rytm), ADPCM-B, SSG1-3 (linked AY z libvgm).
+    static constexpr std::size_t kAdpcmABase = 6, kAdpcmBChan = 12, kOpnaSsgBase = 13;
 
     Opn(Host& h, std::size_t first, std::uint32_t clock, Kind kind)
         : ChipDecoder(h, first), FmVoiceOps(h), clock_(clock), kind_(kind),
-          nCh_(kind == Kind::Ym2612 ? 6u : 3u)
+          nCh_(kind == Kind::Ym2203 ? 3u : 6u)
     {
-        if (kind_ == Kind::Ym2203) {
-            ssg_ = std::make_unique<AyCore>(h, first + 3, ssgClock());
+        if (kind_ != Kind::Ym2612) {
+            ssg_ = std::make_unique<AyCore>(h, first + (kind_ == Kind::Ym2203 ? 3 : kOpnaSsgBase), ssgClock());
         }
     }
 
@@ -121,6 +126,26 @@ public:
             if (port != 0) return;
             if (reg < 0x10) { ssg_->write(reg, val); return; }
             if (reg >= 0x2D && reg <= 0x2F) { prescaler(reg); return; }
+        } else if (isOpna()) {
+            // YM2608: port 0 - SSG 0x00-0x0F, rytm 0x10-0x1D, tryb/prescaler 0x20-0x2F; port 1 - ADPCM-B 0x00-0x10.
+            if (port == 0) {
+                if (reg < 0x10) { ssg_->write(reg, val); return; }
+                if (reg < 0x20) { rhythm(reg - 0x10u, val); return; }
+                if (reg >= 0x2D && reg <= 0x2F) { prescaler(reg); return; }
+            } else if (reg < 0x30) {
+                if (reg < 0x0E) deltaT(reg, val);
+                return;
+            }
+        } else if (isOpnb()) {
+            // YM2610: port 0 - SSG 0x00-0x0F, ADPCM-B 0x10-0x1B (rejestry 0x10 -> indeks 0), tryb 0x20-0x2F;
+            // port 1 - ADPCM-A 0x00-0x2D (poza tym FM jak w OPN).
+            if (port == 0) {
+                if (reg < 0x10) { ssg_->write(reg, val); return; }
+                if (reg < 0x20) { if (reg < 0x1C) deltaT(reg - 0x10u, val); return; }
+            } else if (reg < 0x30) {
+                adpcmA(reg, val);
+                return;
+            }
         }
         if (reg < 0x30) {
             if (port == 0) system(reg, val);
@@ -174,10 +199,18 @@ public:
         if (kind_ != Kind::Ym2612) return;
         stopDac();
     }
-    [[nodiscard]] std::uint64_t deadline() const override { return dacDeadline_; }
+    [[nodiscard]] std::uint64_t deadline() const override
+    {
+        std::uint64_t d = dacDeadline_;
+        for (const PcmVoice& v : pcm_)
+            if (v.on) d = std::min(d, v.end);
+        return d;
+    }
     void onDeadline(std::uint64_t when) override
     {
         if (when >= dacDeadline_) stopDac();
+        for (std::size_t i = 0; i < pcm_.size(); ++i)
+            if (pcm_[i].on && pcm_[i].end <= when) pcmOff(i);
     }
 
 private:
@@ -198,16 +231,25 @@ private:
         dacDeadline_ = kNever;
     }
 
+    [[nodiscard]] bool isOpna() const noexcept { return kind_ == Kind::Ym2608; }
+    [[nodiscard]] bool isOpnb() const noexcept { return kind_ == Kind::Ym2610 || kind_ == Kind::Ym2610B; }
+
+    // Czestotliwosc probkowania FM = zegar / dzielnik (libvgm fmopn.c, OPNPrescaler_w: opn_pres[sel] * pre_divider;
+    // opn_pres = {24, 24, 72, 36}, pre_divider = 1 dla YM2203, 2 dla YM2608/YM2610). YM2612 i YM2610 (brak rejestrow
+    // 0x2D-0x2F, sel = 2): zegar / 144. Wzor F-number: f = fnum * rate * 2^(blk - 21) - ten sam dla wszystkich OPN.
     [[nodiscard]] double fmSampleRate() const
     {
-        if (kind_ == Kind::Ym2612) return clock_ / 144.0;
+        if (kind_ == Kind::Ym2612 || isOpnb()) return clock_ / 144.0;
         static constexpr double kPres[4] = {24, 24, 72, 36};
-        return clock_ / kPres[sel_ & 3];
+        return clock_ / (kPres[sel_ & 3] * (isOpna() ? 2.0 : 1.0));
     }
+    // Zegar wejsciowy rdzenia AY wg libvgm: YM2203 clock * 2 / ssg_pres[sel], YM2608 clock * 2 / (2 * ssg_pres[sel]),
+    // YM2610 (stale sel = 2) clock * 2 / 8.
     [[nodiscard]] double ssgClock() const
     {
         static constexpr double kSsgPres[4] = {1, 1, 4, 2};
-        return clock_ * 2.0 / kSsgPres[sel_ & 3];
+        if (isOpnb()) return clock_ / 4.0;
+        return clock_ * 2.0 / (kSsgPres[sel_ & 3] * (isOpna() ? 2.0 : 1.0));
     }
     [[nodiscard]] int midiOf(std::size_t ch) const
     {
@@ -243,8 +285,10 @@ private:
         switch (reg) {
         case 0x28: {
             unsigned ch = val & 7u;
-            if (kind_ == Kind::Ym2612) { if (ch >= 7 || ch == 3) return; if (ch > 3) --ch; }
-            else if (ch >= 3) return;
+            if (kind_ == Kind::Ym2203) { if (ch >= 3) return; }
+            else { if (ch >= 7 || ch == 3) return; if (ch > 3) --ch; }
+            // YM2610 (bez B) ma tylko kanaly FM 2, 3, 5, 6 (indeksy 1, 2, 4, 5).
+            if (kind_ == Kind::Ym2610 && (ch == 0 || ch == 3)) return;
             FmChan& c = chan_[ch];
             const std::uint8_t mask = val >> 4;
             const bool wasOn = c.keyMask != 0;
@@ -273,10 +317,135 @@ private:
         }
     }
 
+    // --- ADPCM-A / rytm (YM2608: 6 perkusji z ROM, YM2610: 6 kanalow z ROM A) i ADPCM-B (delta-T) -------------
+    // Nuta ADPCM-A/rytmu: stala C-4 (probka z ROM nie ma wysokosci), instrument = numer probki (adres start/koniec;
+    // rytm: numer perkusji), glosnosc z TL + poziomu kanalu (0.75 dB/krok, 63 = cisza). Koniec probki = adres
+    // koncowy (YM2608: tablica ROM z libvgm). ADPCM-B: nuta wzgledna = 60 + 12*log2(delta-N / 65536) (ta sama
+    // probka i delta-N = ta sama nuta, jak w dec_pcm.cpp), instrument = numer pary start/koniec, glosnosc = rejestr
+    // poziomu; start = bit 7 rejestru sterujacego, stop = zapis sterujacy bez bitu 7 (np. reset) albo koniec probki.
+    struct PcmVoice {
+        bool on = false;
+        std::uint64_t end = kNever;
+    };
+    [[nodiscard]] std::uint8_t levelA(std::size_t c) const
+    {
+        const int atten = (63 - (adpcmTl_ & 0x3F)) + (31 - (adpcmIl_[c] & 0x1F));
+        return scaleVolume(63 - atten, 63);
+    }
+    void pcmOn(std::size_t idx, int midi, std::uint8_t inst, std::uint8_t vol, std::uint64_t end)
+    {
+        pcm_[idx].on = true;
+        pcm_[idx].end = end;
+        host_.rec.noteOn(base_ + kAdpcmABase + idx, midi, inst, vol);
+    }
+    void pcmOff(std::size_t idx)
+    {
+        if (pcm_[idx].on) host_.rec.noteOff(base_ + kAdpcmABase + idx);
+        pcm_[idx] = PcmVoice{};
+    }
+    // Czas odtwarzania `nibbles` nibbli przy tempie `nibblesPerSec`.
+    [[nodiscard]] std::uint64_t endAfterNibbles(double nibbles, double nibblesPerSec) const
+    {
+        if (!(nibblesPerSec > 0.0) || !(nibbles > 0.0)) return kNever;
+        return host_.now + ticksFromSeconds(nibbles / nibblesPerSec);
+    }
+
+    void rhythm(unsigned r, std::uint8_t val)   // r = rejestr - 0x10
+    {
+        if (r == 0) {
+            for (std::size_t c = 0; c < 6; ++c) {
+                if (!(val & (1u << c))) continue;
+                if (val & 0x80) { pcmOff(c); continue; }   // dump
+                // Dlugosc w bajtach z tablicy ROM libvgm (YM2608_ADPCM_ROM_addr); kanaly 4-5 graja z tempem /6.
+                static constexpr std::uint16_t kStart[6] = {0x0000, 0x01C0, 0x0440, 0x1B80, 0x1D00, 0x1F80};
+                static constexpr std::uint16_t kEnd[6] = {0x01BF, 0x043F, 0x1B7F, 0x1CFF, 0x1F7F, 0x1FFF};
+                const double rate = fmSampleRate() / (c < 4 ? 3.0 : 6.0);
+                pcmOn(c, 60, static_cast<std::uint8_t>(c), levelA(c),
+                      endAfterNibbles(2.0 * (kEnd[c] - kStart[c]), rate));
+            }
+        } else if (r == 1) {
+            adpcmTl_ = val & 0x3F;
+            for (std::size_t c = 0; c < 6; ++c)
+                if (pcm_[c].on) host_.rec.volume(base_ + kAdpcmABase + c, levelA(c));
+        } else if (r >= 8 && r <= 13) {
+            const std::size_t c = r - 8;
+            adpcmIl_[c] = val & 0x1F;
+            if (pcm_[c].on) host_.rec.volume(base_ + kAdpcmABase + c, levelA(c));
+        }
+    }
+
+    void adpcmA(std::uint8_t reg, std::uint8_t val)   // YM2610 port 1, rejestry 0x00-0x2D
+    {
+        if (reg == 0x00) {
+            for (std::size_t c = 0; c < 6; ++c) {
+                if (!(val & (1u << c))) continue;
+                if (val & 0x80) { pcmOff(c); continue; }   // dump
+                // Adresy w jednostkach 256 bajtow; koniec = (reg << 8) | 0xFF, tempo = zegar FM / 3 nibbli/s.
+                const unsigned start = static_cast<unsigned>(aStart_[c]) << 8;
+                const unsigned end = (static_cast<unsigned>(aEnd_[c]) << 8) | 0xFFu;
+                if (end < start) { pcmOff(c); continue; }
+                const std::uint8_t inst = pcmBank_.id("A" + std::to_string(start) + ":" + std::to_string(end));
+                pcmOn(c, 60, inst, levelA(c), endAfterNibbles(2.0 * (end - start), fmSampleRate() / 3.0));
+            }
+        } else if (reg == 0x01) {
+            adpcmTl_ = val & 0x3F;
+            for (std::size_t c = 0; c < 6; ++c)
+                if (pcm_[c].on) host_.rec.volume(base_ + kAdpcmABase + c, levelA(c));
+        } else if ((reg & 7) < 6) {
+            const std::size_t c = reg & 7u;
+            switch (reg & 0x38) {
+            case 0x08:
+                adpcmIl_[c] = val & 0x1F;
+                if (pcm_[c].on) host_.rec.volume(base_ + kAdpcmABase + c, levelA(c));
+                break;
+            case 0x10: aStart_[c] = static_cast<std::uint16_t>((aStart_[c] & 0xFF00) | val); break;
+            case 0x18: aStart_[c] = static_cast<std::uint16_t>((aStart_[c] & 0x00FF) | (val << 8)); break;
+            case 0x20: aEnd_[c] = static_cast<std::uint16_t>((aEnd_[c] & 0xFF00) | val); break;
+            case 0x28: aEnd_[c] = static_cast<std::uint16_t>((aEnd_[c] & 0x00FF) | (val << 8)); break;
+            default: break;
+            }
+        }
+    }
+
+    // ADPCM-B: r = indeks wspolny dla YM2608 (port 1, 0x00-0x0D) i YM2610 (port 0, 0x10-0x1B -> 0x00-0x0B).
+    void deltaT(unsigned r, std::uint8_t val)
+    {
+        constexpr std::size_t kB = 6;   // indeks w pcm_
+        dtReg_[r & 0x0F] = val;
+        if (r == 0x0B) {
+            if (pcm_[kB].on) host_.rec.volume(base_ + kAdpcmBChan, scaleVolume(val, 255));
+            return;
+        }
+        if (r != 0) return;
+        if (!(val & 0x80)) { pcmOff(kB); return; }   // brak START = stop (reset, zapis pamieci, ...)
+        if (val & 0x40) return;                      // REC (analiza) - nie odtwarzanie
+        // Przesuniecie adresow: YM2610 8; YM2608 5 (ROM / DRAM x8) albo 2 (DRAM x1 bit, bity 0-1 reg. 1 == 0).
+        const unsigned shift = isOpnb() ? 8u : ((dtReg_[1] & 3) == 0 ? 2u : 5u);
+        const std::uint32_t start = static_cast<std::uint32_t>(dtReg_[2] | (dtReg_[3] << 8)) << shift;
+        const std::uint32_t end =
+            (static_cast<std::uint32_t>(dtReg_[4] | (dtReg_[5] << 8)) << shift) | ((1u << shift) - 1u);
+        const unsigned delta = dtReg_[9] | (dtReg_[10] << 8);
+        std::uint64_t until = kNever;
+        if (!(val & 0x10) && delta > 0 && end >= start)   // bez REPEAT: koniec = adres koncowy (nibble = 1 probka)
+            until = endAfterNibbles(2.0 * (end - start + 1.0), fmSampleRate() * delta / 65536.0);
+        const int midi = midiFromRatio(delta / 65536.0, 1.0);
+        const std::uint8_t inst = pcmBank_.id("B" + std::to_string(start) + ":" + std::to_string(end));
+        pcm_[kB].on = true;
+        pcm_[kB].end = until;
+        host_.rec.noteOn(base_ + kAdpcmBChan, midi < 0 ? 60 : midi, inst, scaleVolume(dtReg_[0x0B], 255));
+    }
+
     std::uint32_t clock_;
     Kind kind_;
     unsigned nCh_;
-    unsigned sel_ = 2;   // YM2203: domyslny preskaler FM /6, SSG /4 (reg 0x2D/0x2E/0x2F go zmieniaja)
+    unsigned sel_ = 2;   // YM2203/YM2608: domyslny preskaler FM /6, SSG /4 (reg 0x2D/0x2E/0x2F go zmieniaja)
+    std::array<PcmVoice, 7> pcm_{};   // 0-5 ADPCM-A / rytm, 6 ADPCM-B
+    InstrumentBank pcmBank_;
+    std::uint8_t adpcmTl_ = 0;
+    std::uint8_t adpcmIl_[6] = {};
+    std::uint16_t aStart_[6] = {};
+    std::uint16_t aEnd_[6] = {};
+    std::uint8_t dtReg_[16] = {};
     std::array<FmChan, 6> chan_{};
     std::uint16_t fnum_[6] = {};
     std::uint8_t blk_[6] = {};
@@ -353,6 +522,14 @@ std::unique_ptr<ChipDecoder> makeYm2612(Host& h, std::size_t first, std::uint32_
 std::unique_ptr<ChipDecoder> makeYm2203(Host& h, std::size_t first, std::uint32_t clockHz)
 {
     return std::make_unique<Opn>(h, first, clockHz, Opn::Kind::Ym2203);
+}
+std::unique_ptr<ChipDecoder> makeYm2608(Host& h, std::size_t first, std::uint32_t clockHz)
+{
+    return std::make_unique<Opn>(h, first, clockHz, Opn::Kind::Ym2608);
+}
+std::unique_ptr<ChipDecoder> makeYm2610(Host& h, std::size_t first, std::uint32_t clockHz, bool typeB)
+{
+    return std::make_unique<Opn>(h, first, clockHz, typeB ? Opn::Kind::Ym2610B : Opn::Kind::Ym2610);
 }
 std::unique_ptr<ChipDecoder> makeYm2151(Host& h, std::size_t first, std::uint32_t clockHz)
 {
