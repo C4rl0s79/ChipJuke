@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "vgmplay/core.hpp"
@@ -71,5 +72,53 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+// ---------------------------------------------------------------------------
+// [dodatek E2] Metadane utworow + cache. ScanJob powyzej NIE parsuje plikow; metadane czyta
+// osobno readTrackMeta (pelna walidacja przez loader::loadTrackFromFile - tylko ona daje
+// PRAWDZIWA dlugosc z pre-skanu strumienia; naglowek bywa falszywy). BLOKUJACE: tylko worker.
+// ---------------------------------------------------------------------------
+
+// Odcisk pliku do uniewazniania cache: rozmiar + czas modyfikacji (FILETIME, 100 ns od 1601).
+struct FileStamp {
+    std::uint64_t sizeBytes = 0;
+    std::uint64_t mtime = 0;
+    bool operator==(const FileStamp&) const = default;
+};
+[[nodiscard]] Result<FileStamp> statFile(const std::filesystem::path& path);
+
+struct TrackMeta {
+    std::filesystem::path path;
+    FileStamp stamp;
+    std::uint64_t durationMs = 0;    // jedno przejscie strumienia (od poczatku do 0x66), ms
+    std::uint64_t loopMs = 0;        // dlugosc petli; 0 = brak (rowniez gdy loader wylaczyl petle)
+    bool hasGd3 = false;
+    // Tytuly GD3 (UTF-8; puste = brak). Wybor jezyka (Settings::ui.gd3Language) po stronie UI.
+    std::string trackEn, trackJp, gameEn, gameJp, systemEn, systemJp, authorEn, authorJp;
+};
+
+// Czyta plik przez loader. Bledy loadera przekazywane bez zmian (Cancelled przy cancel).
+[[nodiscard]] Result<TrackMeta> readTrackMeta(const std::filesystem::path& path, const CancelToken& cancel = {});
+
+// Cache metadanych: klucz = sciezka (bez rozrozniania wielkosci liter) + FileStamp. Nie jest
+// watkowo-bezpieczny (uzywaj z jednego workera). Limit 200000 wpisow (nadmiar nie jest dodawany).
+// Plik JSON (schemaVersion 1) lezy obok ustawien, np. library-cache.json; uszkodzony plik =
+// blad, a wywolujacy zaczyna od pustego cache (nic waznego tam nie ma, wiec bez kopii .bak).
+class MetaCache {
+public:
+    [[nodiscard]] std::optional<TrackMeta> find(const std::filesystem::path& path, const FileStamp& stamp) const;
+    void put(const TrackMeta& meta);
+    [[nodiscard]] std::size_t size() const noexcept { return items_.size(); }
+    // Zwraca z cache albo czyta i dopisuje (stat + readTrackMeta).
+    [[nodiscard]] Result<TrackMeta> getOrRead(const std::filesystem::path& path, const CancelToken& cancel = {});
+
+    [[nodiscard]] std::string toJson() const;
+    [[nodiscard]] static Result<MetaCache> fromJson(std::string_view json);
+
+private:
+    std::vector<TrackMeta> items_;   // posortowane po kluczu (do wyszukiwania binarnego)
+};
+[[nodiscard]] Result<MetaCache> loadMetaCacheFile(const std::filesystem::path& file);   // brak pliku = pusty
+[[nodiscard]] Result<void> saveMetaCacheFile(const std::filesystem::path& file, const MetaCache& cache);
 
 } // namespace vgmplay::library
