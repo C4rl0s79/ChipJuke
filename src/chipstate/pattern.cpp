@@ -41,13 +41,21 @@ std::unique_ptr<ChipDecoder> makeDecoderFor(Host& h, const format::ChipEntry& e,
     case ChipType::YMF262:  return makeOpl(h, first, e.clockHz, true);
     case ChipType::AY8910:  return makeAy8910(h, first, e.clockHz);
     case ChipType::OKIM6295: return makeOkim6295(h, first, e.clockHz, e.flags);
+    case ChipType::NesApu:  return makeNesApu(h, first, e.clockHz, e.flags);
+    case ChipType::C140:    return makeC140(h, first, e.clockHz);
+    case ChipType::K054539: return makeK054539(h, first, e.clockHz, e.flags);
+    case ChipType::K053260: return makeK053260(h, first, e.clockHz);
+    case ChipType::SegaPcm: return makeSegaPcm(h, first, e.clockHz);
+    case ChipType::GA20:    return makeGa20(h, first, e.clockHz);
+    case ChipType::OKIM6258: return makeOkim6258(h, first, e.clockHz, e.flags);
     default: return nullptr;
     }
 }
 
 struct DacStream {
-    bool valid = false;          // 0x90 skierowane do istniejacego YM2612
-    std::uint8_t inst = 0;       // instancja YM2612
+    bool valid = false;          // 0x90 skierowane do istniejacego YM2612 / OKIM6258
+    ChipType chip = ChipType::YM2612;
+    std::uint8_t inst = 0;       // instancja ukladu
     std::uint8_t bank = 0xFF;
     std::uint8_t step = 1;
     std::uint32_t freq = 0;
@@ -105,6 +113,10 @@ private:
     {
         if (ChipDecoder* d = find(type, inst)) d->write(port, reg, val);
     }
+    void writeMem(ChipType type, unsigned inst, std::uint32_t addr, std::uint8_t val)
+    {
+        if (ChipDecoder* d = find(type, inst)) d->writeMem(addr, val);
+    }
 
     // Przesuwa czas o `ticks`, po drodze obslugujac terminy dekoderow (koniec probki, cisza DAC).
     bool advance(std::uint64_t ticks)
@@ -148,6 +160,19 @@ private:
         case 0xAE: case 0xAF: write(ChipType::YMF262, 1, static_cast<std::uint8_t>(op - 0xAE), p[1], p[2]); break;
         case 0xA0: write(ChipType::AY8910, p[1] >> 7, 0, p[1] & 0x7F, p[2]); break;
         case 0xB8: write(ChipType::OKIM6295, p[1] >> 7, 0, p[1] & 0x7F, p[2]); break;
+        case 0xB4: {   // NES APU / FDS: mapowanie rejestrow jak w libvgm (Cmd_NES_Reg)
+            std::uint8_t ofs = p[1] & 0x7F;
+            if (ofs == 0x3F) ofs = 0x23;
+            else if ((ofs & 0xE0) == 0x20) ofs = static_cast<std::uint8_t>(0x80 | (ofs & 0x1F));
+            write(ChipType::NesApu, p[1] >> 7, 0, ofs, p[2]);
+            break;
+        }
+        case 0xB7: write(ChipType::OKIM6258, p[1] >> 7, 0, p[1] & 0x7F, p[2]); break;
+        case 0xBA: write(ChipType::K053260, p[1] >> 7, 0, p[1] & 0x7F, p[2]); break;
+        case 0xBF: write(ChipType::GA20, p[1] >> 7, 0, p[1] & 0x7F, p[2]); break;
+        case 0xC0: writeMem(ChipType::SegaPcm, p[2] >> 7, (p[1] | (p[2] << 8)) & 0x7FFFu, p[3]); break;
+        case 0xD3: writeMem(ChipType::K054539, p[1] >> 7, ((p[1] << 8) | p[2]) & 0x7FFFu, p[3]); break;
+        case 0xD4: writeMem(ChipType::C140, p[1] >> 7, ((p[1] << 8) | p[2]) & 0x7FFFu, p[3]); break;
         case 0x61: return advance(rd16(p + 1));
         case 0x62: return advance(735);
         case 0x63: return advance(882);
@@ -179,9 +204,21 @@ private:
             const unsigned bank = type & 0x3F;
             if (blockSizes_[bank].size() < 65536) blockSizes_[bank].push_back(static_cast<std::uint32_t>(len));
             bankTotal_[bank] += len;
-        } else if (type == 0x8B && size >= 8) {   // ROM OKIM6295: [memSize][startAddr][dane]
-            if (ChipDecoder* o = find(ChipType::OKIM6295, inst))
-                o->romBlock(type, rd32(d), rd32(d + 4), std::span<const std::uint8_t>(d + 8, static_cast<std::size_t>(size - 8)));
+        } else if (size >= 8) {   // ROM ukladu: [memSize][startAddr][dane]
+            ChipType chip = ChipType::Unknown;
+            switch (type) {
+            case 0x80: chip = ChipType::SegaPcm; break;
+            case 0x8B: chip = ChipType::OKIM6295; break;
+            case 0x8C: chip = ChipType::K054539; break;
+            case 0x8D: chip = ChipType::C140; break;
+            case 0x8E: chip = ChipType::K053260; break;
+            case 0x93: chip = ChipType::GA20; break;
+            default: break;
+            }
+            if (chip != ChipType::Unknown)
+                if (ChipDecoder* o = find(chip, inst))
+                    o->romBlock(type, rd32(d), rd32(d + 4),
+                                std::span<const std::uint8_t>(d + 8, static_cast<std::size_t>(size - 8)));
         }
     }
 
@@ -200,7 +237,14 @@ private:
             if (p[1] == 0xFF) return;
             const unsigned type = p[2] & 0x7Fu, inst = p[2] >> 7;
             s = DacStream{};
-            if (type == 0x02 && find(ChipType::YM2612, inst)) { s.valid = true; s.inst = static_cast<std::uint8_t>(inst); }
+            // Uklad docelowy strumienia: 0x02 = YM2612, 0x17 = OKIM6258 (indeksy ukladow jak w kCmdTable).
+            const ChipType target =
+                type == 0x02 ? ChipType::YM2612 : (type == 0x17 ? ChipType::OKIM6258 : ChipType::Unknown);
+            if (target != ChipType::Unknown && find(target, inst)) {
+                s.valid = true;
+                s.chip = target;
+                s.inst = static_cast<std::uint8_t>(inst);
+            }
             break;
         }
         case 0x91:
@@ -237,16 +281,16 @@ private:
                                            static_cast<std::uint8_t>(std::min<std::size_t>(startIds_.size(), 254))).first;
                 inst = it->second;
             }
-            if (ChipDecoder* d = find(ChipType::YM2612, s.inst)) d->dacStreamStart(inst, end);
+            if (ChipDecoder* d = find(s.chip, s.inst)) d->dacStreamStart(inst, end);
             break;
         }
         case 0x94:
             if (p[1] == 0xFF) {
                 for (DacStream& t : streams_)
                     if (t.valid)
-                        if (ChipDecoder* d = find(ChipType::YM2612, t.inst)) d->dacStreamStop();
+                        if (ChipDecoder* d = find(t.chip, t.inst)) d->dacStreamStop();
             } else if (s.valid) {
-                if (ChipDecoder* d = find(ChipType::YM2612, s.inst)) d->dacStreamStop();
+                if (ChipDecoder* d = find(s.chip, s.inst)) d->dacStreamStop();
             }
             break;
         case 0x95: {
@@ -256,7 +300,7 @@ private:
             if (s.bank < 0x40 && block < blockSizes_[s.bank].size() && s.step)
                 end = endAfter(blockSizes_[s.bank][block] / s.step, s.freq);
             if (p[4] & 1) end = kNever;
-            if (ChipDecoder* d = find(ChipType::YM2612, s.inst))
+            if (ChipDecoder* d = find(s.chip, s.inst))
                 d->dacStreamStart(static_cast<std::uint8_t>(std::min(block, 254u)), end);
             break;
         }

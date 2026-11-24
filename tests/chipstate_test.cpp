@@ -676,3 +676,503 @@ TEST_CASE("chipstate: kolejnosc kanalow == ChannelLayout dla kazdego z 48 uklado
         expectSameOrder(v.bytes());
     }
 }
+
+// =============================================================================================
+// NES APU / FDS, C140, K054539, K053260, Sega PCM, GA20, OKIM6258.
+// =============================================================================================
+namespace {
+
+Vgm& nes(Vgm& v, int reg, int val, int inst = 0) { return v.raw({0xB4, reg | (inst << 7), val}); }
+// FDS: rejestr $40xx/$408x w komendzie 0xB4 (mapowanie libvgm: $4080+n = 0x20+n, $4023 = 0x3F).
+Vgm& fds(Vgm& v, int addr, int val) { return nes(v, addr == 0x4023 ? 0x3F : (addr >= 0x4080 ? 0x20 + (addr - 0x4080) : addr - 0x4000), val); }
+Vgm& segapcm(Vgm& v, int off, int val, int inst = 0) { return v.raw({0xC0, off & 0xFF, ((off >> 8) & 0x7F) | (inst << 7), val}); }
+Vgm& k054539(Vgm& v, int addr, int val, int inst = 0) { return v.raw({0xD3, ((addr >> 8) & 0x7F) | (inst << 7), addr & 0xFF, val}); }
+Vgm& c140(Vgm& v, int addr, int val) { return v.raw({0xD4, (addr >> 8) & 0x7F, addr & 0xFF, val}); }
+Vgm& k053260(Vgm& v, int reg, int val) { return v.raw({0xBA, reg, val}); }
+Vgm& ga20(Vgm& v, int reg, int val) { return v.raw({0xBF, reg, val}); }
+Vgm& okim6258(Vgm& v, int reg, int val) { return v.raw({0xB7, reg, val}); }
+
+std::vector<std::uint8_t> romPayload(std::uint32_t memSize, std::uint32_t start, const std::vector<std::uint8_t>& data)
+{
+    std::vector<std::uint8_t> p;
+    for (int i = 0; i < 4; ++i) p.push_back(static_cast<std::uint8_t>(memSize >> (8 * i)));
+    for (int i = 0; i < 4; ++i) p.push_back(static_cast<std::uint8_t>(start >> (8 * i)));
+    p.insert(p.end(), data.begin(), data.end());
+    return p;
+}
+
+void nesTimer(Vgm& v, int regLo, int midi, int lenIdx, double div = 16.0)   // $4002/$4003, $4006/$4007, $400A/$400B
+{
+    const int t = static_cast<int>(std::lround(1789773.0 / (div * hz(midi)))) - 1;
+    nes(v, regLo, t & 0xFF);
+    nes(v, regLo + 1, ((t >> 8) & 7) | (lenIdx << 3));
+}
+
+constexpr std::size_t kIdxSegaPcm = 4, kIdxNes = 20, kIdxOkim6258 = 23, kIdxK054539 = 26, kIdxC140 = 28, kIdxK053260 = 29,
+                      kIdxGa20 = 40;
+
+} // namespace
+
+
+namespace {
+std::vector<std::uint64_t> offRows(const Pattern& p, std::size_t ch)
+{
+    std::vector<std::uint64_t> v;
+    for (std::uint64_t r = 0; r < p.rowCount; ++r)
+        if (p.at(r, ch).note == chipstate::kNoteOff) v.push_back(r);
+    return v;
+}
+std::vector<int> instrumentsAtNotes(const Pattern& p, std::size_t ch)
+{
+    std::vector<int> v;
+    for (std::uint64_t r = 0; r < p.rowCount; ++r)
+        if (p.at(r, ch).note >= 0) v.push_back(p.at(r, ch).instrument);
+    return v;
+}
+} // namespace
+
+TEST_CASE("chipstate NES: uklad i kanaly (Square 1/2, Triangle, Noise, DPCM) sa zdekodowane")
+{
+    Vgm v;
+    v.clock(kIdxNes, 1789773).wait(10);
+    const Pattern p = build(v.bytes());
+    REQUIRE(p.channels.size() == 5);
+    const char* names[5] = {"Square 1", "Square 2", "Triangle", "Noise", "DPCM"};
+    for (std::size_t i = 0; i < 5; ++i) {
+        CHECK(p.channels[i].name == names[i]);
+        CHECK(p.channels[i].decoded);
+    }
+}
+
+TEST_CASE("chipstate NES: pulse - nuta z timera, duty, glosnosc, key-off z $4015, kanal 2 niezalezny")
+{
+    Vgm v;
+    v.clock(kIdxNes, 1789773);
+    nes(v, 0x15, 0x0F);
+    nes(v, 0x00, 0xBF);   // duty 2, halt (petla), stala glosnosc 15
+    nes(v, 0x01, 0x08);   // sweep: negate, bez przepelnienia
+    for (int m : kScale) { nesTimer(v, 0x02, m, 1); v.wait(735); }
+    nes(v, 0x15, 0x00);
+    v.wait(735);
+    const Pattern p = build(v.bytes());
+    CHECK(noteOns(p, 0) == kScale);
+    CHECK(p.at(0, 0).instrument == 2);
+    CHECK(p.at(0, 0).volume == 0x40);
+    CHECK(rowOfOff(p, 0) == 8);
+    CHECK(noteOns(p, 1).empty());
+}
+
+TEST_CASE("chipstate NES: pulse - sweep wycisza przy przepelnieniu, koniec z licznika dlugosci i obwiedni")
+{
+    {   // niska nuta (C-2): bez negate cel = 2 * timer >= 0x800 wycisza kanal, z negate - nie
+        Vgm v;
+        v.clock(kIdxNes, 1789773);
+        nes(v, 0x15, 0x0F);
+        nes(v, 0x00, 0xBF);
+        nes(v, 0x01, 0x00);
+        nesTimer(v, 0x02, 36, 1);
+        v.wait(735);
+        nes(v, 0x01, 0x08);
+        nesTimer(v, 0x02, 36, 1);
+        v.wait(735);
+        const Pattern p = build(v.bytes());
+        CHECK(p.at(0, 0).note < 0);
+        CHECK(p.at(1, 0).note == 36);
+    }
+    {   // licznik dlugosci: indeks 3 = 2 polklatki (120 Hz) = 736 tickow => key-off w wierszu 1
+        Vgm v;
+        v.clock(kIdxNes, 1789773);
+        nes(v, 0x15, 0x0F);
+        nes(v, 0x00, 0x1F);   // bez halt, stala glosnosc 15
+        nesTimer(v, 0x02, 60, 3);
+        v.wait(735 * 4);
+        const Pattern p = build(v.bytes());
+        CHECK(p.at(0, 0).note == 60);
+        CHECK(offRows(p, 0) == std::vector<std::uint64_t>{1});
+    }
+    {   // obwiednia sprzetowa (bez petli) wygasa po (1 + 15 * (v + 1)) cwiartkach klatki = 11210 tickow => wiersz 15
+        Vgm v;
+        v.clock(kIdxNes, 1789773);
+        nes(v, 0x15, 0x0F);
+        nes(v, 0x00, 0x03);   // obwiednia, v = 3
+        nesTimer(v, 0x02, 60, 1);
+        v.wait(735 * 20);
+        const Pattern p = build(v.bytes());
+        CHECK(p.at(0, 0).volume == 0x40);
+        CHECK(offRows(p, 0) == std::vector<std::uint64_t>{15});
+    }
+    {   // glosnosc 0 przy stalej glosnosci = cisza; potem glosnosc 8 = nuta z glosnoscia 8/15
+        Vgm v;
+        v.clock(kIdxNes, 1789773);
+        nes(v, 0x15, 0x0F);
+        nes(v, 0x00, 0xB0);
+        nesTimer(v, 0x02, 60, 1);
+        v.wait(735);
+        nes(v, 0x00, 0xB8);
+        v.wait(735);
+        const Pattern p = build(v.bytes());
+        CHECK(p.at(0, 0).note < 0);
+        CHECK(p.at(1, 0).note == 60);
+        CHECK(p.at(1, 0).volume == 34);   // 8/15 * 64 = 34.1
+    }
+}
+
+TEST_CASE("chipstate NES: triangle - nuta (timer, f = clock / 32 / (t + 1)), licznik liniowy, key-off")
+{
+    {
+        Vgm v;
+        v.clock(kIdxNes, 1789773);
+        nes(v, 0x15, 0x04);
+        nes(v, 0x08, 0xFF);   // kontrola (sustain) + przeladowanie 127
+        for (int m : kScale) { nesTimer(v, 0x0A, m, 1, 32.0); v.wait(735); }
+        nes(v, 0x08, 0x80);   // przeladowanie 0 => cisza
+        v.wait(735);
+        const Pattern p = build(v.bytes());
+        CHECK(noteOns(p, 2) == kScale);
+        CHECK(p.at(0, 2).volume == 0x40);
+        CHECK(rowOfOff(p, 2) == 8);
+    }
+    {   // bez kontroli: licznik liniowy 4 => (1 + 4) cwiartek = 919 tickow => wiersz 1
+        Vgm v;
+        v.clock(kIdxNes, 1789773);
+        nes(v, 0x15, 0x04);
+        nes(v, 0x08, 0x04);
+        nesTimer(v, 0x0A, 57, 1, 32.0);
+        v.wait(735 * 4);
+        const Pattern p = build(v.bytes());
+        CHECK(p.at(0, 2).note == 57);
+        CHECK(offRows(p, 2) == std::vector<std::uint64_t>{1});
+    }
+}
+
+TEST_CASE("chipstate NES: noise - nuta z okresu, instrument = tryb, key-off")
+{
+    Vgm v;
+    v.clock(kIdxNes, 1789773);
+    nes(v, 0x15, 0x08);
+    nes(v, 0x0C, 0x3F);   // halt, stala glosnosc 15
+    nes(v, 0x0E, 0x06);   // okres 128 => 1789773 / (32 * 128) = 437 Hz = A-4
+    nes(v, 0x0F, 0x08);
+    v.wait(735);
+    nes(v, 0x0E, 0x86);   // szum krotki
+    nes(v, 0x0F, 0x08);
+    v.wait(735);
+    nes(v, 0x15, 0x00);
+    v.wait(735);
+    const Pattern p = build(v.bytes());
+    CHECK(noteOns(p, 3) == std::vector<int>{69, 69});
+    CHECK(instrumentsAtNotes(p, 3) == std::vector<int>{1, 2});
+    CHECK(p.at(0, 3).volume == 0x40);
+    CHECK(offRows(p, 3) == std::vector<std::uint64_t>{2});
+}
+
+TEST_CASE("chipstate NES: DPCM - start z $4015, instrument = unikatowa probka, koniec z dlugosci, petla")
+{
+    Vgm v;
+    v.clock(kIdxNes, 1789773);
+    nes(v, 0x10, 0x0F);   // tempo 15 (najszybsze), bez petli
+    nes(v, 0x12, 0x10);   // adres $C400
+    nes(v, 0x13, 0x0F);   // 241 bajtow => 2566 tickow
+    nes(v, 0x15, 0x1F);
+    v.wait(735 * 5);
+    nes(v, 0x15, 0x1F);   // ta sama probka
+    v.wait(735 * 5);
+    nes(v, 0x12, 0x20);   // nowa probka
+    nes(v, 0x15, 0x1F);
+    v.wait(735 * 5);
+    nes(v, 0x10, 0x00);   // tempo 0 (428 cykli/bit) + petla
+    nes(v, 0x10, 0x40);
+    nes(v, 0x15, 0x1F);   // poprzednia jeszcze nie trwa, wiec startuje petla
+    v.wait(735 * 5);
+    nes(v, 0x15, 0x0F);   // wylaczenie DMC => key-off
+    v.wait(735);
+    const Pattern p = build(v.bytes());
+    CHECK(noteOns(p, 4) == std::vector<int>{60, 60, 60, 60 - 36});   // tempo 0 = 4181 Hz = 3 oktawy nizej
+    CHECK(instrumentsAtNotes(p, 4) == std::vector<int>{0, 0, 1, 1});
+    CHECK(offRows(p, 4) == std::vector<std::uint64_t>{3, 8, 13, 20});
+}
+
+TEST_CASE("chipstate NES: FDS - kanal 6, nuta z rejestru 12-bit, instrument = tablica fali, glosnosc, halt")
+{
+    Vgm v;
+    v.clock(kIdxNes, 1789773 | 0x80000000u);
+    fds(v, 0x4023, 0x02);                              // I/O wlaczone
+    fds(v, 0x4089, 0x80);                              // zapis tablicy fali
+    for (int i = 0; i < 64; ++i) nes(v, 0x40 + i, i & 0x3F);
+    fds(v, 0x4089, 0x00);
+    fds(v, 0x4080, 0xA0);                              // bez obwiedni, glosnosc 32 (max)
+    fds(v, 0x4082, 516 & 0xFF);                        // 516 * 1789773 / 2^22 = 220.2 Hz = A-3
+    fds(v, 0x4083, 516 >> 8);
+    v.wait(735);
+    fds(v, 0x4083, 0x80 | (516 >> 8));                 // halt
+    v.wait(735);
+    fds(v, 0x4089, 0x80);                              // inna tablica fali
+    nes(v, 0x40, 0x3F);
+    fds(v, 0x4089, 0x00);
+    fds(v, 0x4080, 0x90);                              // glosnosc 16 (polowa)
+    fds(v, 0x4083, 516 >> 8);
+    v.wait(735);
+    const Pattern p = build(v.bytes());
+    REQUIRE(p.channels.size() == 6);
+    CHECK(p.channels[5].name == "FDS");
+    CHECK(p.channels[5].decoded);
+    CHECK(noteOns(p, 5) == std::vector<int>{57, 57});
+    CHECK(instrumentsAtNotes(p, 5) == std::vector<int>{0, 1});
+    CHECK(p.at(0, 5).volume == 0x40);
+    CHECK(p.at(2, 5).volume == 32);
+    CHECK(offRows(p, 5) == std::vector<std::uint64_t>{1});
+}
+
+TEST_CASE("chipstate YM2413 z bitem VRC7 (bit 31 zegara): 6 kanalow FM dekodowanych jak OPLL")
+{
+    Vgm v;
+    v.clock(1, 3579545 | 0x80000000u);
+    v.opll(0x30, 0x10);
+    v.opll(0x10, 290 & 0xFF).opll(0x20, 0x10 | (4 << 1) | (290 >> 8));   // A4
+    v.wait(735);
+    v.opll(0x20, 0x00);
+    v.wait(735);
+    const Pattern p = build(v.bytes());
+    REQUIRE(p.channels.size() == 14);
+    CHECK(p.at(0, 0).note == 69);
+    CHECK(p.at(1, 0).note == chipstate::kNoteOff);
+}
+
+TEST_CASE("chipstate K054539: nuta z wartosci 24-bit, koniec z ROM (0x80), petla, glosnosc, key-off, dual")
+{
+    std::vector<std::uint8_t> rom(0x1000, 0x20);
+    rom[2000] = 0x80;   // znacznik konca probki PCM 8-bit
+    Vgm v;
+    v.clock(kIdxK054539, 18'432'000 | kDual);   // zegar >= 1 MHz: rate = clock / 384 = 48000 Hz
+    v.block(0x8C, romPayload(0x1000, 0, rom));
+    auto setup = [&](int ch, int delta, int start, int vol, int loop, int inst = 0) {
+        const int b = ch * 0x20;
+        for (int k = 0; k < 3; ++k) k054539(v, b + k, (delta >> (8 * k)) & 0xFF, inst);
+        k054539(v, b + 3, vol, inst);
+        for (int k = 0; k < 3; ++k) k054539(v, b + 0x0C + k, (start >> (8 * k)) & 0xFF, inst);
+        k054539(v, 0x200 + 2 * ch, 0x00, inst);   // PCM 8 bit
+        k054539(v, 0x201 + 2 * ch, loop, inst);
+    };
+    k054539(v, 0x22F, 0x01);
+    setup(0, 0x10000, 0, 0, 0);
+    k054539(v, 0x214, 0x01);                       // wiersz 0: 2000 krokow / 48 kHz = 1838 tickow => koniec w wierszu 2
+    v.wait(735 * 5);
+    setup(1, 0x20000, 0x100, 0, 0);
+    k054539(v, 0x214, 0x02);                       // wiersz 5: 1900 krokow po 2 probki => 873 ticki => wiersz 6
+    v.wait(735 * 5);
+    setup(2, 0x10000, 0, 0x40, 1);                 // petla; glosnosc 0x40 = -36 dB
+    k054539(v, 0x214, 0x04);                       // wiersz 10
+    v.wait(735 * 3);
+    k054539(v, 2 * 0x20 + 3, 0x00);                // wiersz 13: pelna glosnosc
+    v.wait(735 * 3);
+    k054539(v, 0x215, 0x04);                       // wiersz 16: key-off
+    v.wait(735 * 2);
+    k054539(v, 0x22F, 0x01, 1);                    // wiersz 18: drugi uklad (kanaly 8..15), bez ROM => bez konca
+    setup(0, 0x10000, 0, 0, 0, 1);
+    k054539(v, 0x214, 0x01, 1);
+    v.wait(735 * 3);
+    const Pattern p = build(v.bytes());
+    REQUIRE(p.channels.size() == 16);
+    for (const auto& c : p.channels) CHECK(c.decoded);
+    CHECK(noteOns(p, 0) == std::vector<int>{60});
+    CHECK(p.at(0, 0).instrument == 0);
+    CHECK(p.at(0, 0).volume == 0x40);
+    CHECK(offRows(p, 0) == std::vector<std::uint64_t>{2});
+    CHECK(noteOns(p, 1) == std::vector<int>{72});
+    CHECK(p.at(5, 1).instrument == 1);
+    CHECK(offRows(p, 1) == std::vector<std::uint64_t>{6});
+    CHECK(noteOns(p, 2) == std::vector<int>{60});
+    CHECK(p.at(10, 2).volume == 1);
+    CHECK(p.at(13, 2).volume == 0x40);
+    CHECK(offRows(p, 2) == std::vector<std::uint64_t>{16});
+    CHECK(noteOns(p, 8) == std::vector<int>{60});
+    CHECK(offRows(p, 8).empty());
+}
+
+TEST_CASE("chipstate K053260: nuta z pitch, dlugosc, petla/ADPCM, glosnosc, key-off")
+{
+    Vgm v;
+    v.clock(kIdxK053260, 3579545);
+    k053260(v, 0x2F, 0x02);
+    k053260(v, 0x2A, 0x22);                        // glos 2: petla + ADPCM
+    const int g0[8] = {0xC0, 0x0F, 0xE8, 0x03, 0x00, 0x10, 0x00, 0x7F};   // pitch 0xFC0 (ratio 1), dlugosc 1000, start 0x1000
+    for (int i = 0; i < 8; ++i) k053260(v, 0x08 + i, g0[i]);
+    k053260(v, 0x28, 0x01);
+    v.wait(735 * 3);
+    const int g1[8] = {0xE0, 0x0F, 0xE8, 0x03, 0x00, 0x20, 0x00, 0x40};   // pitch 0xFE0 (ratio 2), start 0x2000
+    for (int i = 0; i < 8; ++i) k053260(v, 0x10 + i, g1[i]);
+    k053260(v, 0x28, 0x03);
+    v.wait(735 * 3);
+    k053260(v, 0x28, 0x00);
+    v.wait(735);
+    const Pattern p = build(v.bytes());
+    REQUIRE(p.channels.size() == 4);
+    for (const auto& c : p.channels) CHECK(c.decoded);
+    CHECK(noteOns(p, 0) == std::vector<int>{60});
+    CHECK(p.at(0, 0).instrument == 0);
+    CHECK(p.at(0, 0).volume == 0x40);
+    CHECK(offRows(p, 0) == std::vector<std::uint64_t>{1});   // 1000 / (3579545 / 64) = 17.9 ms = 789 tickow
+    CHECK(noteOns(p, 1) == std::vector<int>{72});
+    CHECK(p.at(3, 1).instrument == 1);
+    CHECK(p.at(3, 1).volume == 32);
+    CHECK(offRows(p, 1) == std::vector<std::uint64_t>{6});   // petla: do key-off
+}
+
+TEST_CASE("chipstate Sega PCM: nuta z delta, koniec z adresu, petla, skok adresu, glosnosc, key-off")
+{
+    Vgm v;
+    v.clock(kIdxSegaPcm, 4'000'000);                // rate = 31250 Hz
+    segapcm(v, 2, 0x7F);
+    segapcm(v, 3, 0x40);
+    segapcm(v, 7, 0x80);                            // delta 0x80 = 0.5 probki na probke => C-3
+    segapcm(v, 6, 0x02);                            // strona koncowa 2 => koniec przy adresie 0x30000
+    segapcm(v, 0x84, 0x00);
+    segapcm(v, 0x85, 0x01);                         // start 0x010000
+    segapcm(v, 0x86, 0x02);                         // key-on, petla wylaczona: 0x20000 / 0x80 = 1024 probki = 1446 tickow
+    v.wait(735 * 4);
+    segapcm(v, 0x86, 0x00);                         // wiersz 4: ten sam adres, petla wlaczona
+    v.wait(735 * 2);
+    segapcm(v, 0x85, 0x03);                         // wiersz 6: skok adresu w trakcie gry = nowa probka
+    v.wait(735);
+    segapcm(v, 2, 0x20);                            // wiersz 7: glosnosc max(0x20, 0x40) = 0x40
+    v.wait(735);
+    segapcm(v, 0x86, 0x01);                         // wiersz 8: key-off
+    v.wait(735 * 2);
+    const Pattern p = build(v.bytes());
+    REQUIRE(p.channels.size() == 16);
+    for (const auto& c : p.channels) CHECK(c.decoded);
+    CHECK(noteOns(p, 0) == std::vector<int>{48, 48, 48});
+    CHECK(instrumentsAtNotes(p, 0) == std::vector<int>{0, 0, 1});
+    CHECK(p.at(0, 0).volume == 0x40);
+    CHECK(p.at(7, 0).volume == 32);
+    CHECK(offRows(p, 0) == std::vector<std::uint64_t>{1, 8});
+    CHECK(noteOns(p, 1).empty());
+}
+
+TEST_CASE("chipstate C140: nuta z czestotliwosci, koniec z adresow, key-on bez czestotliwosci, petla")
+{
+    Vgm v;
+    v.clock(kIdxC140, 12'288'000);                  // rate = 42666.7 Hz
+    auto voice = [&](int ch, int vol, int freq, int endHi) {
+        const int b = ch * 0x10;
+        c140(v, b + 0, vol);
+        c140(v, b + 1, vol);
+        c140(v, b + 2, freq >> 8);
+        c140(v, b + 3, freq & 0xFF);
+        c140(v, b + 4, 0x00);                       // bank
+        c140(v, b + 6, 0x00);
+        c140(v, b + 7, 0x00);                       // start 0
+        c140(v, b + 8, endHi);
+        c140(v, b + 9, 0x00);                       // koniec = endHi << 8
+    };
+    voice(0, 0xFF, 0x8000, 0x04);                   // ratio 0.5 => C-3; 1024 probki
+    c140(v, 0x05, 0x80);                            // wiersz 0: 1024 * 2 / 42666 = 2117 tickow => wiersz 2
+    v.wait(735 * 4);
+    voice(1, 0x80, 0x0000, 0x04);                   // wiersz 4: key-on bez czestotliwosci
+    c140(v, 0x15, 0x80);
+    v.wait(735 * 2);
+    c140(v, 0x12, 0x40);                            // wiersz 6: czestotliwosc 0x4000 => ratio 0.25 => C-2 (36)
+    v.wait(735 * 8);
+    voice(2, 0xFF, 0x2000, 0x04);                   // wiersz 14: petla
+    c140(v, 0x25, 0x90);
+    v.wait(735 * 3);
+    c140(v, 0x25, 0x10);                            // wiersz 17: key-off
+    v.wait(735);
+    const Pattern p = build(v.bytes());
+    REQUIRE(p.channels.size() == 24);
+    for (const auto& c : p.channels) CHECK(c.decoded);
+    CHECK(noteOns(p, 0) == std::vector<int>{48});
+    CHECK(p.at(0, 0).volume == 0x40);
+    CHECK(offRows(p, 0) == std::vector<std::uint64_t>{2});
+    CHECK(p.at(4, 1).note < 0);
+    CHECK(p.at(6, 1).note == 36);
+    CHECK(p.at(6, 1).volume == 32);
+    CHECK(offRows(p, 1) == std::vector<std::uint64_t>{11});   // 1024 * 4 / 42666 = 4234 tickow
+    CHECK(noteOns(p, 2) == std::vector<int>{24});
+    CHECK(offRows(p, 2) == std::vector<std::uint64_t>{17});
+}
+
+TEST_CASE("chipstate OKIM6258: start/stop, nuta z dzielnika zegara, strumien DAC (instrument, koniec)")
+{
+    {
+        Vgm v;
+        v.clock(kIdxOkim6258, 4'000'000).hdrByte(0x94, 2);   // dzielnik 512 => C-4
+        okim6258(v, 0, 0x02);
+        v.wait(735 * 2);
+        okim6258(v, 0, 0x01);
+        v.wait(735);
+        const Pattern p = build(v.bytes());
+        REQUIRE(p.channels.size() == 1);
+        CHECK(p.channels[0].decoded);
+        CHECK(p.at(0, 0).note == 60);
+        CHECK(p.at(0, 0).volume == 0x40);
+        CHECK(offRows(p, 0) == std::vector<std::uint64_t>{2});
+    }
+    {
+        Vgm v;
+        v.clock(kIdxOkim6258, 4'000'000).hdrByte(0x94, 0);   // dzielnik 1024 => C-3
+        okim6258(v, 0, 0x02);
+        v.wait(735);
+        const Pattern p = build(v.bytes());
+        CHECK(p.at(0, 0).note == 48);
+    }
+    {   // strumien: blok danych 0x04 (1000 bajtow) po 15625 Hz => 2822 ticki => key-off w wierszu 3
+        Vgm v;
+        v.clock(kIdxOkim6258, 4'000'000).hdrByte(0x94, 2);
+        v.block(0x04, std::vector<std::uint8_t>(1000, 0x11));
+        v.raw({0x90, 0x00, 0x17, 0x00, 0x01});
+        v.raw({0x91, 0x00, 0x04, 0x01, 0x00});
+        v.raw({0x92, 0x00, 0x09, 0x3D, 0x00, 0x00});
+        okim6258(v, 0, 0x02);
+        v.raw({0x95, 0x00, 0x00, 0x00, 0x00});
+        v.wait(735 * 5);
+        okim6258(v, 0, 0x01);
+        v.wait(735);
+        const Pattern p = build(v.bytes());
+        CHECK(noteOns(p, 0) == std::vector<int>{60});
+        CHECK(p.at(0, 0).instrument == 0);
+        CHECK(offRows(p, 0) == std::vector<std::uint64_t>{3});
+    }
+}
+
+TEST_CASE("chipstate GA20: nuta z tempa, koniec z bajtu 0 w ROM, glosnosc, instrument = adres startu")
+{
+    std::vector<std::uint8_t> rom(20001, 0x40);
+    rom[20000] = 0x00;                              // znacznik konca
+    Vgm v;
+    v.clock(kIdxGa20, 3579545);                     // rate = 894886 Hz
+    v.block(0x93, romPayload(0x8000, 0, rom));
+    ga20(v, 0, 0);
+    ga20(v, 1, 0);
+    ga20(v, 4, 0xFF);                               // 1 probka na krok => ratio 1 => C-4
+    ga20(v, 5, 0xF6);
+    ga20(v, 6, 0x02);                               // wiersz 0: 20000 / 894886 = 22 ms = 986 tickow => wiersz 1
+    v.wait(735 * 3);
+    ga20(v, 8, 0x10);                               // start 0x100
+    ga20(v, 9, 0x00);
+    ga20(v, 12, 0xFE);                              // 2 probki na krok => ratio 0.5 => C-3
+    ga20(v, 13, 0xF6);
+    ga20(v, 14, 0x02);                              // wiersz 3: 19900 * 2 / 894886 = 1962 ticki => wiersz 5
+    v.wait(735 * 4);
+    const Pattern p = build(v.bytes());
+    REQUIRE(p.channels.size() == 4);
+    for (const auto& c : p.channels) CHECK(c.decoded);
+    CHECK(noteOns(p, 0) == std::vector<int>{60});
+    CHECK(p.at(0, 0).volume == 0x40);
+    CHECK(offRows(p, 0) == std::vector<std::uint64_t>{1});
+    CHECK(noteOns(p, 1) == std::vector<int>{48});
+    CHECK(p.at(3, 1).instrument == 1);
+    CHECK(offRows(p, 1) == std::vector<std::uint64_t>{5});
+}
+
+TEST_CASE("chipstate: nowe uklady (NES, C140, K054539, K053260, Sega PCM, GA20, OKIM6258) maja wszystkie kanaly decoded")
+{
+    for (std::size_t idx : {kIdxSegaPcm, kIdxNes, kIdxOkim6258, kIdxK054539, kIdxC140, kIdxK053260, kIdxGa20}) {
+        INFO("indeks ukladu w naglowku: " << idx);
+        Vgm v;
+        v.clock(idx, 4'000'000).wait(10);
+        const Pattern p = build(v.bytes());
+        REQUIRE(!p.channels.empty());
+        for (const auto& c : p.channels) CHECK(c.decoded);
+    }
+}
