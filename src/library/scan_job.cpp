@@ -19,6 +19,7 @@ namespace fs = std::filesystem;
 namespace {
 
 constexpr std::size_t kMaxWarnings = 100;
+constexpr std::size_t kMaxPendingDirs = 100000;   // limit stosu katalogow do odwiedzenia
 
 std::wstring lowerKey(std::wstring s)
 {
@@ -111,6 +112,7 @@ struct ScanJob::Impl {
         struct Dir { std::wstring path; std::uint32_t depth; };
         std::vector<Dir> stack;
         stack.push_back({root.native(), 0});
+        bool dirLimitWarned = false;
         std::set<std::wstring> visitedLinks;   // ochrona przed cyklami przy followReparsePoints=true
         const std::size_t rootLen = root.native().size();
         auto rel = [&](const std::wstring& p) {
@@ -144,6 +146,12 @@ struct ScanJob::Impl {
                 const std::wstring full = dir.path + (dir.path.back() == L'\\' ? L"" : L"\\") + name;
                 const bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
 
+                // Nazwy, ktorych Win32 nie traktuje doslownie (CON, NUL, koncowa kropka/spacja): pomijamy.
+                if (fsutil::isUnsafeComponentName(name)) {
+                    warn(r, WarningCode::EntrySkipped, "entry with reserved or unsafe name skipped: " + rel(full));
+                    continue;
+                }
+
                 if (!options.followReparsePoints && isLinkReparse(fd)) {
                     ++r.reparsePointsSkipped;
                     warn(r, WarningCode::ReparsePointSkipped, "reparse point skipped: " + rel(full));
@@ -164,6 +172,11 @@ struct ScanJob::Impl {
                             continue;
                         }
                     }
+                    if (stack.size() + subdirs.size() >= kMaxPendingDirs) {
+                        if (!dirLimitWarned) warn(r, WarningCode::LimitReached, "too many pending directories; some skipped");
+                        dirLimitWarned = true;
+                        continue;
+                    }
                     subdirs.push_back({full, dir.depth + 1});
                     continue;
                 }
@@ -177,6 +190,9 @@ struct ScanJob::Impl {
                 FoundFile ff;
                 ff.path = fs::path(full);
                 ff.sizeBytes = (static_cast<std::uint64_t>(fd.nFileSizeHigh) << 32) | fd.nFileSizeLow;
+                ff.attributes = fd.dwFileAttributes;
+                if (isCloudPlaceholder(ff.attributes))
+                    warn(r, WarningCode::Other, "cloud placeholder (content not local): " + rel(full));
                 r.files.push_back(std::move(ff));
                 filesFound.store(r.files.size(), std::memory_order_relaxed);
             } while (::FindNextFileW(h, &fd));

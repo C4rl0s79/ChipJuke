@@ -87,7 +87,11 @@ struct Settings {
 // Nieznane pola ignoruje; brakujace = domyslne. schemaVersion > znany -> UnsupportedSchema;
 // starszy -> migracja w gore. Zla skladnia -> ParseError.
 // `warnings` (opcjonalne, dodatek E2): przyciete zakresy, pola o zlym typie, pominiete wiazania.
-[[nodiscard]] Result<Settings> fromJson(std::string_view json, std::vector<Warning>* warnings = nullptr);
+// `allowNetworkPaths` [dodatek E2-sec]: false (domyslnie) = session.trackPath w formie UNC jest
+// odrzucane z Warning; URL i przestrzen urzadzen odrzucane zawsze. Parser ma limity: plik <= 4 MiB,
+// zagniezdzenie JSON <= 8, <= 50000 wartosci (LimitExceeded).
+[[nodiscard]] Result<Settings> fromJson(std::string_view json, std::vector<Warning>* warnings = nullptr,
+                                        bool allowNetworkPaths = false);
 [[nodiscard]] std::string toJson(const Settings& settings);   // UTF-8, deterministyczne
 
 struct SettingsLocation {
@@ -95,6 +99,8 @@ struct SettingsLocation {
     bool portable = false;              // true = obok .exe
 };
 // exeDir: katalog pliku wykonywalnego. appDataDir: %APPDATA% (wstrzykiwane dla testow).
+// appDataDir zaczynajacy sie od dwoch separatorow (UNC, \?\) jest ignorowany [E2-sec]: wynik jak dla pustego
+// (settings.json obok exe, portable=false).
 [[nodiscard]] SettingsLocation resolveSettingsLocation(const std::filesystem::path& exeDir,
                                                        const std::filesystem::path& appDataDir);
 [[nodiscard]] bool isDirectoryWritable(const std::filesystem::path& dir);
@@ -103,7 +109,8 @@ struct SettingsLocation {
 // zachowuje kopie .bad i uzywa domyslnych). Zapis atomowy: temp + rename, tworzy katalogi.
 // Przy uszkodzonym pliku loadSettings sam zachowuje kopie `<plik>.bad` (oryginal zostaje).
 [[nodiscard]] Result<Settings> loadSettings(const std::filesystem::path& file,
-                                            std::vector<Warning>* warnings = nullptr);
+                                            std::vector<Warning>* warnings = nullptr,
+                                            bool allowNetworkPaths = false);
 [[nodiscard]] Result<void> saveSettings(const std::filesystem::path& file, const Settings& settings);
 
 } // namespace vgmplay::settings

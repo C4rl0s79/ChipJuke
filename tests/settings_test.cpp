@@ -387,3 +387,125 @@ TEST_CASE("settings plik: katalog zamiast pliku, zbyt duzy plik, zapis w niedost
     writeFile(td.path / "blocker", "x");
     CHECK_FALSE(saveSettings(td.path / "blocker" / "settings.json", Settings{}).ok());
 }
+
+// ===========================================================================
+// E2-sec
+// ===========================================================================
+
+TEST_CASE("settings sec: 100000 zagniezdzonych '[' i glebokosc > 8 -> LimitExceeded")
+{
+    CHECK(fromJson(std::string(100000, '[')).error().code == ErrorCode::LimitExceeded);
+    CHECK(fromJson(R"({"audio":)" + std::string(100000, '[')).error().code == ErrorCode::LimitExceeded);
+    CHECK(fromJson(R"({"a":[[[[[[[[1]]]]]]]]})").error().code == ErrorCode::LimitExceeded);   // glebokosc 9
+    CHECK(fromJson(toJson(customSettings())).ok());
+}
+
+TEST_CASE("settings sec: limit liczby wartosci")
+{
+    std::string big = R"({"x":[)";
+    for (int i = 0; i < 60000; ++i) big += i ? ",0" : "0";
+    big += "]}";
+    CHECK(fromJson(big).error().code == ErrorCode::LimitExceeded);
+}
+
+TEST_CASE("settings sec: session.trackPath walidowany jak wpisy playlist")
+{
+    auto load = [](const std::string& path, bool allowNet, std::vector<Warning>* w) {
+        return fromJson(R"({"session":{"trackPath":")" + path + R"(","positionMs":5}})", w, allowNet);
+    };
+    {
+        std::vector<Warning> w;
+        auto r = load(R"(\\\\srv\\share\\a.vgm)", false, &w);   // UNC (JSON: dwa backslashe na separator)
+        REQUIRE(r.ok());
+        CHECK(r.value().session.trackPath.empty());
+        CHECK(r.value().session.positionMs == 5);
+        CHECK(hasWarning(w, "session.trackPath"));
+    }
+    {
+        auto r = load(R"(\\\\srv\\share\\a.vgm)", true, nullptr);   // allowNetworkPaths
+        REQUIRE(r.ok());
+        CHECK_FALSE(r.value().session.trackPath.empty());
+    }
+    for (const char* bad : {"http://x/a.vgm", R"(\\\\?\\C:\\a.vgm)", R"(\\\\host\\pipe\\p)"}) {
+        auto r = load(bad, true, nullptr);
+        REQUIRE(r.ok());
+        CHECK(r.value().session.trackPath.empty());
+    }
+    CHECK(load("D:/Muzyka/a.vgz", false, nullptr).value().session.trackPath == "D:/Muzyka/a.vgz");
+    CHECK(fromJson(R"({"session":{"trackPath":""}})").value().session.trackPath.empty());
+}
+
+TEST_CASE("settings sec: appDataDir UNC lub rozszerzony jest odrzucany")
+{
+    TempDir td;
+    const fs::path bad = td.path / "brak";   // exeDir niezapisywalny (nie istnieje)
+    for (const wchar_t* ad : {L"\\\\serwer\\udzial\\AppData", L"//serwer/udzial/AppData", L"\\\\?\\C:\\Users\\x\\AppData"}) {
+        const auto loc = resolveSettingsLocation(bad, fs::path(ad));
+        CHECK_FALSE(loc.portable);
+        CHECK(loc.file == bad / "settings.json");
+    }
+    // zwykly appData nadal dziala
+    CHECK(resolveSettingsLocation(bad, td.path / "AppData").file == td.path / "AppData" / "vgmplay" / "settings.json");
+}
+
+TEST_CASE("settings sec: zapisywalny folder NTFS nie jest bledne uznawany za niezapisywalny (proba z DELETE)")
+{
+    TempDir td;
+    for (int i = 0; i < 20; ++i) REQUIRE(isDirectoryWritable(td.path));
+    CHECK(fs::is_empty(td.path));
+}
+
+TEST_CASE("settings sec: symlink w miejscu .bad nie przekierowuje kopii")
+{
+    TempDir td;
+    const fs::path f = td.path / "settings.json";
+    const fs::path victim = td.path / "victim.txt";
+    {
+        std::ofstream(victim, std::ios::binary) << "WAZNE";
+    }
+    fs::path bad = f;
+    bad += ".bad";
+    if (!::CreateSymbolicLinkW(bad.c_str(), victim.c_str(), SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE)) {
+        MESSAGE("brak uprawnien do tworzenia dowiazan symbolicznych - test pominiety");
+        return;
+    }
+    {
+        std::ofstream(f, std::ios::binary) << "{ zepsute";
+    }
+    REQUIRE_FALSE(loadSettings(f).ok());
+    CHECK(readFile(victim) == "WAZNE");
+    CHECK(readFile(bad) == "{ zepsute");
+    CHECK((::GetFileAttributesW(bad.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) == 0);
+}
+
+TEST_CASE("settings sec: zapis nie zostawia plikow, nazwa tymczasowa jest losowa")
+{
+    TempDir td;
+    const fs::path f = td.path / "settings.json";
+    // martwy plik tymczasowy o starym wzorcu (pid_licznik), wiek 2 dni -> sprzatniety
+    const fs::path legacy = td.path / "settings.json.tmp77_1";
+    {
+        std::ofstream(legacy, std::ios::binary) << "x";
+    }
+    {
+        HANDLE h = ::CreateFileW(legacy.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        REQUIRE(h != INVALID_HANDLE_VALUE);
+        FILETIME now{};
+        ::GetSystemTimeAsFileTime(&now);
+        ULARGE_INTEGER u{};
+        u.LowPart = now.dwLowDateTime;
+        u.HighPart = now.dwHighDateTime;
+        u.QuadPart -= 2ull * 24 * 3600 * 10000000ull;
+        FILETIME ft{u.LowPart, static_cast<DWORD>(u.HighPart)};
+        REQUIRE(::SetFileTime(h, nullptr, nullptr, &ft));
+        ::CloseHandle(h);
+    }
+    REQUIRE(saveSettings(f, Settings{}).ok());
+    CHECK_FALSE(fs::exists(legacy));
+    int n = 0;
+    for (const auto& e : fs::directory_iterator(td.path)) {
+        (void)e;
+        ++n;
+    }
+    CHECK(n == 1);
+}

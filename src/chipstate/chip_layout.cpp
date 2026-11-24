@@ -44,6 +44,7 @@ std::vector<PatternChannel> one(ChipType type, std::uint8_t instance, std::uint3
 {
     std::vector<PatternChannel> v;
     auto ch = [&](std::uint16_t n) { append(v, type, instance, false, {{"Ch ", n}}); };
+    auto chd = [&](std::uint16_t n) { append(v, type, instance, true, {{"Ch ", n}}); };   // uklad z dekoderem
     switch (type) {
     case ChipType::SN76496:   append(v, type, instance, true, {{"", 3}, {"Noise", 0}}); break;
     case ChipType::YM2413:
@@ -54,7 +55,7 @@ std::vector<PatternChannel> one(ChipType type, std::uint8_t instance, std::uint3
         break;
     case ChipType::YM2612:    append(v, type, instance, true, {{"FM ", 6}, {"DAC", 0}}); break;
     case ChipType::YM2151:    append(v, type, instance, true, {{"Ch ", 8}}); break;
-    case ChipType::SegaPcm:   ch(16); break;
+    case ChipType::SegaPcm:   chd(16); break;
     case ChipType::RF5C68:
     case ChipType::RF5C164:   ch(8); break;
     case ChipType::YM2203:
@@ -88,22 +89,22 @@ std::vector<PatternChannel> one(ChipType type, std::uint8_t instance, std::uint3
         break;
     case ChipType::NesApu:
         if (flags & 0x80000000u)   // bit 31 zegara = FDS
-            append(v, type, instance, false,
+            append(v, type, instance, true,
                    {{"Square 1", 0}, {"Square 2", 0}, {"Triangle", 0}, {"Noise", 0}, {"DPCM", 0}, {"FDS", 0}});
         else
-            append(v, type, instance, false,
+            append(v, type, instance, true,
                    {{"Square 1", 0}, {"Square 2", 0}, {"Triangle", 0}, {"Noise", 0}, {"DPCM", 0}});
         break;
     case ChipType::MultiPCM:  ch(28); break;
     case ChipType::UPD7759:
-    case ChipType::OKIM6258:  ch(1); break;
+    case ChipType::OKIM6258:  chd(1); break;
     case ChipType::OKIM6295:  append(v, type, instance, true, {{"Ch ", 4}}); break;
     case ChipType::K051649:   ch(5); break;
-    case ChipType::K054539:   ch(8); break;
+    case ChipType::K054539:   chd(8); break;
     case ChipType::HuC6280:   ch(6); break;
-    case ChipType::C140:      ch(24); break;
+    case ChipType::C140:      chd(24); break;
     case ChipType::C219:      ch(16); break;
-    case ChipType::K053260:
+    case ChipType::K053260:   chd(4); break;
     case ChipType::Pokey:     ch(4); break;
     case ChipType::QSound:    append(v, type, instance, false, {{"PCM ", 16}, {"ADPCM ", 3}}); break;
     case ChipType::SCSP:      ch(32); break;
@@ -114,7 +115,7 @@ std::vector<PatternChannel> one(ChipType type, std::uint8_t instance, std::uint3
     case ChipType::ES5506:    break;   // szkielet bez rdzenia w libvgm: silnik pomija uklad (brak kanalow)
     case ChipType::X1010:     ch(16); break;
     case ChipType::C352:      ch(32); break;
-    case ChipType::GA20:
+    case ChipType::GA20:      chd(4); break;
     case ChipType::Mikey:     ch(4); break;
     case ChipType::K007232:
     case ChipType::K005289:   ch(2); break;

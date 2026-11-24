@@ -132,12 +132,14 @@ public:
 
     // Zapis rejestru: port (OPN2/OPL3: 0/1), rejestr, wartosc. SN76489: tylko val.
     virtual void write(std::uint8_t port, std::uint8_t reg, std::uint8_t val) = 0;
+    // Zapis 16-bitowego adresu (C140, K054539, SegaPCM - komendy 0xD4, 0xD3, 0xC0); domyslnie ignorowany.
+    virtual void writeMem(std::uint32_t /*addr*/, std::uint8_t /*val*/) {}
     // Blok danych ROM (0x67, typ >= 0x80) zaadresowany do tego ukladu.
     virtual void romBlock(std::uint8_t /*type*/, std::uint32_t /*memSize*/, std::uint32_t /*startAddr*/,
                           std::span<const std::uint8_t> /*data*/)
     {
     }
-    // Strumien/zapis DAC (tylko YM2612): zapis probki; start strumienia (instrument, koniec) i stop.
+    // Strumien/zapis DAC (YM2612, OKIM6258): zapis probki; start strumienia (instrument, koniec) i stop.
     virtual void dacData() {}
     virtual void dacStreamStart(std::uint8_t /*instrument*/, std::uint64_t /*endTick*/) {}
     virtual void dacStreamStop() {}
@@ -162,6 +164,17 @@ protected:
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2413(Host& h, std::size_t first, std::uint32_t clockHz);
 // OPL2 (YM3812), OPL (YM3526) - 9 kanalow + 5 perkusji; OPL3 (YMF262) - 18 + 5.
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeOpl(Host& h, std::size_t first, std::uint32_t clockHz, bool opl3);
+// NES APU (5 kanalow; z FDS 6), uklady PCM (dec_pcm.cpp) - flags = ChipEntry::flags.
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeNesApu(Host& h, std::size_t first, std::uint32_t clockHz,
+                                                      std::uint32_t flags);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeC140(Host& h, std::size_t first, std::uint32_t clockHz);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeK054539(Host& h, std::size_t first, std::uint32_t clockHz,
+                                                       std::uint32_t flags);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeK053260(Host& h, std::size_t first, std::uint32_t clockHz);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeSegaPcm(Host& h, std::size_t first, std::uint32_t clockHz);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeGa20(Host& h, std::size_t first, std::uint32_t clockHz);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeOkim6258(Host& h, std::size_t first, std::uint32_t clockHz,
+                                                        std::uint32_t flags);
 
 // ---------------------------------------------------------------------------------------------
 // Pomocnicze.
@@ -183,6 +196,53 @@ protected:
     const double m = std::round(69.0 + 12.0 * std::log2(hz / 440.0));
     return static_cast<int>(std::clamp(m, 0.0, 127.0));
 }
+// Uklady PCM: nuta z tempa odczytu probki. ratio = probki odczytywane na probke wyjsciowa ukladu (1.0 = tempo
+// natywne ukladu); refRatio = wartosc ratio odpowiadajaca C-4 (60). Obciete do 0..127; ratio <= 0 -> -1.
+[[nodiscard]] inline int midiFromRatio(double ratio, double refRatio) noexcept
+{
+    if (!(ratio > 0.0) || !(refRatio > 0.0)) return -1;
+    return static_cast<int>(std::clamp(std::round(60.0 + 12.0 * std::log2(ratio / refRatio)), 0.0, 127.0));
+}
+// Czas w sekundach -> ticki 44100 Hz (zaokraglone w gore, min. 1).
+[[nodiscard]] inline std::uint64_t ticksFromSeconds(double seconds) noexcept
+{
+    if (!(seconds > 0.0) || seconds > 1.0e7) return 1;
+    return static_cast<std::uint64_t>(std::ceil(seconds * 44100.0));
+}
+
+// Pamiec ROM/probek zlozona z blokow 0x67 (typ >= 0x80): odcinki wskazuja bufor utworu (zyje dluzej niz dekoder).
+class RomMap {
+public:
+    void setSize(std::uint32_t size)
+    {
+        size_ = size;
+        mask_ = 0;
+        while (size_ > 1 && mask_ < size_ - 1u) mask_ = (mask_ << 1) | 1u;
+    }
+    void add(std::uint32_t start, std::span<const std::uint8_t> data)
+    {
+        if (data.empty()) return;
+        segs_.push_back({start, data});
+        if (size_ == 0) setSize(start + static_cast<std::uint32_t>(std::min<std::size_t>(data.size(), 0x7FFFFFFFu)));
+        ++generation_;
+    }
+    [[nodiscard]] bool present() const noexcept { return !segs_.empty(); }
+    [[nodiscard]] std::uint32_t generation() const noexcept { return generation_; }
+    // Bajt spod adresu (z maska rozmiaru jak w rdzeniach); 0xFF poza danymi.
+    [[nodiscard]] std::uint8_t at(std::uint32_t addr) const noexcept
+    {
+        addr &= mask_;
+        for (auto it = segs_.rbegin(); it != segs_.rend(); ++it)
+            if (addr >= it->start && addr - it->start < it->data.size()) return it->data[addr - it->start];
+        return 0xFF;
+    }
+
+private:
+    struct Seg { std::uint32_t start; std::span<const std::uint8_t> data; };
+    std::vector<Seg> segs_;
+    std::uint32_t size_ = 0, mask_ = 0, generation_ = 0;
+};
+
 // Poziom 0..maxLevel (liniowo w skali rejestru) -> 0x00..0x40.
 [[nodiscard]] inline std::uint8_t scaleVolume(int level, int maxLevel) noexcept
 {

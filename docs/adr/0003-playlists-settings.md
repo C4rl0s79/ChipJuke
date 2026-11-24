@@ -49,16 +49,24 @@ z `Warning`). Nowa wersja = nowy `case` w `migrate()` + test.
 
 ## Zapis atomowy i odpornosc na uszkodzenia
 
-Zapis: plik tymczasowy `<plik>.tmp<pid>_<n>` w TYM SAMYM katalogu, `FlushFileBuffers`, potem `ReplaceFileW`
-(cel istnieje) albo `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`; ponowienia przy chwilowym
-`ACCESS_DENIED`/`SHARING_VIOLATION` (antywirus); przy bledzie plik tymczasowy jest usuwany. Brakujace katalogi
-sa tworzone. Wspolny kod: `src/settings/fs_util.hpp` (wewnetrzny, bez kontraktu).
+Zapis: plik tymczasowy `<plik>.tmp<32 znaki hex>` (128 bitow z `BCryptGenRandom`) w TYM SAMYM katalogu, otwierany
+`CREATE_NEW` + `FILE_FLAG_OPEN_REPARSE_POINT` i po otwarciu sprawdzany jako zwykly plik dyskowy (nie dowiazanie,
+nie katalog); `FlushFileBuffers`, potem `ReplaceFileW` (cel istnieje) albo `MoveFileExW(REPLACE_EXISTING|WRITE_THROUGH)`;
+ponowienia przy chwilowym `ACCESS_DENIED`/`SHARING_VIOLATION` (antywirus); przy bledzie plik tymczasowy jest usuwany.
+Na poczatku zapisu sprzatane sa osierocone pliki `<plik>.tmp<wzorzec>` (32 hex albo stary `<pid>_<n>`) starsze niz
+1 godzina; obce nazwy i swieze pliki nie sa ruszane. Brakujace katalogi sa tworzone. Wspolny kod:
+`src/settings/fs_util.hpp` (wewnetrzny, bez kontraktu).
 
-Odczyt: ograniczony rozmiarem (ustawienia 4 MiB, playlisty 256 MiB), rozmiar sprawdzany na uchwycie.
+Odczyt: ograniczony rozmiarem (ustawienia 4 MiB, playlisty i cache 64 MiB), rozmiar sprawdzany na uchwycie.
+Parser JSON (`json_limits.hpp`, SAX nad standardowym budowniczym DOM) liczy zagniezdzenie (max 8 poziomow) i
+liczbe wartosci (ustawienia 50000, playlisty i cache 4 mln) PODCZAS parsowania: `LimitExceeded` bez budowy calego
+DOM i bez rekursji (test: 100000 x `[`). Wariant z `parser_callback_t` odrzucono: przy 200000 wpisow cache
+wczytywal sie 62 s (zlozonosc kwadratowa); SAX: 0,57 s (zapis 0,45 s, release, 31 MiB JSON).
 Brak pliku nie jest bledem (`Settings` domyslne / pusty `PlaylistModel` / pusty cache). Plik uszkodzony
 (skladnia, obciety, nowszy schemat): zwracany blad, oryginal NIE jest modyfikowany, obok powstaje kopia
-(`playlists.json.bak`, `settings.json.bad`). Aplikacja nie powinna nadpisywac pliku bez wiedzy uzytkownika po takim
-bledzie; po zapisie domyslnych danych kopia `.bak`/`.bad` zostaje.
+(`playlists.json.bak`, `settings.json.bad`): poprzednia kopia (takze dowiazanie podstawione w jej miejsce) jest
+usuwana, potem `CopyFileW(bFailIfExists=TRUE)`, wiec kopia nigdy nie pisze przez dowiazanie. Aplikacja nie
+powinna nadpisywac pliku bez wiedzy uzytkownika po takim bledzie; po zapisie domyslnych danych kopia zostaje.
 
 ## Bezpieczenstwo sciezek (M3U/M3U8 i skan)
 
@@ -85,10 +93,36 @@ lub samym `CR`. `#EXTINF:<sekundy>,<tytul>` dotyczy tylko nastepnej pozycji; inn
 Eksport: `CRLF`, sciezki wzgledne do `baseDir` gdy leza w nim, inaczej absolutne z `/`; `utf8=false` zamienia
 znaki spoza strony kodowej na `?` (stratne - zalecany M3U8).
 
-`ScanJob`: nie podaza za junction i dowiazaniami symbolicznymi (`ReparsePointSkipped`; inne znaczniki, np. OneDrive,
-traktowane jak zwykle pliki), root moze sam byc dowiazaniem (wybor uzytkownika); `maxDepth`, `maxFiles`,
-anulowanie sprawdzane przy kazdej pozycji katalogu; bledy dostepu to `Warning`, nie wyjatki; komunikaty zawieraja
-tylko sciezki wzgledne do roota; przy `followReparsePoints=true` cykle wykrywane po rozwiazanym celu.
+`ScanJob`: nie podaza za junction i dowiazaniami symbolicznymi (`ReparsePointSkipped`; tylko znaczniki SYMLINK i
+MOUNT_POINT - inne znaczniki reparse, np. dedup, traktowane jak zwykle pliki), root moze sam byc dowiazaniem (wybor
+uzytkownika); `maxDepth`, `maxFiles`, anulowanie sprawdzane przy kazdej pozycji katalogu; stos katalogow do
+odwiedzenia ograniczony do 100000 (`LimitReached`); pozycje o nazwie zarezerwowanej (CON, NUL, COM1...) lub z
+koncowa kropka/spacja sa pomijane (`EntrySkipped`; ten sam predykat `isUnsafeComponentName` co w M3U); bledy dostepu
+to `Warning`, nie wyjatki; komunikaty zawieraja tylko sciezki wzgledne do roota; przy `followReparsePoints=true`
+cykle wykrywane po rozwiazanym celu.
+
+Pliki w chmurze (OneDrive / Cloud Files / HSM): `FoundFile::attributes` niesie `dwFileAttributes`. Pliki z
+`FILE_ATTRIBUTE_OFFLINE`, `RECALL_ON_OPEN` lub `RECALL_ON_DATA_ACCESS` (`isCloudPlaceholder`) sa na liscie skanu
+(z Warning "cloud placeholder"), ale `readTrackMeta`/`MetaCache::getOrRead` ich NIE czytaja (odczyt wymusilby
+pobranie z sieci): zwracaja `AccessDenied` rozpoznawany przez `isCloudPlaceholderError`. Parametr
+`allowCloudDownload=true` ("pobierz mimo to") czyta plik. Trafienie w cache nie czyta pliku. Propozycja dla core.hpp:
+`ErrorCode::CloudPlaceholder` i `WarningCode::CloudPlaceholderSkipped` (dzis: `AccessDenied`/`Other`).
+
+Sciezki w plikach JSON (playlisty, cache, `session.trackPath`): wspolny predykat `isUnsafeStoredPath`. Zawsze
+odrzucane: URL (`schemat://`), przestrzen urzadzen (prefiksy `//?/` i `//./` w obu wariantach separatora), potoki
+(`//host/pipe/...`). Sciezki UNC (`//serwer/udzial`) domyslnie tez (`allowNetworkPaths=false`; opcja w
+`PlaylistLoadOptions`, `fromJson`/`loadSettings`, `MetaCache::fromJson`/`loadMetaCacheFile`).
+`resolveSettingsLocation` ignoruje `appDataDir` zaczynajacy sie od dwoch separatorow. Loader
+(`isDeviceNamespacePath`) odrzuca dodatkowo prefiks `Global`, `UNC/<host>/pipe/` w formie rozszerzonej oraz
+`//<host>/pipe/` po nazwie, przed jakimkolwiek otwarciem.
+
+Teksty z zewnatrz (tytuly `#EXTINF`, JSON, cache): `sanitizeTitle` usuwa znaki < 0x20 (TAB -> spacja), DEL, C1,
+znaki kierunku i niewidoczne (U+200B-200F, U+202A-202E, U+2066-2069), niepoprawny UTF-8 -> U+FFFD; limit 512 B na
+granicy znaku. `durationMs`/`loopMs` z JSON i cache przycinane do 24 h. `importM3u`: wejscie > 16 MiB -> `TooLarge`,
+po 1 000 000 linii import sie konczy (`LimitReached`).
+
+`isDirectoryWritable` otwiera plik probny z `GENERIC_WRITE | DELETE` (DELETE jest wymagane przez
+`FILE_FLAG_DELETE_ON_CLOSE`); test wielokrotnej proby na NTFS nie wykazal falszywych "niezapisywalne".
 
 ## Dodatki do kontraktow (addytywne)
 
@@ -103,3 +137,9 @@ tylko sciezki wzgledne do roota; przy `followReparsePoints=true` cykle wykrywane
 Aktywna playlista i kursor zapisuje `playlists.json` (`active`, `cursor` na liscie). Pozycja w utworze:
 `Settings::session.positionMs` razem z `trackPath`; UI przywraca pozycje tylko gdy sciezka biezacego wpisu
 kursora jest rowna `trackPath`.
+
+Dodatki E2-sec (wszystkie addytywne, parametry domyslne): `PlaylistLoadOptions` + drugi parametr `loadJson` i
+`loadPlaylistsFile`; trzeci parametr `allowNetworkPaths` w `fromJson` i `loadSettings`; `FoundFile::attributes`,
+`kAttr*`, `isCloudPlaceholder`; `readTrackMeta(path, cancel, allowCloudDownload)`, `isCloudPlaceholderError`,
+`MetaCache::getOrRead(..., allowCloudDownload)`, `MetaCache::fromJson(json, allowNetworkPaths)`,
+`loadMetaCacheFile(file, allowNetworkPaths)`. `MetaCache` trzyma wpisy w `unordered_map` (zapis sortuje klucze).

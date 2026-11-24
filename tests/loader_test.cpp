@@ -432,3 +432,23 @@ TEST_CASE("loader: reproduktory awarii libvgm z tests/data/fuzz-crashes sa odrzu
         CHECK_MESSAGE(r.error().code == c.code, c.file, ": ", static_cast<int>(r.error().code), " ", r.error().message);
     }
 }
+
+#if defined(_WIN32)
+TEST_CASE("loader: Global, UNC pipe i host pipe sa odrzucane po nazwie, przed jakimkolwiek otwarciem")
+{
+    for (const wchar_t* p : {L"\\\\?\\Global\\C:\\a.vgm", L"\\\\?\\GLOBAL\\pipe\\x", L"//?/global/x", L"\\\\?\\GLOBALROOT\\Device\\x",
+                             L"\\\\?\\UNC\\host\\pipe\\vgm", L"\\\\?\\unc\\HOST\\PIPE\\vgm", L"\\\\host\\pipe\\vgm", L"//host/PIPE/vgm",
+                             L"\\\\host\\pipe", L"\\\\.\\pipe\\x", L"\\\\?\\pipe\\x", L"\\??\\C:\\a.vgm"}) {
+        auto r = loader::loadTrackFromFile(fs::path(p));
+        INFO(fs::path(p).string());
+        REQUIRE_FALSE(r.ok());
+        CHECK(r.error().code == ErrorCode::PathRejected);
+    }
+    // zwykle sciezki rozszerzone i UNC NIE sa odrzucane po nazwie (brak pliku to inny blad niz PathRejected)
+    for (const wchar_t* p : {L"\\\\?\\C:\\vgmplay_nie_ma_takiego_pliku.vgm"}) {   // bez UNC: nie wolno wywolac ruchu sieciowego
+        auto r = loader::loadTrackFromFile(fs::path(p));
+        REQUIRE_FALSE(r.ok());
+        CHECK(r.error().code != ErrorCode::PathRejected);
+    }
+}
+#endif

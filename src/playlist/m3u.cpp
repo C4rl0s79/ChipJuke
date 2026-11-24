@@ -18,6 +18,8 @@ namespace fs = std::filesystem;
 
 constexpr std::size_t kMaxLineChars = 32768;
 constexpr std::uint32_t kHardMaxEntries = 100000;
+constexpr std::size_t kMaxInputBytes = 16u << 20;
+constexpr std::size_t kMaxLines = 1000000;
 
 // Skladniki sciezki (bez pustych i "."), do porownan bez rozrozniania wielkosci liter.
 std::vector<std::wstring> components(const fs::path& p)
@@ -40,19 +42,6 @@ bool isWithin(const fs::path& root, const fs::path& p)
     for (std::size_t i = 0; i < r.size(); ++i)
         if (!fsutil::equalsIgnoreCase(r[i], c[i])) return false;
     return true;
-}
-
-bool isReservedDeviceName(std::wstring comp)
-{
-    const std::size_t dot = comp.find(L'.');
-    if (dot != std::wstring::npos) comp.resize(dot);
-    while (!comp.empty() && comp.back() == L' ') comp.pop_back();
-    std::wstring up;
-    for (wchar_t ch : comp) up.push_back(static_cast<wchar_t>(std::towupper(ch)));
-    if (up == L"CON" || up == L"PRN" || up == L"AUX" || up == L"NUL" || up == L"CONIN$" || up == L"CONOUT$") return true;
-    if (up.size() == 4 && (up.compare(0, 3, L"COM") == 0 || up.compare(0, 3, L"LPT") == 0) && up[3] >= L'1' && up[3] <= L'9')
-        return true;
-    return false;
 }
 
 enum class Kind { Relative, DriveAbsolute, Rooted };
@@ -93,8 +82,7 @@ const char* checkSyntax(std::wstring& w, Kind& kind)
         start = end + 1;
         if (comp.empty() || comp == L"." || comp == L"..") continue;
         if (kind == Kind::DriveAbsolute && comp.size() == 2 && comp[1] == L':') continue;   // "C:"
-        if (comp.back() == L'.' || comp.back() == L' ') return "component with trailing dot or space";
-        if (isReservedDeviceName(comp)) return "reserved device name";
+        if (fsutil::isUnsafeComponentName(comp)) return "reserved device name or trailing dot/space";
     }
     return "";
 }
@@ -132,6 +120,7 @@ std::wstring trim(const std::wstring& s)
 Result<M3uImportResult> importM3u(std::string_view text, const M3uImportOptions& options)
 {
     try {
+        if (text.size() > kMaxInputBytes) return makeError(ErrorCode::TooLarge, "M3U input exceeds 16 MiB");
         if (options.baseDir.empty()) return makeError(ErrorCode::InvalidArgument, "baseDir is empty");
         std::error_code ec;
         const fs::path base = lexicalNormal(fs::absolute(options.baseDir, ec));
@@ -171,6 +160,10 @@ Result<M3uImportResult> importM3u(std::string_view text, const M3uImportOptions&
             if (end < text.size() && text[end] == '\r' && end + 1 < text.size() && text[end + 1] == '\n') ++end;
             pos = end + 1;
             ++lineNo;
+            if (lineNo > kMaxLines) {
+                warn(WarningCode::LimitReached, "line limit reached; remaining lines ignored");
+                break;
+            }
             if (rawLine.empty()) { if (pos > text.size()) break; continue; }
             if (rawLine.size() > kMaxLineChars * 4) { ++res.rejected; warn(WarningCode::EntrySkipped, "line " + std::to_string(lineNo) + ": line too long"); havePending = false; continue; }
 
@@ -190,7 +183,7 @@ Result<M3uImportResult> importM3u(std::string_view text, const M3uImportOptions&
                     const std::size_t comma = rest.find(L',');
                     const std::wstring dur = trim(comma == std::wstring::npos ? rest : rest.substr(0, comma));
                     pendingMs = parseDurationMs(dur);
-                    pendingTitle = comma == std::wstring::npos ? std::string() : fsutil::wideToUtf8(trim(rest.substr(comma + 1)));
+                    pendingTitle = comma == std::wstring::npos ? std::string() : fsutil::sanitizeTitle(fsutil::wideToUtf8(trim(rest.substr(comma + 1))));
                     havePending = true;
                 }
                 continue;   // #EXTM3U i inne komentarze
