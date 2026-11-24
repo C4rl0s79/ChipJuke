@@ -2,7 +2,9 @@
 //
 // Wspolne zasady (FM 4-operatorowe):
 //  * key-on = przejscie maski operatorow z 0 na niezerowa; key-off = z niezerowej na 0; zmiana tonu przy
-//    graniu daje nowa nute (portamento), zmiana TL nosnych - tylko glosnosc w wierszu;
+//    graniu daje nowa nute (portamento), zmiana TL nosnych - tylko glosnosc w wierszu; dolaczenie operatorow
+//    do maski przy granej nucie (nowe zbocze key-on operatora = ponowny atak) daje nute o tym samym tonie
+//    (retrigger); powtorzenie tej samej maski nie jest zboczem i nic nie zmienia;
 //  * glosnosc = (127 - min TL operatorow NOSNYCH wg algorytmu) liniowo -> 0x00..0x40;
 //  * instrument = numer unikatowego zestawu rejestrow operatorow + FB/ALG nadawany w kolejnosci pojawienia sie
 //    (od 0, osobno dla kazdej instancji ukladu); TL operatorow nosnych jest POMINIETY w kluczu (to glosnosc),
@@ -72,6 +74,14 @@ protected:
         if (c.tr.on) fhost_.rec.noteOff(chanIndex);
         c.tr.on = false;
     }
+    // Nowe zbocze key-on operatora przy granej nucie (maska zyskala bity): ponowny atak tej samej nuty.
+    void retrigger(FmChan& c, int midi, std::size_t chanIndex)
+    {
+        if (!c.tr.on) return;
+        c.tr.midi = midi;
+        c.tr.vol = c.volume();
+        fhost_.rec.noteOn(chanIndex, midi, c.tr.inst, c.tr.vol);
+    }
     // Zmiana tonu / glosnosci przy granej nucie.
     void refresh(FmChan& c, int midi, std::size_t chanIndex)
     {
@@ -118,6 +128,8 @@ public:
         }
         const unsigned lane = reg & 3u;
         if (lane == 3) return;
+        if (port == 0 && (reg & 0xFC) == 0xA8) { ch3Freq(lane, val, false); return; }   // CH3 special: F-num operatorow
+        if (port == 0 && (reg & 0xFC) == 0xAC) { ch3Freq(lane, val, true); return; }
         const std::size_t ch = static_cast<std::size_t>(port) * 3 + lane;
         if (ch >= nCh_) return;
         FmChan& c = chan_[ch];
@@ -199,7 +211,23 @@ private:
     }
     [[nodiscard]] int midiOf(std::size_t ch) const
     {
-        return midiFromHzClamped(std::ldexp(static_cast<double>(fnum_[ch]) * fmSampleRate(), blk_[ch] - 21));
+        std::uint16_t fn = fnum_[ch];
+        std::uint8_t blk = blk_[ch];
+        // CH3 special/CSM (reg 0x27 bity 6-7): osobne F-number operatorow w 0xA8-0xAE. Ton kanalu = F-number
+        // z 0xA2/0xA6 (operator S4), a gdy ich nie zapisano - pierwszy zapisany F-number operatora.
+        if (ch == 2 && ch3Mode_ != 0 && fn == 0) {
+            for (unsigned i = 0; i < 3; ++i)
+                if (opFnum_[i] != 0) { fn = opFnum_[i]; blk = opBlk_[i]; break; }
+        }
+        return midiFromHzClamped(std::ldexp(static_cast<double>(fn) * fmSampleRate(), blk - 21));
+    }
+    // 0xA8-0xAA = F-number (low) operatora, 0xAC-0xAE = zatrzask (blok + F-number high); zapis low zatwierdza.
+    void ch3Freq(unsigned lane, std::uint8_t val, bool latch)
+    {
+        if (latch) { opLatch_[lane] = val & 0x3F; return; }
+        opFnum_[lane] = static_cast<std::uint16_t>(((opLatch_[lane] & 7u) << 8) | val);
+        opBlk_[lane] = static_cast<std::uint8_t>((opLatch_[lane] >> 3) & 7u);
+        if (ch3Mode_ != 0) refresh(chan_[2], midiOf(2), base_ + 2);
     }
 
     void prescaler(std::uint8_t reg)
@@ -220,12 +248,18 @@ private:
             FmChan& c = chan_[ch];
             const std::uint8_t mask = val >> 4;
             const bool wasOn = c.keyMask != 0;
+            const std::uint8_t oldMask = c.keyMask;
             c.keyMask = mask;
             const bool suppressed = (kind_ == Kind::Ym2612 && ch == 5 && dacEn_);
             if (mask && !wasOn) keyOn(ch, c, midiOf(ch), suppressed, base_ + ch);
             else if (!mask && wasOn) keyOff(c, base_ + ch);
+            else if (mask & ~oldMask) retrigger(c, midiOf(ch), base_ + ch);
             break;
         }
+        case 0x27:
+            ch3Mode_ = val >> 6;
+            if (chan_[2].tr.on) refresh(chan_[2], midiOf(2), base_ + 2);
+            break;
         case 0x2A:
             if (kind_ == Kind::Ym2612) dacData();
             break;
@@ -247,6 +281,10 @@ private:
     std::uint16_t fnum_[6] = {};
     std::uint8_t blk_[6] = {};
     std::uint8_t latch_[6] = {};
+    std::uint8_t ch3Mode_ = 0;                // reg 0x27 bity 6-7: 0 normalny, != 0 CH3 special / CSM
+    std::uint16_t opFnum_[3] = {};            // CH3 special: F-number operatorow (0xA8-0xAA)
+    std::uint8_t opBlk_[3] = {};
+    std::uint8_t opLatch_[3] = {};            // 0xAC-0xAE
     std::unique_ptr<AyCore> ssg_;
     bool dacEn_ = false;
     bool dacStream_ = false;
@@ -267,9 +305,11 @@ public:
             FmChan& c = chan_[ch];
             const std::uint8_t mask = (val >> 3) & 0x0F;
             const bool wasOn = c.keyMask != 0;
+            const std::uint8_t oldMask = c.keyMask;
             c.keyMask = mask;
             if (mask && !wasOn) keyOn(ch, c, midiOf(ch), false, base_ + ch);
             else if (!mask && wasOn) keyOff(c, base_ + ch);
+            else if (mask & ~oldMask) retrigger(c, midiOf(ch), base_ + ch);
             return;
         }
         if (reg < 0x20) return;
