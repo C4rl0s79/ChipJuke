@@ -1,21 +1,28 @@
-# Modul: app - plik wykonywalny vgmplay.
+# Modul: app - AppController (biblioteka, linkowana tez przez testy) + plik wykonywalny vgmplay.
 # Dopisuj zrodla i zaleznosci tylko w tym pliku.
-# Biblioteka-zaslepka: tests/ linkuje vgmplay::app (wykonywalnego nie da sie linkowac).
-add_library(vgmplay_app STATIC app_stub.cpp)
+add_library(vgmplay_app STATIC
+    app_controller.cpp
+)
 add_library(vgmplay::app ALIAS vgmplay_app)
-target_link_libraries(vgmplay_app PUBLIC vgmplay::options)
+target_include_directories(vgmplay_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(vgmplay_app PUBLIC
+    vgmplay::options
+    vgmplay::ui
+    vgmplay::loader
+    vgmplay::engine
+    vgmplay::audio_out)
 
 add_executable(vgmplay
     main.cpp
+    file_dialog.cpp
     app.rc
 )
 target_include_directories(vgmplay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(vgmplay PRIVATE
-    vgmplay::options
-    vgmplay::ui
+    vgmplay::app
     imgui::imgui
     SDL3::SDL3
-    d3d11 dxgi d3dcompiler)
+    d3d11 dxgi d3dcompiler shell32)
 set_property(SOURCE app.rc APPEND PROPERTY OBJECT_DEPENDS
     "${CMAKE_SOURCE_DIR}/assets/fonts/BIZUDGothic-Regular.ttf")
 

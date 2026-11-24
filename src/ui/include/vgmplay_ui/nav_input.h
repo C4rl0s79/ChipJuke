@@ -21,7 +21,7 @@ enum class Panel { Transport, Playlist, Tracker, Count };
 
 enum class Action {
     Up, Down, Left, Right, PageUp, PageDown,
-    Accept, Back, TogglePlay, ToggleLang
+    Accept, Back, TogglePlay, ToggleLang, ToggleGd3Lang, ToggleDiag
 };
 
 struct NavEvent {
@@ -60,7 +60,7 @@ private:
     void releaseAllForGamepad(SDL_JoystickID id);
     void handleStick(SDL_JoystickID id, Uint8 axis, Sint16 value, std::uint64_t now);
 
-    Panel focus_ = Panel::Tracker;
+    Panel focus_ = Panel::Transport;
     bool windowFocused_ = true;
     std::unordered_map<std::uint64_t, Held> held_;
     std::unordered_map<std::uint64_t, int> stick_; // (id,axis) -> -1/0/+1

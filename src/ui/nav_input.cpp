@@ -51,6 +51,8 @@ bool mapKey(SDL_Scancode sc, Action& a)
     case SDL_SCANCODE_ESCAPE: a = Action::Back; return true;
     case SDL_SCANCODE_SPACE: a = Action::TogglePlay; return true;
     case SDL_SCANCODE_F2: a = Action::ToggleLang; return true;
+    case SDL_SCANCODE_F3: a = Action::ToggleGd3Lang; return true;
+    case SDL_SCANCODE_F12: a = Action::ToggleDiag; return true;
     default: return false; // Tab obslugiwany osobno
     }
 }
