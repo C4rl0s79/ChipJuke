@@ -62,6 +62,12 @@ public:
     // Wypelnia `frames` klatek (interleaved L,R) w `out`. Zawsze zapisuje cale wyjscie.
     void consume(float* out, std::uint32_t frames) noexcept;
 
+    // [dodatek E3-sec] Odrzuca cala zawartosc pierscienia i zeruje stan zaniku/narastania.
+    // To operacja KONSUMENTA (zapisuje read_ i stan tylko konsumenta): wolno ja wywolac wylacznie wtedy, gdy
+    // callback audio NIE dziala (urzadzenie zatrzymane/zamkniete), z jednego watku. Producent (silnik) moze
+    // w tym czasie dalej publikowac - dotyka tylko write_, wiec nie ma wyscigu.
+    void discardPending() noexcept;
+
     // ---- dowolny watek ----
     // Wzmocnienie liniowe 0..1 stosowane w callbacku (z lagodnym przejsciem w obrebie bloku).
     void setVolume(float gain) noexcept { volume_.store(gain, std::memory_order_relaxed); }

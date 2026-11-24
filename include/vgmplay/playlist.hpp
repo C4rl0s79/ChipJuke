@@ -34,6 +34,13 @@ struct Playlist {
     std::int64_t cursor = -1;
 };
 
+// [dodatek E3-sec] Pojedyncza aktualizacja pamieci podrecznej wpisu (patrz updateEntryMeta).
+struct EntryMetaUpdate {
+    std::filesystem::path path;
+    std::string title;             // UTF-8; pusty = nie zmieniaj istniejacego tytulu
+    std::uint64_t durationMs = 0;
+};
+
 enum class RepeatMode : std::uint8_t { Off = 0, One, All };
 
 class PlaylistModel {
@@ -59,8 +66,13 @@ public:
     // (we wszystkich playlistach; porownanie sciezek jak przy deduplikacji skanu). Tytul czyszczony
     // jak w loadJson (sterujace/kierunkowe, max 512 B), durationMs przycinane do 24 h. Zwraca liczbe
     // zmienionych wpisow (0 = brak zmian). Nie rusza kursorow ani kolejnosci.
+    // [dodatek E3-sec] PUSTY `title` nie kasuje istniejacego tytulu (aktualizuje tylko durationMs).
+    // Wariant wsadowy: jedno przejscie po wszystkich wpisach, klucz sciezki liczony raz na wpis, mapa
+    // klucz->aktualizacja (O(wpisy + aktualizacje)); wielokrotne aktualizacje tej samej sciezki dzialaja
+    // jak zastosowane po kolei. Pojedyncza wersja jest cienka nakladka na wsadowa.
     std::size_t updateEntryMeta(const std::filesystem::path& path, std::string_view title,
                                 std::uint64_t durationMs);
+    std::size_t updateEntryMeta(std::span<const EntryMetaUpdate> updates);
 
     // --- kursor ---
     [[nodiscard]] Result<void> setCursor(std::size_t list, std::int64_t index);   // -1 dozwolone

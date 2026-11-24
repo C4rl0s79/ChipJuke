@@ -192,6 +192,8 @@ enum class Str {
     HkSwap,
     HkNeedsKbd,
     HkTextKbd,
+    DlgNetworkWarn,     // [E3-sec] potwierdzenie wlaczenia sciezek sieciowych
+    SetAudioNoOutput,   // [E3-sec] brak dzialajacego wyjscia audio (ponawiane)
     Count
 };
 

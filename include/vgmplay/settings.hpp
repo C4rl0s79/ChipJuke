@@ -72,8 +72,10 @@ struct UiSettings {
 // [dodatek E3] Biblioteka / dostep do plikow.
 struct LibrarySettings {
     // Zapamietana zgoda na sciezki UNC (serwer/udzial) w playlistach, M3U i sesji.
-    // Efektywna wartosc = to || flaga --allow-network-paths. fromJson czyta ja PRZED walidacja
-    // session.trackPath (efektywnie: allowNetworkPaths(param) || library.allowNetworkPaths).
+    // Efektywna wartosc = to || flaga --allow-network-paths (liczy aplikacja).
+    // [E3-sec] fromJson NIE uzywa tej flagi z tego samego pliku do odblokowania session.trackPath:
+    // UNC w trackPath honorowane tylko gdy parametr fromJson/loadSettings `allowNetworkPaths` == true
+    // (flaga --allow-network-paths lub efektywna wartosc przekazana przez aplikacje).
     // URL i przestrzen urzadzen zawsze odrzucane.
     bool allowNetworkPaths = false;
 };

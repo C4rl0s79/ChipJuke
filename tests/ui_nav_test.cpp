@@ -357,8 +357,29 @@ TEST_SUITE("ui/nav")
         CHECK(f.settings.audio.device == "id-2");
         for (int i = 0; i < 8; ++i) f.key(Action::Down);
         CHECK(f.screen.settingsSelection() == 8);
+        // [E3-sec] WLACZENIE tylko przez Confirm + dialog potwierdzenia; strzalki nie wlaczaja.
+        f.key(Action::Right);
+        f.key(Action::Left);
+        CHECK_FALSE(f.settings.library.allowNetworkPaths);
+        CHECK(f.screen.dialog() == PlayerScreen::DlgKind::None);
+        f.key(Action::Confirm);
+        CHECK(f.screen.dialog() == PlayerScreen::DlgKind::NetworkConfirm);
+        CHECK_FALSE(f.settings.library.allowNetworkPaths);
+        f.key(Action::Confirm);                                    // domyslnie "Nie": zamyka bez zmiany
+        CHECK(f.screen.dialog() == PlayerScreen::DlgKind::None);
+        CHECK_FALSE(f.settings.library.allowNetworkPaths);
+        CHECK(f.screen.settingsOpen());
+        f.key(Action::Confirm);
+        f.key(Action::Back);                                       // Esc/B anuluje
+        CHECK_FALSE(f.settings.library.allowNetworkPaths);
+        f.key(Action::Confirm);
+        f.key(Action::Right);                                      // "Tak"
         f.key(Action::Confirm);
         CHECK(f.settings.library.allowNetworkPaths);
+        CHECK(f.screen.dialog() == PlayerScreen::DlgKind::None);
+        f.key(Action::Left);                                       // wylaczenie bez potwierdzenia
+        CHECK_FALSE(f.settings.library.allowNetworkPaths);
+        CHECK(f.screen.dialog() == PlayerScreen::DlgKind::None);
         f.key(Action::Down);
         const bool hints = f.settings.ui.showButtonHints;
         f.key(Action::Confirm);

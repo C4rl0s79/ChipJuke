@@ -205,6 +205,7 @@ private:
     void markPlaylistsDirty();
     void applyRuntimeSettings(const settings::Settings& old, bool initial);
     void switchAudioDevice();                                  // [E3] ponowne otwarcie wyjscia dla settings_.audio.device
+    [[nodiscard]] std::optional<playlist::EntryMetaUpdate> entryMetaUpdate(const std::filesystem::path& path) const;
     void syncEntryMeta(const std::filesystem::path& path);     // [E3] tytul/dlugosc do wpisow playlist (updateEntryMeta)
     void loadCursor(bool autoplay);
     void onTrackEnded();
@@ -242,6 +243,8 @@ private:
     std::vector<ui::AudioDeviceItem> audioDevices_;
     bool audioDevicesLoaded_ = false;
     bool audioFellBack_ = false;
+    bool audioNoOutput_ = false;                                // [E3-sec] brak dzialajacego wyjscia; ponawiane
+    std::chrono::steady_clock::time_point audioRetryAt_{};
     audio_out::AudioOut audio_{pcm_};
     std::unique_ptr<engine::Engine> engine_;
     std::thread engineThread_;

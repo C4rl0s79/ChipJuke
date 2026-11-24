@@ -40,6 +40,7 @@ bool readBindingNames(const json& jb, input::Binding& b)
     const auto a = input::actionFromName(ja->get_ref<const std::string&>());
     const auto k = input::sourceKindFromName(js->get_ref<const std::string&>());
     if (!a || !k || *a == input::Action::None) return false;
+    if (!input::actionRebindable(*a)) return false;   // [E3-sec] akcje zablokowane (np. wyjscie/menu) nie sa przypisywalne z pliku
     b.action = *a;
     b.source.kind = *k;
     return true;
@@ -209,7 +210,9 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
             bool b = false;
             if (getBool(c, *lib, "allowNetworkPaths", b)) s.library.allowNetworkPaths = b;
         }
-        const bool effectiveAllowNetwork = allowNetworkPaths || s.library.allowNetworkPaths;
+        // [E3-sec] UNC w session.trackPath honorowane TYLKO przez parametr (flaga lub efektywna wartosc z aplikacji);
+        // library.allowNetworkPaths z tego samego pliku nie moze sam odblokowac sciezki.
+        const bool effectiveAllowNetwork = allowNetworkPaths;
         std::uint64_t u = 0;
         float f = 0;
         std::string str;
@@ -286,13 +289,17 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
                         std::uint64_t unused = 0;
                         (void)unused;
                         auto code = jb.is_object() ? jb.find("code") : jb.end();
-                        if (!jb.is_object() || code == jb.end() || !code->is_number_integer() || code->get<std::int64_t>() < INT32_MIN ||
-                            code->get<std::int64_t>() > INT32_MAX ||
-                            !readBindingNames(jb, b)) {
+                        // [E3-sec] unsigned > INT32_MAX odrzucamy PRZED rzutowaniem na int64 (bez zawijania).
+                        const bool codeOk = jb.is_object() && code != jb.end() && code->is_number_integer() &&
+                                            (code->is_number_unsigned() ? code->get<std::uint64_t>() <= static_cast<std::uint64_t>(INT32_MAX)
+                                                                        : (code->get<std::int64_t>() >= INT32_MIN &&
+                                                                           code->get<std::int64_t>() <= INT32_MAX));
+                        if (!codeOk || !readBindingNames(jb, b)) {
                             c.warn("invalid binding skipped");
                             continue;
                         }
-                        b.source.code = static_cast<std::int32_t>(code->get<std::int64_t>());
+                        b.source.code = static_cast<std::int32_t>(code->is_number_unsigned() ? static_cast<std::int64_t>(code->get<std::uint64_t>())
+                                                                                              : code->get<std::int64_t>());
                         s.input.bindings.push_back(b);
                     }
                 }

@@ -369,6 +369,7 @@ void AppController::pump()
     engine::EngineEvent ev;
     while (engine_->pollEvent(ev)) handleEvent(ev);
 
+    if (audioNoOutput_ && std::chrono::steady_clock::now() >= audioRetryAt_) switchAudioDevice();   // [E3-sec]
     const audio_out::DeviceEvents de = audio_.pollEvents();
     if (de.lost) {
         const auto r = audio_.reopen();
@@ -405,6 +406,7 @@ void AppController::pump()
     view_.audioDevices = audioDevices_;
     view_.audioDevicesLoaded = audioDevicesLoaded_;
     view_.audioFellBackToDefault = audioFellBack_;
+    view_.audioNoOutput = audioNoOutput_;
     view_.repeat = repeat_;
     view_.playlistsLoading = persist_ && !playlistsReady_;
     view_.scan = {};
