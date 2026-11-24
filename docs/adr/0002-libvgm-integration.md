@@ -222,6 +222,44 @@ niski w kodzie, wysoki w CPU i zlozonosci synchronizacji.
 4. W `ScopeBlock` i `ChannelLayout` (pkt 10) rezerwujemy tablice strumieni z identyfikatorem `(deviceIdx,
    channelIdx)`; `channelIdx = 0xFFFF` = suma ukladu; brak strumienia = flaga niedostepnosci.
 
+**Decyzja E1.5 (2026-11-24, uzytkownik): per kanal = wariant (c), bez lat libvgm.** Zastepuje punkty 1 i 3
+powyzszej rekomendacji w czesci "per kanal" (oscyloskopy FT2 i VU per kanal wchodza). Wlaczane komenda
+`cmd::SetChannelScopes{true}`; wylaczone = zero kosztu (kopie zniszczone, `extraStreamCount = 0`).
+
+- **Implementacja:** `src/engine/channel_scopes.cpp` (`ChannelScopeBank`). Dla kazdego rozdzielalnego kanalu
+  osobny `IDecoder` (ten sam bufor, ta sama `DecoderConfig`, ten sam rdzen), maska MUTE = wszystko poza kanalem,
+  a WSZYSTKIE INNE urzadzenia sa "zamrozone" (`muteOpts.disable` - `Render` pomija `Resmpl_Execute`, zapisy
+  rejestrow nadal przyjmowane; `vgmplayer.cpp:2059-2070`). Kopia kosztuje wiec emulacje JEDNEGO ukladu, nie calego
+  utworu. Zamrozenie dotyczy tylko kopii (glowny dekoder nigdy - pkt 4a). Zastrzezenia (i),(ii) z opisu wariantu (c)
+  nie wystepuja: kopia to caly odtwarzacz (zapisy DAC-stream tez), a seek nie renderuje (tylko zapisy), wiec po
+  seeku kopia i glowny dekoder maja IDENTYCZNY stan.
+- **Synchronizacja:** wszystko na watku silnika. Load / reconfigure / Seek / Stop: `invalidate()` i zaraz
+  `syncStep` (budzet 100 ms, przed ponownym wlaczeniem audio / pierwszym blokiem): kopia robi `seek(renderPos)`
+  tym samym kodem co glowny dekoder (przesuniecie pozycji tolerowane do 8 klatek). Kazdy blok: render glowny ->
+  te same `n` klatek w kazdej kopii (takze ogon po Pause i bloki bez scope). Rozjazd (inna liczba klatek /
+  pozycja) = ponowna synchronizacja; po 4 rozjazdach kopia uznana za niedostepna. Wlaczenie w polowie utworu:
+  kopie tworzone stopniowo (3 ms na iteracje petli) i przewijane do pozycji; startuja ze stanu "po seeku", wiec
+  FAZY oscylatorow moga sie roznic od mastera (suma != master do nastepnego key-on) - ograniczenie przyjete
+  (renderowanie od zera kosztowaloby sekundy CPU). Glowny miks nie pochodzi z kopii (golden bez zmian).
+  MUTE/SOLO dotycza tylko mastera - strumien wyciszonego kanalu nadal ma przebieg (jak FT2).
+- **Czestotliwosc: ta sama co master (bez decymacji).** Pomiar: emulacja idzie z natywna czestotliwoscia ukladu,
+  a nizsze wyjscie oszczedza tylko resampler: master @24 kHz 55,6 ms vs 62,3 ms @48 kHz (20 s utworu), -11%. To nie
+  uzasadnia dryfu faz, przeliczania pozycji i interpolacji. `extra[i][j]` lezy w tej samej siatce klatek co
+  `masterL/R` (klatka `startFrame + j`), wartosc = (L+R)/2 kopii.
+- **Wydajnosc (release, MSVC x64, jeden watek, render offline 20 s @48 kHz):** Dark Seal `05 ... (Stage 1, 3).vgz`
+  (YM2151 8 kanalow + OKIM6295 4 = 12 kopii): master 62 ms (0,31% CPU), master + 12 kopii 351 ms (1,76% CPU),
+  utworzenie 12 kopii 5,8 ms. Na zywo (Engine + PcmRing + odbior scope, caly utwor ~6,4 min, 8x czas
+  rzeczywisty): underruns = 0, master identyczny z renderem offline (diff_rms = 0). Osobny watek roboczy
+  niepotrzebny (a libvgm nie jest udokumentowany jako bezpieczny dla wielu watkow). Korpus tests/data/valid: suma
+  strumieni == master bit w bit (blad 0) dla SN76489, AY8910, YM2612 (+DAC), YM2151, YM2413, YM3812, YMF262 i
+  dual-chip - mieszanie jest liniowe calkowitoliczbowe.
+- **Limity:** `kMaxExtraStreams` 16 -> 32 (ScopeBlock ~68 KiB, pierscien ~2,1 MiB; semantyka bez zmian). Strumienie
+  wybierane po kolei (rozdzielalne najpierw); ponad limit - brak strumienia. Budzet pamieci kopii 384 MiB
+  (~2 x rozmiar rozpakowanego utworu + 2 MiB na kopie); ponad budzet - mniej strumieni.
+- **Kanaly nierozdzielalne:** rdzenie bez `SetMuteMask` (sprawdzane w czasie dzialania:
+  `IDecoder::channelIsolatable`) dostaja wpis `flags == 0` (jesli jest miejsce). W korpusie testowym wszystkie
+  kanaly sa rozdzielalne; pelnej listy rdzeni bez `SetMuteMask` nie zestawiano.
+
 ## 6. Hook zapisow rejestrow
 
 libvgm NIE ma callbacku ani logu komend. Callbacki `PlayerBase`: zdarzenia START/STOP/LOOP/END

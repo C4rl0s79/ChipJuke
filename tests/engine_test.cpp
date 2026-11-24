@@ -559,6 +559,9 @@ struct Rig {
     double owed = 0;
     std::chrono::steady_clock::time_point last = std::chrono::steady_clock::now();
     std::vector<EngineEvent> events;
+    bool drainScopes = false;                  // udaje UI: odbiera bloki scope (E1.5)
+    std::uint64_t scopeBlocks = 0, scopeBlocksWithExtra = 0;
+    std::unique_ptr<ScopeBlock> scopeTmp = std::make_unique<ScopeBlock>();
 
     explicit Rig(std::uint32_t sr = 48000, double speedFactor = 4.0, std::uint32_t loops = 2,
                  std::uint32_t fadeMs = 1000)
@@ -610,6 +613,10 @@ struct Rig {
                 pcm.consume(buf.data(), 256);
                 if (recording) rec.insert(rec.end(), buf.begin(), buf.begin() + 512);
                 owed -= 256;
+            }
+            while (drainScopes && eng->popScope(*scopeTmp)) {
+                ++scopeBlocks;
+                if (scopeTmp->extraStreamCount > 0) ++scopeBlocksWithExtra;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -882,6 +889,14 @@ TEST_SUITE("engine/live-compare")
         // na zywo (8x czas rzeczywisty)
         Rig rig(48000, 8.0, 2, 1000);
         rig.recording = true;
+        // VGMPLAY_LIVE_SCOPES=1: z wlaczonymi kanalami (E1.5) - mix master musi byc ten sam, underruns = 0
+        bool liveScopes = false;
+#if defined(_WIN32)
+        { char* v = nullptr; size_t len = 0; if (_dupenv_s(&v, &len, "VGMPLAY_LIVE_SCOPES") == 0 && v) { liveScopes = v[0] == '1'; } std::free(v); }
+#else
+        if (const char* v = std::getenv("VGMPLAY_LIVE_SCOPES")) liveScopes = v[0] == '1';
+#endif
+        if (liveScopes) { rig.drainScopes = true; rig.post(cmd::SetChannelScopes{true}); }
         rig.post(cmd::Load{track, true});
         REQUIRE(rig.until([&] { return rig.count<evt::TrackEnded>() > 0; }, 600000));
         rig.run(300);
@@ -894,7 +909,8 @@ TEST_SUITE("engine/live-compare")
         for (size_t i = 0; i < n; ++i) { const double x = off[a0 + i], y = rig.rec[b0 + i]; s += x * x; d += (x - y) * (x - y); if (std::fabs(x - y) > maxd) { maxd = std::fabs(x - y); worst = i; } }
         MESSAGE("offline frames ", off.size() / 2, " live frames ", rig.rec.size() / 2, " offset ", (long long)b0 / 2 - (long long)a0 / 2,
                 " rms ", std::sqrt(s / n), " diff_rms ", std::sqrt(d / n), " max_diff ", maxd, " at frame ", worst / 2,
-                " underruns ", rig.pcm.underruns());
+                " underruns ", rig.pcm.underruns(), " scopes ", liveScopes ? "ON" : "off", " scope blocks ", rig.scopeBlocks,
+                " with extra ", rig.scopeBlocksWithExtra);
         CHECK(std::sqrt(d / n) < 0.01 * std::sqrt(s / n) + 1e-6);
     }
 }

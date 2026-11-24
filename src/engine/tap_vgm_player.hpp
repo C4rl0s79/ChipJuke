@@ -21,6 +21,21 @@ public:
     {
         return i < _devices.size() ? _devices[i].vgmChipType : 0xFFu;
     }
+    // E1.5: czy rdzen urzadzenia (chipType, chipID) i jego ukladu polaczonego ma SetMuteMask.
+    // Bit 0 = uklad glowny, bit 1 = polaczony. 0 = nie znaleziono / brak.
+    [[nodiscard]] unsigned muteSupport(unsigned chipType, unsigned chipId) const noexcept
+    {
+        for (const CHIP_DEVICE& d : _devices) {
+            if (d.chipType != chipType || d.chipID != chipId) continue;
+            unsigned m = 0, bit = 1;
+            for (const VGM_BASEDEV* b = &d.base; b != nullptr && bit <= 2; b = b->linkDev, bit <<= 1)
+                if (b->defInf.dataPtr != nullptr && b->defInf.devDef != nullptr &&
+                    b->defInf.devDef->SetMuteMask != nullptr)
+                    m |= bit;
+            return m;
+        }
+        return 0;
+    }
     [[nodiscard]] const char* deviceName(std::size_t i) const noexcept
     {
         return i < _devNames.size() ? _devNames[i].c_str() : "";
