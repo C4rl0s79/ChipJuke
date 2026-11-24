@@ -48,6 +48,13 @@ struct ScanStatus {
     std::uint64_t files = 0, dirs = 0;
 };
 
+// Urzadzenie odtwarzania (E3): id jak audio_out::DeviceEntry::id.
+struct AudioDeviceItem {
+    std::string id;
+    std::string name;
+    bool isDefault = false;
+};
+
 struct PlayerView {
     engine::TransportSnapshot transport;
     std::uint32_t sampleRate = 48000;   // czestotliwosc silnika (klatki -> sekundy)
@@ -85,7 +92,11 @@ struct PlayerView {
     playlist::RepeatMode repeat = playlist::RepeatMode::Off;
     bool playlistsLoading = false;       // playlists.json jeszcze sie wczytuje (worker)
     ScanStatus scan;
-    bool allowNetworkPaths = false;      // sciezki UNC w playlistach/cache (opcja startowa)
+    bool allowNetworkPaths = false;      // sciezki UNC: EFEKTYWNIE (ustawienie || --allow-network-paths)
+    bool networkForcedByFlag = false;    // [E3] --allow-network-paths wlaczone z wiersza polecen
+    std::vector<AudioDeviceItem> audioDevices;   // [E3] lista z ostatniego refreshAudioDevices()
+    bool audioDevicesLoaded = false;
+    bool audioFellBackToDefault = false; // [E3] zadanego urzadzenia nie znaleziono -> otwarto domyslne
     std::optional<Notice> notice;
 
     [[nodiscard]] bool hasTrack() const { return track && info; }
@@ -138,6 +149,7 @@ public:
     virtual void applySettings(const settings::Settings&) {}
     virtual void downloadEntry(std::size_t) {}       // "pobierz mimo to": wpis w chmurze (czyta plik)
     virtual void dismissNotice() {}                  // takze potwierdzenie (needsAck)
+    virtual void refreshAudioDevices() {}            // [E3] odswieza PlayerView::audioDevices (blokuje do ~100 ms)
 };
 
 } // namespace vgmplay::ui

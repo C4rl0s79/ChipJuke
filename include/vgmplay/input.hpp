@@ -26,7 +26,9 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <span>
+#include <string_view>
 #include <vector>
 
 #include "vgmplay/core.hpp"
@@ -51,11 +53,22 @@ enum class Action : std::uint8_t {
     ToggleMute, ToggleSolo,
     // inne
     OpenFile, Quit,
+    // [dodatek E3] akcje, ktorych UI juz uzywa (kolejnosc = wartosci; dopisywac tylko tutaj).
+    ToggleLang, ToggleGd3Lang, ToggleDiag,
+    UnmuteAll, ClearSolo, ResetMix,
+    PatternFaster, PatternSlower,
+    Delete, MoveUp, MoveDown,          // Delete: usun wpis; MoveUp/MoveDown: przenies wpis (Ctrl+Gora/Dol)
+    Shuffle, ToggleSettings,
+    NewPlaylist, RenamePlaylist, DeletePlaylist,
+    MuteChannel, SoloChannel,          // argument = numer kanalu; obslugiwane lokalnie (klawisze 1..9,0)
     Count_
 };
 
 enum class ScreenId : std::uint8_t {
-    Player = 0, Playlists, Library, Settings, FileBrowser, About, Count_
+    Player = 0, Playlists, Library, Settings, FileBrowser, About,
+    // [dodatek E3] kontekst panelu i okien nakladkowych w ekranie glownym.
+    Tracker, Info, Dialog, Bindings,
+    Count_
 };
 
 enum class SourceKind : std::uint8_t { Keyboard = 0, GamepadButton, GamepadAxisPositive, GamepadAxisNegative };
@@ -91,6 +104,20 @@ struct ActionEvent {
 
 [[nodiscard]] bool isDirectional(Action a) noexcept;   // Up/Down/Left/Right/PageUp/PageDown
 
+// [dodatek E3] Stabilne nazwy do serializacji (JSON: "action": "play_pause", "source": {"kind": "gamepad_button", "code": 0}).
+// Nazwy sa czescia formatu pliku - nie zmieniac. Nieznana nazwa -> nullopt (wiazanie pomijane z ostrzezeniem).
+// Action::None i Count_ nie maja nazwy (actionName zwraca ""); MuteChannel/SoloChannel sa lokalne i nie
+// podlegaja przypisaniom (actionRebindable() == false).
+[[nodiscard]] std::string_view actionName(Action a) noexcept;
+[[nodiscard]] std::optional<Action> actionFromName(std::string_view name) noexcept;
+[[nodiscard]] std::string_view sourceKindName(SourceKind k) noexcept;
+[[nodiscard]] std::optional<SourceKind> sourceKindFromName(std::string_view name) noexcept;
+[[nodiscard]] bool actionRebindable(Action a) noexcept;
+
+// [dodatek E3] Domyslne wiazania (klawiatura + pad). Kody klawiszy = SDL_Scancode, pada = SDL_GamepadButton /
+// SDL_GamepadAxis (SDL3); zgodnosc pilnuje test.
+[[nodiscard]] std::vector<Binding> defaultBindings();
+
 // Usuwa z kolejki tylko Pressed i Repeat (zasada 3).
 void purgePresses(std::vector<ActionEvent>& queue);
 
@@ -114,6 +141,9 @@ public:
     void tick(std::uint64_t nowMs, std::vector<ActionEvent>& out);
     // Zasada 5.
     void onFocusLost(std::uint64_t nowMs, std::vector<ActionEvent>& out);
+
+    // [dodatek E3] true, gdy jakis przycisk jest trzymany (petla UI nie usypia, dopoki trwa repeat/zatrzask).
+    [[nodiscard]] bool anyHeld() const noexcept;
 
 private:
     struct Impl;

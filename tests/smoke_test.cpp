@@ -5,7 +5,6 @@
 namespace vgmplay {
 namespace core { int module_stub() noexcept; }
 namespace viz { int module_stub() noexcept; }
-namespace input { int module_stub() noexcept; }
 } // namespace vgmplay
 
 TEST_CASE("zaslepki modulow linkuja sie poprawnie")
@@ -13,5 +12,4 @@ TEST_CASE("zaslepki modulow linkuja sie poprawnie")
     using namespace vgmplay;
     CHECK(core::module_stub() == 0);
     CHECK(viz::module_stub() == 0);
-    CHECK(input::module_stub() == 0);
 }

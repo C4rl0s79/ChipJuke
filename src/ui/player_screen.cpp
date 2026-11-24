@@ -57,6 +57,13 @@ bool clickedInside()
            ImGui::IsWindowHovered(ImGuiHoveredFlags_None);
 }
 
+void drawFocusRing(ImDrawList* dl, ImVec2 a, ImVec2 b, float dpi)
+{
+    const Palette& p = palette();
+    dl->AddRect(ImVec2(a.x - dpi, a.y - dpi), ImVec2(b.x + dpi, b.y + dpi), col32(p.accent), 0.0f, 0, 2.0f * dpi);
+    dl->AddRect(a, b, col32(p.focusBorder), 0.0f, 0, dpi);
+}
+
 // Tekst przyciety do prostokata [x0, x1).
 void clippedText(ImDrawList* dl, float x0, float x1, float y, ImU32 color, const char* text)
 {
@@ -69,7 +76,7 @@ void clippedText(ImDrawList* dl, float x0, float x1, float y, ImU32 color, const
 
 
 
-bool ButtonFlow::button(const std::string& label, bool enabled, bool active, const char* tip)
+bool ButtonFlow::button(const std::string& label, bool enabled, bool active, const char* tip, bool ring)
 {
     const Palette& p = palette();
     const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
@@ -84,6 +91,7 @@ bool ButtonFlow::button(const std::string& label, bool enabled, bool active, con
                 col32(!enabled ? withAlpha(p.textDim, 0.5f) : (active ? p.accent : (hover ? p.accent : p.text))),
                 label.c_str());
     dl->PopClipRect();
+    if (ring) drawFocusRing(dl, a, b, dpi);
     if (hover && tip) ImGui::SetTooltip("%s", tip);
     cx = b.x + 4.0f * dpi;
     return hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
@@ -147,17 +155,61 @@ bool PlayerScreen::wantsAnimation(const PlayerView& v) const
            v.loading || v.scan.active || v.playlistsLoading || dragging_ || seekDrag_ || volumeDrag_ || seekHold_ > 0 || vu_.active();
 }
 
+void PlayerScreen::applyTransport(const NavEvent& ev, const PlayerView& view, PlayerActions& actions)
+{
+    FocusGrid& g = tGrid_;   // wiersz 0: przyciski, 1: pasek pozycji, 2: glosnosc
+    switch (ev.action) {
+    case Action::Up: g.moveRow(-1); break;
+    case Action::Down: g.moveRow(1); break;
+    case Action::Left:
+    case Action::Right: {
+        const int d = ev.action == Action::Left ? -1 : 1;
+        if (g.row == 0) g.moveCol(d);
+        else if (g.row == 1) { actions.seekBySeconds(d * kSeekStepSeconds); seekHold_ = kSeekHoldFrames; }
+        else actions.setVolume(std::clamp(view.volume + static_cast<float>(d) * kVolumeStep, 0.0f, 1.0f));
+        break;
+    }
+    case Action::Confirm:
+        if (ev.repeat) break;
+        if (g.row == 0) activate_ = true;
+        else if (g.row == 1) actions.togglePlay();
+        break;
+    case Action::Menu:
+        if (!ev.repeat) openSettings();
+        break;
+    default: break;
+    }
+}
+
+void PlayerScreen::applyToolbar(const NavEvent& ev, const PlayerView&, PlayerActions&)
+{
+    switch (ev.action) {
+    case Action::Left: kGrid_.moveCol(-1); break;
+    case Action::Right: kGrid_.moveCol(1); break;
+    case Action::Down: kGrid_.moveRow(1); break;
+    case Action::Confirm:
+        if (!ev.repeat) activate_ = true;
+        break;
+    default: break;
+    }
+}
+
 void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view, PlayerActions& actions)
 {
     if (modalOpen()) { applyModal(ev, view, actions); return; }
     switch (ev.action) {
-    case Action::TogglePlay: actions.togglePlay(); return;
+    case Action::PlayPause: if (!ev.repeat) actions.togglePlay(); return;
+    case Action::Stop: if (!ev.repeat) actions.stop(); return;
+    case Action::SeekBack: actions.seekBySeconds(-kSeekStepSeconds); seekHold_ = kSeekHoldFrames; return;
+    case Action::SeekForward: actions.seekBySeconds(kSeekStepSeconds); seekHold_ = kSeekHoldFrames; return;
+    case Action::VolumeUp: actions.setVolume(std::clamp(view.volume + kVolumeStep, 0.0f, 1.0f)); return;
+    case Action::VolumeDown: actions.setVolume(std::clamp(view.volume - kVolumeStep, 0.0f, 1.0f)); return;
     case Action::ToggleLang: toggleLanguage(view, actions); return;
     case Action::ToggleGd3Lang: toggleGd3(view, actions); return;
-    case Action::Prev: if (!ev.repeat) actions.playPrevious(); return;
-    case Action::Next: if (!ev.repeat) actions.playNext(); return;
+    case Action::PrevTrack: if (!ev.repeat) actions.playPrevious(); return;
+    case Action::NextTrack: if (!ev.repeat) actions.playNext(); return;
     case Action::Shuffle: if (!ev.repeat) actions.shufflePlaylist(); return;
-    case Action::ToggleSettings: openSettings(); return;
+    case Action::ToggleSettings: if (!ev.repeat) openSettings(); return;
     case Action::NewPlaylist:
     case Action::RenamePlaylist:
     case Action::DeletePlaylist:
@@ -176,20 +228,22 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
             }
         }
         return;
-    case Action::ToggleRepeat:
+    case Action::ToggleLoop:
         if (!ev.repeat) {
             using playlist::RepeatMode;
             actions.setRepeat(view.repeat == RepeatMode::Off ? RepeatMode::All
                               : view.repeat == RepeatMode::All ? RepeatMode::One : RepeatMode::Off);
         }
         return;
-    case Action::ToggleDiag: diag_ = !diag_; return;
-    case Action::ToggleChannelsView: cycleStrip(); return;
+    case Action::ToggleDiag: if (!ev.repeat) diag_ = !diag_; return;
+    case Action::ToggleTrackerView: if (!ev.repeat) cycleStrip(view, actions); return;
     case Action::PatternFaster: actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, 1)); return;
     case Action::PatternSlower: actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, -1)); return;
     case Action::Back:
         if (view.error || !view.audioError.empty()) { actions.dismissError(); return; }
-        if (focus == Panel::Transport && !ev.repeat) actions.stop();
+        if (ev.repeat) return;
+        if (view.notice) { actions.dismissNotice(); return; }
+        if (focus == Panel::Transport) actions.stop();
         return;
     default: break;
     }
@@ -197,28 +251,32 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
     const int channels = channelCount(view);
     switch (focus) {
     case Panel::Transport:
-        if (ev.action == Action::Left) { actions.seekBySeconds(-kSeekStepSeconds); seekHold_ = kSeekHoldFrames; }
-        else if (ev.action == Action::Right) { actions.seekBySeconds(kSeekStepSeconds); seekHold_ = kSeekHoldFrames; }
-        else if (ev.action == Action::Up)
-            actions.setVolume(std::clamp(view.volume + kVolumeStep, 0.0f, 1.0f));
-        else if (ev.action == Action::Down)
-            actions.setVolume(std::clamp(view.volume - kVolumeStep, 0.0f, 1.0f));
-        else if (ev.action == Action::Accept && !ev.repeat) actions.togglePlay();
-        else if (ev.action == Action::ResetMix && !ev.repeat) openSettings();   // pad: Y
+        applyTransport(ev, view, actions);
         break;
     case Panel::Playlist:
         applyPlaylist(ev, view, actions);
         break;
+    case Panel::Info:
+        if (ev.action == Action::Up) infoScroll_ = std::max(0, infoScroll_ - 1);
+        else if (ev.action == Action::Down) ++infoScroll_;   // ogranicza rysowanie
+        else if (ev.action == Action::PageUp) infoScroll_ = std::max(0, infoScroll_ - 5);
+        else if (ev.action == Action::PageDown) infoScroll_ += 5;
+        else if (ev.action == Action::Confirm && !ev.repeat) toggleGd3(view, actions);
+        break;
     case Panel::Tracker:
-        // Wzorzec przewija sie razem z pozycja slyszana (seek: panel Odtwarzanie); Gora/Dol bez efektu,
+        if (kGrid_.row == 0) { applyToolbar(ev, view, actions); break; }
+        // Wzorzec przewija sie razem z pozycja slyszana (seek: panel Odtwarzanie); Gora wraca do paska narzedzi,
         // kursor kanalu: Lewo/Prawo.
-        if (ev.action == Action::Left) chan_ = std::max(0, chan_ - 1);
+        if (ev.action == Action::Up) { if (!ev.repeat) kGrid_.moveRow(-1); }
+        else if (ev.action == Action::Left) chan_ = std::max(0, chan_ - 1);
         else if (ev.action == Action::Right) chan_ = std::min(std::max(0, channels - 1), chan_ + 1);
-        else if (ev.action == Action::Accept || ev.action == Action::ToggleMute) actions.toggleChannelMute(chan_);
-        else if (ev.action == Action::ToggleSolo) actions.toggleChannelSolo(chan_);
+        else if (ev.action == Action::Confirm || ev.action == Action::ToggleMute) { if (!ev.repeat) actions.toggleChannelMute(chan_); }
+        else if (ev.action == Action::ToggleSolo) { if (!ev.repeat) actions.toggleChannelSolo(chan_); }
         else if (ev.action == Action::UnmuteAll) actions.unmuteAllChannels();
         else if (ev.action == Action::ClearSolo) actions.clearSolo();
-        else if (ev.action == Action::ResetMix) { actions.unmuteAllChannels(); actions.clearSolo(); }
+        else if (ev.action == Action::ResetMix || ev.action == Action::Menu) {
+            if (!ev.repeat) { actions.unmuteAllChannels(); actions.clearSolo(); }
+        }
         else if (ev.action == Action::MuteChannel || ev.action == Action::SoloChannel) {
             if (ev.arg >= 0 && ev.arg < channels) {
                 chan_ = ev.arg;
@@ -231,12 +289,41 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
     }
 }
 
+void PlayerScreen::cycleStrip(const PlayerView& view, PlayerActions& actions)
+{
+    cycleStrip();
+    if (!view.settings) return;
+    settings::Settings s = *view.settings;
+    s.ui.scopeBar = static_cast<settings::ScopeBar>(strip_);
+    actions.applySettings(s);   // zapamietanie wysokosci paska
+}
+
 void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& actions,
                          const FrameInfo& info)
 {
-    if (view.settings) setLang(view.settings->ui.language == i18n::Language::Pl ? Lang::Pl : Lang::En);
-    for (const NavEvent& ev : nav.events()) apply(ev, nav.focus(), view, actions);
+    nav_ = &nav;
+    if (view.settings) {
+        setLang(view.settings->ui.language == i18n::Language::Pl ? Lang::Pl : Lang::En);
+        const settings::InputSettings& in = view.settings->input;
+        if (!bindSynced_ || in.bindings != lastBind_ || in.repeatDelayMs != lastRepeatDelay_ || in.repeatRateMs != lastRepeatRate_) {
+            bindSynced_ = true;
+            lastBind_ = in.bindings;
+            lastRepeatDelay_ = in.repeatDelayMs;
+            lastRepeatRate_ = in.repeatRateMs;
+            effBind_ = input::effectiveBindings(lastBind_);
+            nav.setBindings(lastBind_);
+            nav.setRepeat(in.repeatDelayMs, in.repeatRateMs);
+        }
+    }
+    pollCapture(nav, view, actions);
+    focusKbdOnly_ = false;
+    for (const NavEvent& ev : nav.events()) {
+        const bool modalBefore = modalOpen();
+        apply(ev, nav.focus(), view, actions);
+        if (modalBefore != modalOpen()) break;   // nacisniecia z kolejki nie naleza do nowego okna (purgePresses)
+    }
     nav.events().clear();
+    if (needDeviceRefresh_ && settingsOpen_) { actions.refreshAudioDevices(); needDeviceRefresh_ = false; }
     if (seekHold_ > 0) --seekHold_;
 
     const ImGuiIO& io = ImGui::GetIO();
@@ -250,7 +337,10 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
     const float transportH = lh * 3.4f;
     const float statusH = lh * 1.5f;
     const float bodyY = transportH + 2 * gap;
-    const float bodyH = H - bodyY - statusH - 2 * gap;
+    const bool hints = nav.lastInputWasPad() || (view.settings && view.settings->ui.showButtonHints);
+    const float hintH = hints ? lh * 1.7f : 0.0f;
+    const float hintSpace = hints ? hintH + gap : 0.0f;
+    const float bodyH = H - bodyY - statusH - 2 * gap - hintSpace;
     const float leftW = std::clamp(W * 0.32f, lh * 14.0f, lh * 30.0f);
     const float rightX = leftW + 2 * gap;
     const float rightW = W - rightX - gap;
@@ -280,10 +370,10 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
     }
     drawTransport(nav, view, actions, gap, gap, W - 2 * gap, transportH);
     drawPlaylist(nav, view, actions, gap, bodyY, leftW, playlistH);
-    drawInfo(view, actions, gap, bodyY + playlistH + gap, leftW, infoH);
+    drawInfo(nav, view, actions, gap, bodyY + playlistH + gap, leftW, infoH);
     drawTracker(nav, view, actions, rightX, bodyY, rightW, trackerH);
     drawScope(view, rightX, bodyY + trackerH + gap, rightW, scopeH);
-    drawStatus(view, actions, gap, H - statusH - gap, W - 2 * gap, statusH);
+    drawStatus(view, actions, gap, H - statusH - gap - hintSpace, W - 2 * gap, statusH);
     if (diag_) drawDiagnostics(view, info, rightX + rightW - std::min(rightW, lh * 30.0f), bodyY,
                                std::min(rightW, lh * 30.0f));
     if (modal) {
@@ -294,7 +384,13 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
         mio.MousePos = savedPos;
         mio.MouseWheel = savedWheel;
     }
-    drawModal(view, actions, W, H);
+    drawModal(nav, view, actions, W, H);
+    if (hints) drawHints(nav, view, gap, H - hintH - gap, W - 2 * gap, hintH);
+    activate_ = false;
+    nav.setOverlay(bindingsOpen_ ? std::optional<input::ScreenId>(input::ScreenId::Bindings)
+                   : settingsOpen_ ? std::optional<input::ScreenId>(input::ScreenId::Settings)
+                   : dlg_.kind != DlgKind::None ? std::optional<input::ScreenId>(input::ScreenId::Dialog)
+                                                : std::nullopt);
 }
 
 void PlayerScreen::updateMeters(const PlayerView& view, float dt)
@@ -332,6 +428,7 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
     const Palette& p = palette();
     if (!beginPanel("##transport", x, y, w, h)) { ImGui::End(); return; }
     if (clickedInside()) nav.setFocus(Panel::Transport);
+    tGrid_.begin();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const bool focused = nav.focus() == Panel::Transport;
     const float bar = drawFrame(dl, tr(Str::PanelTransport), focused);
@@ -375,6 +472,13 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
         dl->AddRectFilled(a, b, col32(active ? withAlpha(p.accent, 0.25f) : p.panelHeader));
         dl->AddRect(a, b, col32(hover && enabled ? p.focusBorder : p.border), 0.0f, 0,
                     hover && enabled ? 2.0f * dpi : 1.0f);
+        tGrid_.reg(0, i);
+        const bool ring = ringAt(tGrid_, focused, 0, i);
+        const bool act = activatedAt(tGrid_, focused, 0, i) && enabled;
+        if (ring) {
+            drawFocusRing(dl, a, b, dpi);
+            if (i == 5) focusKbdOnly_ = true;   // okno wyboru plikow: klawiatura/mysz
+        }
         const ImU32 ic = col32(!enabled ? withAlpha(p.textDim, 0.45f) : (active ? p.accent : p.text));
         const float m = bs * 0.28f;
         const float cx = bx + bs * 0.5f, cy = by + bs * 0.5f, r = bs * 0.5f - m;
@@ -402,9 +506,9 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
             dl->AddRectFilled(ImVec2(cx - r, cy + r * 0.45f), ImVec2(cx + r, cy + r), ic);
             break;
         }
-        if (hover) {
-            ImGui::SetTooltip("%s", labels[i]);
-            if (enabled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+        if (hover) ImGui::SetTooltip("%s", labels[i]);
+        {
+            if (enabled && ((hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) || act)) {
                 nav.setFocus(Panel::Transport);
                 switch (i) {
                 case 0: actions.playPrevious(); break;
@@ -441,6 +545,8 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
         }
         dl->AddRectFilled(a, b, col32(p.border));
         dl->AddRectFilled(a, ImVec2(volX0 + volW * std::clamp(view.volume, 0.0f, 1.0f), b.y), col32(p.accent));
+        tGrid_.reg(2, 0);
+        if (ringAt(tGrid_, focused, 2, 0)) drawFocusRing(dl, ha, hb, dpi);
     }
 
     // Czas i tytul.
@@ -485,6 +591,8 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
     }
     const double frac = seekDrag_ ? seekFraction_
                                   : (sb.length ? static_cast<double>(sb.position) / static_cast<double>(sb.length) : 0.0);
+    tGrid_.reg(1, 0);
+    if (ringAt(tGrid_, focused, 1, 0)) drawFocusRing(dl, ImVec2(px - 2.0f * dpi, py - 5.0f * dpi), ImVec2(px + pw + 2.0f * dpi, py + 7.0f * dpi), dpi);
     dl->AddRectFilled(ImVec2(px, py), ImVec2(px + pw, py + 3.0f * dpi), col32(p.border));
     dl->AddRectFilled(ImVec2(px, py), ImVec2(px + pw * static_cast<float>(frac), py + 3.0f * dpi), col32(p.accent));
     if (sb.length > 0) {
@@ -492,15 +600,18 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
         dl->AddRectFilled(ImVec2(kx - 2.0f * dpi, py - 2.0f * dpi), ImVec2(kx + 2.0f * dpi, py + 5.0f * dpi), col32(p.text));
     }
 
+    tGrid_.end();
     ImGui::End();
 }
 
-void PlayerScreen::drawInfo(const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h)
+void PlayerScreen::drawInfo(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h)
 {
     const Palette& p = palette();
     if (!beginPanel("##info", x, y, w, h)) { ImGui::End(); return; }
+    if (clickedInside()) nav.setFocus(Panel::Info);
     ImDrawList* dl = ImGui::GetWindowDrawList();
-    const float bar = drawFrame(dl, tr(Str::PanelInfo), false);
+    const bool focused = nav.focus() == Panel::Info;
+    const float bar = drawFrame(dl, tr(Str::PanelInfo), focused);
     const float dpi = ImGui::GetStyle().FontScaleDpi;
     const float lh = ImGui::GetTextLineHeight();
     const ImVec2 wp = ImGui::GetWindowPos();
@@ -517,6 +628,7 @@ void PlayerScreen::drawInfo(const PlayerView& view, PlayerActions& actions, floa
         }
         dl->AddText(ImVec2(wp.x + w - ts.x - 6.0f * dpi, wp.y + 2.0f * dpi),
                     col32(hover ? p.accent : p.text), lbl);
+        if (focused && !modalOpen()) drawFocusRing(dl, ImVec2(a.x - 2.0f * dpi, a.y + dpi), ImVec2(b.x, b.y - dpi), dpi);
     }
 
     struct Row { std::string label, value; bool notice = false; bool wide = false; };
@@ -600,6 +712,7 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
     const Palette& p = palette();
     if (!beginPanel("##tracker", x, y, w, h)) { ImGui::End(); return; }
     if (clickedInside()) nav.setFocus(Panel::Tracker);
+    kGrid_.begin();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const bool focused = nav.focus() == Panel::Tracker;
     const ImGuiIO& io = ImGui::GetIO();
@@ -645,6 +758,8 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
         clippedText(dl, wp.x + 8.0f * dpi, wp.x + w - 4.0f * dpi, wp.y + bar + 6.0f * dpi, col32(p.textDim),
                     tr(Str::NoChannels));
         visCols_ = 0;
+        kGrid_.reg(1, 0);
+        kGrid_.end();
         ImGui::End();
         return;
     }
@@ -730,7 +845,7 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
             const float y0 = stripTop, y1 = stripTop + stripH;
             dl->AddRectFilled(ImVec2(cx, y0), ImVec2(x1, y1), col32(p.scopeCell));
             dl->AddRect(ImVec2(cx, y0), ImVec2(x1, y1),
-                        col32(selected ? (focused ? p.focusBorder : p.textDim) : p.border), 0.0f, 0,
+                        col32(selected ? (focused && kGrid_.row == 1 ? p.focusBorder : p.textDim) : p.border), 0.0f, 0,
                         selected ? 2.0f * dpi : 1.0f);
             const float vuW = std::clamp(colW * 0.07f, 5.0f * dpi, 9.0f * dpi);
             const ImVec2 wa(cx + 2.0f * dpi, y0 + 2.0f * dpi), wb(x1 - vuW - 4.0f * dpi, y1 - 2.0f * dpi);
@@ -849,6 +964,8 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
         dl->AddLine(ImVec2(sx, gridTop), ImVec2(sx, gridBottom + dpi), col32(p.border));
     }
     dl->PopClipRect();
+    kGrid_.reg(1, 0);
+    kGrid_.end();
     ImGui::End();
 }
 
@@ -861,22 +978,26 @@ void PlayerScreen::drawChannelToolbar(NavInput& nav, const PlayerView& view, Pla
     const float lh = ImGui::GetTextLineHeight();
     const float ty = y + (h - lh) * 0.5f;
     const bool hasCh = view.mix && view.mix->channelCount() > 0;
-    (void)focused;
 
-    // Przycisk-ramka. Zwraca: -1 = nie miesci sie (nic nie rysuje), 0 = rysowany, 1 = klikniety.
-    auto button = [&](float& cx, float right, const std::string& label, bool enabled, const char* tip) {
+    // Przycisk-ramka (kolumna `col` w wierszu 0 mapy fokusu). Zwraca: -1 = nie miesci sie (nic nie rysuje),
+    // 0 = rysowany, 1 = klikniety myszka lub potwierdzony padem/klawiatura.
+    auto button = [&](float& cx, float right, const std::string& label, bool enabled, const char* tip, int col) {
         const char* text = label.c_str();
         const ImVec2 ts = ImGui::CalcTextSize(text);
         const ImVec2 a(cx, y + dpi), b(cx + ts.x + 12.0f * dpi, y + h - dpi);
         if (b.x > right) return -1;
         const bool hover = enabled && ImGui::IsMouseHoveringRect(a, b);
+        kGrid_.reg(0, col);
+        const bool ring = ringAt(kGrid_, focused, 0, col);
         dl->AddRectFilled(a, b, col32(p.panelHeader));
         dl->AddRect(a, b, col32(hover ? p.focusBorder : p.border));
         dl->AddText(ImVec2(a.x + 6.0f * dpi, ty),
                     col32(!enabled ? withAlpha(p.textDim, 0.5f) : (hover ? p.accent : p.text)), text);
+        if (ring) drawFocusRing(dl, a, b, dpi);
         if (hover && tip) ImGui::SetTooltip("%s", tip);
         cx = b.x + 6.0f * dpi;
-        return hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left) ? 1 : 0;
+        const bool act = enabled && activatedAt(kGrid_, focused, 0, col);
+        return (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) || act ? 1 : 0;
     };
 
     // Prawa strona: dlugosc wiersza wzorca  [-] Row 1/60 s [+]  (krotszy wiersz = szybciej).
@@ -889,13 +1010,13 @@ void PlayerScreen::drawChannelToolbar(NavInput& nav, const PlayerView& view, Pla
     if (rx > x + lh * 8.0f) {
         const bool slowerOk = view.patternRowTicks < kRowTickPresets[kRowTickPresetCount - 1];
         const bool fasterOk = view.patternRowTicks > kRowTickPresets[0];
-        if (button(rx, right, "-", slowerOk, tr(Str::RowSpeedTip)) == 1) {
+        if (button(rx, right, "-", slowerOk, tr(Str::RowSpeedTip), 4) == 1) {
             actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, -1));
             nav.setFocus(Panel::Tracker);
         }
         dl->AddText(ImVec2(rx + 2.0f * dpi, ty), col32(p.text), rowLabel.c_str());
         rx += rw + 10.0f * dpi;
-        if (button(rx, right + 1.0f, "+", fasterOk, tr(Str::RowSpeedTip)) == 1) {
+        if (button(rx, right + 1.0f, "+", fasterOk, tr(Str::RowSpeedTip), 5) == 1) {
             actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, 1));
             nav.setFocus(Panel::Tracker);
         }
@@ -908,8 +1029,8 @@ void PlayerScreen::drawChannelToolbar(NavInput& nav, const PlayerView& view, Pla
         const Str st = strip_ == ScopeStrip::Small ? Str::StripSmall
                        : strip_ == ScopeStrip::Large ? Str::StripLarge : Str::StripHidden;
         const std::string lbl = std::string(tr(Str::ViewScopes)) + ": " + tr(st);
-        if (button(cx, right, lbl, true, tr(Str::ViewToggle)) == 1) {
-            cycleStrip();
+        if (button(cx, right, lbl, true, tr(Str::ViewToggle), 0) == 1) {
+            cycleStrip(view, actions);
             nav.setFocus(Panel::Tracker);
         }
     }
@@ -922,7 +1043,7 @@ void PlayerScreen::drawChannelToolbar(NavInput& nav, const PlayerView& view, Pla
         {Str::BtnMuteAll, hasCh, 2},
     };
     for (const Btn& bt : btns) {
-        const int r = button(cx, right, tr(bt.label), bt.enabled, nullptr);
+        const int r = button(cx, right, tr(bt.label), bt.enabled, nullptr, 1 + bt.id);
         if (r < 0) break;
         if (r == 1) {
             nav.setFocus(Panel::Tracker);

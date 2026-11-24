@@ -14,7 +14,8 @@ add_library(vgmplay_ui STATIC
     track_meta.cpp
     playlist_panel.cpp
     dialogs.cpp
+    bindings_screen.cpp
 )
 add_library(vgmplay::ui ALIAS vgmplay_ui)
 target_include_directories(vgmplay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(vgmplay_ui PUBLIC vgmplay::options vgmplay::playlist imgui::imgui SDL3::SDL3)
+target_link_libraries(vgmplay_ui PUBLIC vgmplay::options vgmplay::playlist vgmplay::input imgui::imgui SDL3::SDL3)

@@ -1,83 +1,117 @@
-// Prosta nawigacja klawiatura + pad dla makiety (prototyp).
-// Docelowo zastapi ja InputRouter w src/input.
+// Warstwa SDL -> InputRouter (src/input): tlumaczy zdarzenia SDL na RawInput, zamienia ActionEvent
+// na NavEvent dla biezacego ekranu i trzyma fokus panelu (Panel -> ScreenId).
 //
-// Zasady:
-//  - nacisniecie nalezy do panelu, w ktorym je rozpoczeto; po zmianie fokusu wcisniety
-//    klawisz/przycisk jest "stary" (nie generuje akcji) az do puszczenia,
-//  - zdarzenia puszczenia nigdy nie sa gubione (zawsze usuwaja stan),
-//  - auto-repeat kierunkow: 350 ms, potem co 60 ms (wlasny, nie systemowy),
-//  - pad nie steruje aplikacja, gdy okno nie ma fokusu; przycisk Guide jest ignorowany.
+// Zasady (kontrakt: include/vgmplay/input.hpp):
+//  - nacisniecie nalezy do ekranu, na ktorym je rozpoczeto; zmiana panelu/okna nakladkowego zatrzaskuje
+//    trzymane przyciski (nowy ekran czeka na puszczenie),
+//  - zdarzenia puszczenia nigdy nie sa gubione,
+//  - auto-repeat tylko kierunkowych (opoznienie/tempo z setRepeat),
+//  - pad nie steruje aplikacja, gdy okno nie ma fokusu (input::kGamepadWorksInBackground == false).
+// Skroty z modyfikatorami (Ctrl+Gora/Dol, Shift+Tab, Shift+Delete, cyfry kanalow) sa obslugiwane tu
+// lokalnie - nie podlegaja przypisaniom.
 #pragma once
+
+#include "vgmplay/input.hpp"
 
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace vgmplay::ui {
 
-enum class Panel { Transport, Playlist, Tracker, Count };
+// Kolejnosc = kolejnosc przechodzenia Tab / LB / RB.
+enum class Panel { Transport, Playlist, Info, Tracker, Count };
 
-enum class Action {
-    Up, Down, Left, Right, PageUp, PageDown,
-    Accept, Back, TogglePlay, ToggleLang, ToggleGd3Lang, ToggleDiag,
-    // Widok kanalow (panel Tracker): MUTE/SOLO aktywnego kanalu, ogolne wylaczniki, zmiana widoku.
-    ToggleMute, ToggleSolo, UnmuteAll, ClearSolo, ResetMix,
-    ToggleChannelsView,           // F4 / Select: pasek oscyloskopow maly -> duzy -> ukryty
-    PatternFaster, PatternSlower, // +/-: krotszy / dluzszy wiersz wzorca (rowTicks)
-    // Playlista (E2).
-    Delete, MoveUp, MoveDown,     // Delete, Ctrl+Gora, Ctrl+Dol
-    Prev, Next,                   // P / N, klik lewego/prawego drazka pada
-    ToggleRepeat, Shuffle,        // F6, F7
-    ToggleSettings,               // F10
-    NewPlaylist, RenamePlaylist, DeletePlaylist,   // F8, F9, Shift+Delete (okna z potwierdzeniem)
-    MuteChannel, SoloChannel   // arg = numer kanalu 0..9 (klawisze 1..9,0)
-};
+using Action = input::Action;
 
 struct NavEvent {
     Action action;
     bool repeat;
     int arg = 0;
+    input::ScreenId screen = input::ScreenId::Player;   // ekran-wlasciciel nacisniecia
 };
+
+// Przechwytywanie jednego zrodla do ekranu przypisan.
+enum class CaptureKind { Keyboard, Gamepad };
+enum class CaptureState { Idle, Waiting, Done, Cancelled, TimedOut };
 
 class NavInput {
 public:
+    NavInput();
+
     void handleEvent(const SDL_Event& e, std::uint64_t nowMs);
-    // Generuje powtorzenia trzymanych kierunkow; wolac raz na ramke.
+    // Generuje powtorzenia trzymanych kierunkow i obsluguje limity czasu przechwytywania; raz na ramke.
     void update(std::uint64_t nowMs);
 
-    void setWindowFocused(bool focused);
+    void setWindowFocused(bool focused, std::uint64_t nowMs = 0);
+    [[nodiscard]] bool windowFocused() const { return windowFocused_; }
     void setFocus(Panel p);
-    Panel focus() const { return focus_; }
+    [[nodiscard]] Panel focus() const { return focus_; }
+    // Okno nakladkowe (ustawienia, dialog, przypisania): wlasny kontekst routera; nullopt = panel z fokusem.
+    void setOverlay(std::optional<input::ScreenId> overlay);
+    [[nodiscard]] bool overlayActive() const { return overlay_.has_value(); }
 
-    // Akcje do obsluzenia w tej ramce (dla biezacego panelu fokusu).
+    void setBindings(std::span<const input::Binding> bindings);   // pusty = domyslne
+    void setRepeat(std::uint32_t delayMs, std::uint32_t rateMs);
+
+    // Akcje do obsluzenia w tej ramce.
     std::vector<NavEvent>& events() { return events_; }
-    bool anyHeld() const { return !held_.empty(); }
+    [[nodiscard]] bool anyHeld() const { return router_.anyHeld(); }
+    // true, gdy ostatnim uzytym wejsciem byl pad (steruje paskiem podpowiedzi).
+    [[nodiscard]] bool lastInputWasPad() const { return lastPad_; }
+    [[nodiscard]] bool gamepadConnected() const { return !pads_.empty(); }
 
-    static constexpr std::uint64_t kRepeatDelayMs = 350;
+    // --- przechwytywanie (ekran przypisan): router nie dostaje zdarzen, dopoki stan == Waiting ---
+    static constexpr std::uint64_t kCaptureTimeoutMs = 6000;
+    static constexpr std::uint64_t kCaptureCancelHoldMs = 1000;   // przytrzymane B (pad)
+    void beginCapture(CaptureKind kind, std::uint64_t nowMs);
+    void endCapture();   // wyzeruj stan (Idle)
+    [[nodiscard]] CaptureState captureState() const { return capState_; }
+    [[nodiscard]] CaptureKind captureKind() const { return capKind_; }
+    [[nodiscard]] input::BindingSource captureResult() const { return capResult_; }
+    [[nodiscard]] std::uint64_t captureRemainingMs(std::uint64_t nowMs) const;
+
+    // Zgodne z ustawieniami domyslnymi (settings::InputSettings).
+    static constexpr std::uint64_t kRepeatDelayMs = 400;
     static constexpr std::uint64_t kRepeatRateMs = 60;
 
+    // Panel -> kontekst routera.
+    static input::ScreenId screenOf(Panel p);
+
 private:
-    struct Held {
-        Action action;
-        int arg;
-        bool repeatable;
-        bool stale; // nacisniete przed zmiana fokusu - czeka na puszczenie
-        std::uint64_t nextRepeat;
-    };
-
-    void press(std::uint64_t key, Action a, std::uint64_t now, int arg = 0);
-    void release(std::uint64_t key);
+    void feed(input::SourceKind kind, std::int32_t code, bool down, std::uint64_t now);
+    void feedPad(SDL_JoystickID id, input::SourceKind kind, std::int32_t code, bool down, std::uint64_t now);
+    void dispatch(const std::vector<input::ActionEvent>& evs);
+    void pushLocal(Action a, bool repeat, int arg = 0);
     void cycleFocus(int dir);
-    void releaseAllForGamepad(SDL_JoystickID id);
-    void handleStick(SDL_JoystickID id, Uint8 axis, Sint16 value, std::uint64_t now);
+    void updateContext();
+    void handleAxis(SDL_JoystickID id, Uint8 axis, Sint16 value, std::uint64_t now);
+    void removePad(SDL_JoystickID id, std::uint64_t now);
+    void finishCapture(CaptureState s, input::BindingSource src = {});
 
+    input::InputRouter router_;
     Panel focus_ = Panel::Transport;
+    std::optional<input::ScreenId> overlay_;
     bool windowFocused_ = true;
-    std::unordered_map<std::uint64_t, Held> held_;
-    std::unordered_map<std::uint64_t, int> stick_; // (id,axis) -> -1/0/+1
+    bool lastPad_ = false;
     std::vector<NavEvent> events_;
+    std::vector<input::ActionEvent> scratch_;
+
+    std::unordered_set<std::uint64_t> padDown_;      // (id, rodzaj, kod) trzymanych zrodel pada
+    std::unordered_map<std::uint64_t, int> axis_;    // (id, os) -> -1/0/+1 (histereza)
+    std::unordered_set<SDL_JoystickID> pads_;
+
+    CaptureState capState_ = CaptureState::Idle;
+    CaptureKind capKind_ = CaptureKind::Keyboard;
+    input::BindingSource capResult_;
+    std::uint64_t capStart_ = 0;
+    std::uint64_t capBHeldSince_ = 0;                // 0 = B (pad) nie jest trzymane
+    std::uint64_t lastNow_ = 0;
 };
 
 } // namespace vgmplay::ui

@@ -406,7 +406,7 @@ TEST_SUITE("ui/channel_nav")
         CHECK(ev[2].action == Action::UnmuteAll);
         CHECK(ev[3].action == Action::ClearSolo);
         CHECK(ev[4].action == Action::ResetMix);
-        CHECK(ev[5].action == Action::ToggleChannelsView);
+        CHECK(ev[5].action == Action::ToggleTrackerView);
         CHECK((ev[6].action == Action::MuteChannel && ev[6].arg == 0));
         CHECK((ev[7].action == Action::MuteChannel && ev[7].arg == 9));
         CHECK((ev[8].action == Action::SoloChannel && ev[8].arg == 2));
@@ -421,9 +421,9 @@ TEST_SUITE("ui/channel_nav")
         n.handleEvent(pad(SDL_GAMEPAD_BUTTON_SOUTH), 0);
         REQUIRE(n.events().size() == 4);
         CHECK(n.events()[0].action == Action::ToggleSolo);
-        CHECK(n.events()[1].action == Action::ResetMix);
-        CHECK(n.events()[2].action == Action::ToggleChannelsView);
-        CHECK(n.events()[3].action == Action::Accept);
+        CHECK(n.events()[1].action == Action::Menu);
+        CHECK(n.events()[2].action == Action::ToggleTrackerView);
+        CHECK(n.events()[3].action == Action::Confirm);
 
         NavInput nf;
         SDL_Event lost{};
@@ -537,7 +537,7 @@ TEST_SUITE("ui/channel_screen")
         nav.events().push_back({Action::ToggleMute, false});
         nav.events().push_back({Action::Right, false});
         nav.events().push_back({Action::ToggleSolo, false});
-        nav.events().push_back({Action::Accept, false});
+        nav.events().push_back({Action::Confirm, false});
         run();
         REQUIRE(act.log.size() == 3);
         CHECK(act.log[0] == "mute0");
@@ -571,15 +571,15 @@ TEST_SUITE("ui/channel_screen")
             ImGui::Render();
         };
         CHECK(screen.scopeStrip() == ScopeStrip::Small);
-        nav.events().push_back({Action::ToggleChannelsView, false});
+        nav.events().push_back({Action::ToggleTrackerView, false});
         run();
         CHECK(screen.scopeStrip() == ScopeStrip::Large);
         CHECK(act.visible == 1);
-        nav.events().push_back({Action::ToggleChannelsView, false});
+        nav.events().push_back({Action::ToggleTrackerView, false});
         run();
         CHECK(screen.scopeStrip() == ScopeStrip::Hidden);
         CHECK(act.visible == 0);              // ukryty pasek: silnik nie liczy strumieni kanalow
-        nav.events().push_back({Action::ToggleChannelsView, false});
+        nav.events().push_back({Action::ToggleTrackerView, false});
         run();
         CHECK(screen.scopeStrip() == ScopeStrip::Small);
         CHECK(act.visible == 1);
