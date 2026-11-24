@@ -55,11 +55,16 @@ struct SetMute { DeviceId device = 0; MuteMask mask; };
 // enabled=false czysci solo na urzadzeniu.
 struct SetSolo { DeviceId device = 0; std::uint16_t channel = kChipSumChannel; bool enabled = false; };
 struct SetEndBehavior { NonLoopEnd value = NonLoopEnd::Stop; };
+// E1.5: dzwiek osobno dla kazdego kanalu (oscyloskopy FT2, VU). enabled=true: silnik liczy
+// strumienie kanalow (kopie emulacji z maska MUTE - decyzja uzytkownika 2026-11-24) i wypelnia
+// ScopeBlock::extra*. enabled=false (domyslnie): extraStreamCount = 0, brak dodatkowego kosztu CPU.
+// UI wlacza, gdy widok oscyloskopow kanalow jest widoczny.
+struct SetChannelScopes { bool enabled = false; };
 } // namespace cmd
 
 using Command = std::variant<cmd::Load, cmd::Play, cmd::Pause, cmd::Stop, cmd::Seek,
                              cmd::SetLoopCount, cmd::SetFade, cmd::SetVolume, cmd::SetMute,
-                             cmd::SetSolo, cmd::SetEndBehavior>;
+                             cmd::SetSolo, cmd::SetEndBehavior, cmd::SetChannelScopes>;
 
 // ---------------- Zdarzenia (silnik -> UI) ----------------
 // Tworzone poza sciezka audio (Load/koniec/blad); moga alokowac.

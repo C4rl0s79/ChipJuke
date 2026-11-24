@@ -482,6 +482,7 @@ struct Engine::Impl {
             [&](cmd::SetEndBehavior& v) {
                 if (cfg.decoder.nonLoopEnd != v.value) { cfg.decoder.nonLoopEnd = v.value; reconfigure(); }
             },
+            [&](cmd::SetChannelScopes&) { /* E1.5: implementacja w toku (audio-specialist) */ },
         }, c);
     }
 
