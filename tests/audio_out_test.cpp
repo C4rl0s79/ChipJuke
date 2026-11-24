@@ -280,6 +280,74 @@ TEST_SUITE("audio_out/device")
         CHECK(out.isOpen());
     }
 
+    TEST_CASE("listDevices: backend null = jedna pozycja stala")
+    {
+        auto r = audio_out::listDevices(audio_out::Config::Backend::Null);
+        REQUIRE(r.ok());
+        REQUIRE(r.value().size() == 1);
+        CHECK(r.value()[0].id == "null");
+        CHECK(r.value()[0].name == "Null");
+        CHECK(r.value()[0].isDefault);
+    }
+
+    TEST_CASE("listDevices: backend domyslny nie zwraca bledu (lub jest pomijany bez urzadzen)")
+    {
+        auto r = audio_out::listDevices();
+        if (!r.ok()) {
+            MESSAGE("brak kontekstu audio: " << r.error().message);
+            return;
+        }
+        int defaults = 0;
+        for (const auto& d : r.value()) {
+            CHECK_FALSE(d.id.empty());
+            for (unsigned char ch : d.name) CHECK(ch >= 0x20);
+            for (unsigned char ch : d.id) CHECK(ch >= 0x20);
+            if (d.isDefault) ++defaults;
+        }
+        CHECK(defaults <= 1);
+        if (!r.value().empty()) {
+            // Trwalosc id: druga lista daje te same id.
+            auto r2 = audio_out::listDevices();
+            REQUIRE(r2.ok());
+            REQUIRE(r2.value().size() == r.value().size());
+            for (std::size_t i = 0; i < r.value().size(); ++i) CHECK(r.value()[i].id == r2.value()[i].id);
+        }
+    }
+
+    TEST_CASE("Config::deviceId na backendzie null: puste, znane i nieznane id; reopen zachowuje konfiguracje")
+    {
+        PcmRing ring;
+        audio_out::AudioOut out(ring);
+        audio_out::Config cfg;
+        cfg.backend = audio_out::Config::Backend::Null;
+        cfg.sampleRate = 48000;
+
+        auto r0 = out.open(cfg);                      // puste = domyslne
+        REQUIRE(r0.ok());
+        CHECK(r0.value().deviceId.empty());
+        CHECK_FALSE(r0.value().fellBackToDefault);
+
+        cfg.deviceId = "null";                        // znane
+        auto r1 = out.open(cfg);
+        REQUIRE(r1.ok());
+        CHECK(r1.value().deviceId == "null");
+        CHECK_FALSE(r1.value().fellBackToDefault);
+        auto rr = out.reopen();
+        REQUIRE(rr.ok());
+        CHECK(rr.value().deviceId == "null");
+        CHECK_FALSE(rr.value().fellBackToDefault);
+
+        cfg.deviceId = "nie-ma-takiego-urzadzenia";   // nieznane -> domyslne, nie blad
+        auto r2 = out.open(cfg);
+        REQUIRE(r2.ok());
+        CHECK(out.isOpen());
+        CHECK(r2.value().fellBackToDefault);
+        CHECK(r2.value().deviceId.empty());
+        auto r3 = out.reopen();                       // ta sama konfiguracja -> ten sam fallback
+        REQUIRE(r3.ok());
+        CHECK(r3.value().fellBackToDefault);
+    }
+
     TEST_CASE("start bez open() zwraca blad, nie wyjatek")
     {
         PcmRing ring;

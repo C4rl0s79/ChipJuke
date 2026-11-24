@@ -26,6 +26,127 @@
 
 namespace vgmplay::audio_out {
 
+namespace {
+
+// Identyfikator urzadzenia dla UI/ustawien. WASAPI: wchar_t[] -> UTF-8; inne backendy: hex bajtow.
+void appendUtf8(std::string& out, std::uint32_t cp)
+{
+    if (cp < 0x80) {
+        out += static_cast<char>(cp);
+    } else if (cp < 0x800) {
+        out += static_cast<char>(0xC0 | (cp >> 6));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        out += static_cast<char>(0xE0 | (cp >> 12));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    } else {
+        out += static_cast<char>(0xF0 | (cp >> 18));
+        out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+        out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        out += static_cast<char>(0x80 | (cp & 0x3F));
+    }
+}
+
+std::string encodeDeviceId(ma_backend backend, const ma_device_id& id)
+{
+    std::string out;
+    if (backend == ma_backend_wasapi) {
+        const wchar_t* w = id.wasapi;
+        constexpr std::size_t kMax = sizeof(id.wasapi) / sizeof(id.wasapi[0]);
+        for (std::size_t i = 0; i < kMax && w[i] != 0; ++i) {
+            std::uint32_t cp = static_cast<std::uint16_t>(w[i]);
+            if (cp >= 0xD800 && cp < 0xDC00 && i + 1 < kMax) {
+                const std::uint32_t lo = static_cast<std::uint16_t>(w[i + 1]);
+                if (lo >= 0xDC00 && lo < 0xE000) {
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                    ++i;
+                }
+            }
+            appendUtf8(out, cp);
+        }
+        return out;
+    }
+    static const char* hex = "0123456789abcdef";
+    const auto* b = reinterpret_cast<const unsigned char*>(&id);
+    for (std::size_t i = 0; i < sizeof(id); ++i) {
+        out += hex[b[i] >> 4];
+        out += hex[b[i] & 15];
+    }
+    return out;
+}
+
+std::string sanitizeName(const char* s)
+{
+    std::string out;
+    for (const char* p = s; *p; ++p) {
+        const unsigned char c = static_cast<unsigned char>(*p);
+        out += (c < 0x20 || c == 0x7F) ? ' ' : static_cast<char>(c);
+    }
+    const auto b = out.find_first_not_of(' ');
+    if (b == std::string::npos) return {};
+    const auto e = out.find_last_not_of(' ');
+    return out.substr(b, e - b + 1);
+}
+
+ma_backend toMaBackend(Config::Backend b)
+{
+    return b == Config::Backend::Null ? ma_backend_null : ma_backend_wasapi;
+}
+
+struct EnumeratedDevice {
+    DeviceEntry entry;
+    ma_device_id maId{};
+};
+
+Result<std::vector<EnumeratedDevice>> enumerate(ma_context& ctx, ma_backend backend)
+{
+    std::vector<EnumeratedDevice> out;
+    if (backend == ma_backend_null) {
+        // Backend null nie ma realnych urzadzen: jedna pozycja stala.
+        EnumeratedDevice e;
+        e.entry = DeviceEntry{"null", "Null", true};
+        out.push_back(std::move(e));
+        return out;
+    }
+    ma_device_info* playback = nullptr;
+    ma_uint32 playbackCount = 0;
+    ma_device_info* capture = nullptr;
+    ma_uint32 captureCount = 0;
+    const ma_result res = ma_context_get_devices(&ctx, &playback, &playbackCount, &capture, &captureCount);
+    if (res != MA_SUCCESS)
+        return makeError(ErrorCode::Io,
+                         std::string("ma_context_get_devices failed: ") + ma_result_description(res));
+    for (ma_uint32 i = 0; i < playbackCount; ++i) {
+        EnumeratedDevice e;
+        e.entry.id = encodeDeviceId(backend, playback[i].id);
+        e.entry.name = sanitizeName(playback[i].name);
+        e.entry.isDefault = playback[i].isDefault != 0;
+        e.maId = playback[i].id;
+        if (!e.entry.id.empty()) out.push_back(std::move(e));
+    }
+    return out;
+}
+
+} // namespace
+
+Result<std::vector<DeviceEntry>> listDevices(Config::Backend backend)
+{
+    const ma_backend mb = toMaBackend(backend);
+    ma_context ctx{};
+    const ma_result res = ma_context_init(&mb, 1, nullptr, &ctx);
+    if (res != MA_SUCCESS)
+        return makeError(ErrorCode::NotFound,
+                         std::string("ma_context_init failed: ") + ma_result_description(res));
+    auto devs = enumerate(ctx, mb);
+    ma_context_uninit(&ctx);
+    if (!devs.ok()) return devs.error();
+    std::vector<DeviceEntry> out;
+    out.reserve(devs.value().size());
+    for (auto& d : devs.value()) out.push_back(std::move(d.entry));
+    return out;
+}
+
 struct AudioOut::Impl {
     PcmRing* ring = nullptr;
     Config config;
@@ -103,15 +224,36 @@ Result<DeviceInfo> AudioOut::open(const Config& config)
     d.rerouted.store(false, std::memory_order_relaxed);
     d.interrupted.store(false, std::memory_order_relaxed);
 
-    const ma_backend backends[1] = {
-        config.backend == Config::Backend::Null ? ma_backend_null : ma_backend_wasapi};
+    const ma_backend backends[1] = {toMaBackend(config.backend)};
     ma_result res = ma_context_init(backends, 1, nullptr, &d.context);
     if (res != MA_SUCCESS)
         return makeError(ErrorCode::NotFound,
                          std::string("ma_context_init failed: ") + ma_result_description(res));
     d.contextInit = true;
 
+    // Wybor urzadzenia: pusty id = domyslne (z podazaniem); znane = to urzadzenie; nieznane = domyslne.
+    ma_device_id chosenId{};
+    bool useChosen = false;
+    bool fellBack = false;
+    bool found = false;
+    if (!config.deviceId.empty()) {
+        auto devs = enumerate(d.context, backends[0]);
+        if (devs.ok()) {
+            for (const auto& e : devs.value()) {
+                if (e.entry.id == config.deviceId) {
+                    chosenId = e.maId;
+                    found = true;
+                    // Null: jedyna pozycja to domyslne - bez jawnego id.
+                    useChosen = backends[0] != ma_backend_null;
+                    break;
+                }
+            }
+        }
+        fellBack = !found;
+    }
+
     ma_device_config dc = ma_device_config_init(ma_device_type_playback);
+    dc.playback.pDeviceID = useChosen ? &chosenId : nullptr;
     dc.playback.format = ma_format_f32;
     dc.playback.channels = 2;
     dc.playback.shareMode = ma_share_mode_shared;
@@ -126,6 +268,14 @@ Result<DeviceInfo> AudioOut::open(const Config& config)
     dc.wasapi.usage = ma_wasapi_usage_pro_audio;
 
     res = ma_device_init(&d.context, &dc, &d.device);
+    if (res != MA_SUCCESS && useChosen) {
+        // Urzadzenie zniklo/nie da sie otworzyc: ostatnia deska ratunku to domyslne.
+        dc.playback.pDeviceID = nullptr;
+        useChosen = false;
+        found = false;
+        fellBack = true;
+        res = ma_device_init(&d.context, &dc, &d.device);
+    }
     if (res != MA_SUCCESS) {
         d.teardown();
         return makeError(ErrorCode::NotFound,
@@ -136,7 +286,9 @@ Result<DeviceInfo> AudioOut::open(const Config& config)
     char name[256] = {};
     size_t len = 0;
     if (ma_device_get_name(&d.device, ma_device_type_playback, name, sizeof(name), &len) == MA_SUCCESS)
-        d.info.name = name;
+        d.info.name = sanitizeName(name);
+    d.info.deviceId = found ? config.deviceId : std::string();
+    d.info.fellBackToDefault = fellBack;
     d.info.backend = ma_get_backend_name(d.device.pContext->backend);
     d.info.sampleRate = d.device.sampleRate;
     d.info.channels = d.device.playback.channels;
