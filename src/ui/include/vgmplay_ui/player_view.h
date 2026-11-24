@@ -8,11 +8,15 @@
 #include "vgmplay/decoder.hpp"
 #include "vgmplay/engine.hpp"
 #include "vgmplay/loader.hpp"
+#include "vgmplay/playlist.hpp"
+#include "vgmplay/settings.hpp"
+#include "vgmplay_ui/track_meta.h"
 
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace vgmplay::ui {
 
@@ -27,6 +31,21 @@ struct AudioDiag {
     double bufferMs = 0.0;
     std::int64_t queuedFrames = 0;   // klatki w PcmRing
     std::uint32_t underruns = 0;     // z PcmRing (callbacki bez danych przy Playing)
+};
+
+// Komunikat dla uzytkownika (import M3U, skan, uszkodzone pliki). `details` otwiera okno raportu;
+// needsAck: okno wymaga potwierdzenia (np. uszkodzony playlists.json - dopiero po nim zapis jest odblokowany).
+struct Notice {
+    std::string text;
+    std::vector<std::string> details;
+    bool error = false;
+    bool needsAck = false;
+    std::uint64_t serial = 0;
+};
+
+struct ScanStatus {
+    bool active = false;
+    std::uint64_t files = 0, dirs = 0;
 };
 
 struct PlayerView {
@@ -58,6 +77,17 @@ struct PlayerView {
     bool patternHasEffects = false;                     // czy rysowac kolumne efektow
     std::uint32_t patternRowTicks = 2205;                // zadana dlugosc wiersza (ticki VGM, 44100 Hz)
 
+    // Playlisty i ustawienia (E2): wskazniki do danych kontrolera, wazne tylko na watku UI i tylko
+    // do odczytu; zmiany wylacznie przez PlayerActions.
+    const playlist::PlaylistModel* playlists = nullptr;
+    const TrackMetaStore* meta = nullptr;
+    const settings::Settings* settings = nullptr;
+    playlist::RepeatMode repeat = playlist::RepeatMode::Off;
+    bool playlistsLoading = false;       // playlists.json jeszcze sie wczytuje (worker)
+    ScanStatus scan;
+    bool allowNetworkPaths = false;      // sciezki UNC w playlistach/cache (opcja startowa)
+    std::optional<Notice> notice;
+
     [[nodiscard]] bool hasTrack() const { return track && info; }
 };
 
@@ -87,6 +117,27 @@ public:
     virtual void setChannelScopesVisible(bool visible) = 0;
     // Dlugosc wiersza wzorca w tickach VGM (44100 Hz); kontroler przelicza wzorzec w tle.
     virtual void setPatternRowTicks(std::uint32_t ticks) = 0;
+
+    // --- Playlisty i ustawienia (E2). Domyslnie puste, by stare atrapy w testach sie kompilowaly. ---
+    // Indeksy dotycza aktywnej playlisty.
+    virtual void playEntry(std::size_t) {}
+    virtual void playNext() {}                       // reczne "nastepny" (Off/All; One traktowane jak Off)
+    virtual void playPrevious() {}                   // w pierwszych ~3 s poprzedni, pozniej poczatek utworu
+    virtual void removeEntry(std::size_t) {}
+    virtual void moveEntry(std::size_t /*from*/, std::size_t /*to*/) {}   // to = indeks docelowy
+    virtual void shufflePlaylist() {}
+    virtual void setRepeat(playlist::RepeatMode) {}
+    virtual void selectPlaylist(std::size_t) {}
+    virtual void createPlaylist(const std::string&) {}
+    virtual void renamePlaylist(std::size_t, const std::string&) {}
+    virtual void deletePlaylist(std::size_t) {}
+    virtual void requestAddFolder() {}
+    virtual void requestImportM3u() {}
+    virtual void requestExportM3u() {}
+    virtual void cancelScan() {}
+    virtual void applySettings(const settings::Settings&) {}
+    virtual void downloadEntry(std::size_t) {}       // "pobierz mimo to": wpis w chmurze (czyta plik)
+    virtual void dismissNotice() {}                  // takze potwierdzenie (needsAck)
 };
 
 } // namespace vgmplay::ui

@@ -4,6 +4,7 @@
 #include "vgmplay_ui/channel_widgets.h"
 #include "vgmplay_ui/format.h"
 #include "vgmplay_ui/scope_buffer.h"
+#include "screen_util.h"
 #include "vgmplay_ui/strings.h"
 #include "vgmplay_ui/theme.h"
 
@@ -17,16 +18,7 @@
 #include <vector>
 
 namespace vgmplay::ui {
-namespace {
-
-using engine::TransportState;
-
-constexpr int kTransportButtons = 6; // prev, play, pause, stop, next, open
-constexpr double kSeekStepSeconds = 5.0;
-constexpr float kVolumeStep = 0.05f;
-constexpr std::size_t kScopeFrames = 1024;
-constexpr std::size_t kChannelScopeFrames = 768;   // okno przebiegu kanalu (klatki silnika)
-constexpr double kVuWindowSeconds = 0.03;          // okno szczytu dla VU
+namespace detail {
 
 // Panel w stalym prostokacie. Zwraca true, gdy mozna rysowac.
 bool beginPanel(const char* id, float x, float y, float w, float h)
@@ -75,6 +67,50 @@ void clippedText(ImDrawList* dl, float x0, float x1, float y, ImU32 color, const
     dl->PopClipRect();
 }
 
+
+
+bool ButtonFlow::button(const std::string& label, bool enabled, bool active, const char* tip)
+{
+    const Palette& p = palette();
+    const ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+    const float bw = ts.x + 12.0f * dpi;
+    if (cx > x0 && cx + bw > right) newline();
+    const ImVec2 a(cx, cy), b(cx + bw, cy + h);
+    const bool hover = enabled && ImGui::IsMouseHoveringRect(a, b);
+    dl->AddRectFilled(a, b, col32(active ? withAlpha(p.accent, 0.25f) : p.panelHeader));
+    dl->AddRect(a, b, col32(hover ? p.focusBorder : p.border));
+    dl->PushClipRect(a, b, true);
+    dl->AddText(ImVec2(a.x + 6.0f * dpi, cy + (h - ts.y) * 0.5f),
+                col32(!enabled ? withAlpha(p.textDim, 0.5f) : (active ? p.accent : (hover ? p.accent : p.text))),
+                label.c_str());
+    dl->PopClipRect();
+    if (hover && tip) ImGui::SetTooltip("%s", tip);
+    cx = b.x + 4.0f * dpi;
+    return hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+}
+
+void ButtonFlow::text(const std::string& label, float maxW, ImU32 color)
+{
+    const float w = std::min(ImGui::CalcTextSize(label.c_str()).x, maxW);
+    if (cx > x0 && cx + w > right) newline();
+    clippedText(dl, cx, cx + w, cy + (h - ImGui::GetTextLineHeight()) * 0.5f, color, label.c_str());
+    cx += w + 6.0f * dpi;
+}
+
+} // namespace detail
+using namespace detail;
+
+namespace {
+
+using engine::TransportState;
+
+constexpr int kTransportButtons = 6; // prev, play, pause, stop, next, open
+constexpr double kSeekStepSeconds = 5.0;
+constexpr float kVolumeStep = 0.05f;
+constexpr std::size_t kScopeFrames = 1024;
+constexpr std::size_t kChannelScopeFrames = 768;   // okno przebiegu kanalu (klatki silnika)
+constexpr double kVuWindowSeconds = 0.03;          // okno szczytu dla VU
+
 std::string fileNameUtf8(const std::filesystem::path& p)
 {
     const auto u8 = p.filename().u8string();
@@ -108,15 +144,45 @@ struct ButtonState {
 bool PlayerScreen::wantsAnimation(const PlayerView& v) const
 {
     return v.transport.state == TransportState::Playing || v.transport.state == TransportState::Loading ||
-           v.loading || seekDrag_ || volumeDrag_ || seekHold_ > 0 || vu_.active();
+           v.loading || v.scan.active || v.playlistsLoading || dragging_ || seekDrag_ || volumeDrag_ || seekHold_ > 0 || vu_.active();
 }
 
 void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view, PlayerActions& actions)
 {
+    if (modalOpen()) { applyModal(ev, view, actions); return; }
     switch (ev.action) {
     case Action::TogglePlay: actions.togglePlay(); return;
-    case Action::ToggleLang: setLang(lang() == Lang::En ? Lang::Pl : Lang::En); return;
-    case Action::ToggleGd3Lang: gd3Jp_ = !gd3Jp_; return;
+    case Action::ToggleLang: toggleLanguage(view, actions); return;
+    case Action::ToggleGd3Lang: toggleGd3(view, actions); return;
+    case Action::Prev: if (!ev.repeat) actions.playPrevious(); return;
+    case Action::Next: if (!ev.repeat) actions.playNext(); return;
+    case Action::Shuffle: if (!ev.repeat) actions.shufflePlaylist(); return;
+    case Action::ToggleSettings: openSettings(); return;
+    case Action::NewPlaylist:
+    case Action::RenamePlaylist:
+    case Action::DeletePlaylist:
+        if (ev.repeat || !view.playlists || view.playlists->playlistCount() == 0) return;
+        {
+            const std::size_t cnt = view.playlists->playlistCount();
+            const std::size_t ai = view.playlists->activeIndex();
+            if (ev.action == Action::NewPlaylist) {
+                char nm[96];
+                std::snprintf(nm, sizeof nm, "%s %zu", tr(Str::DefaultListName), cnt + 1);
+                openDialog(DlgKind::NewList, 0, nm);
+            } else if (ev.action == Action::RenamePlaylist) {
+                openDialog(DlgKind::RenameList, ai, view.playlists->playlist(ai).name);
+            } else if (cnt > 1) {
+                openDialog(DlgKind::DeleteList, ai);
+            }
+        }
+        return;
+    case Action::ToggleRepeat:
+        if (!ev.repeat) {
+            using playlist::RepeatMode;
+            actions.setRepeat(view.repeat == RepeatMode::Off ? RepeatMode::All
+                              : view.repeat == RepeatMode::All ? RepeatMode::One : RepeatMode::Off);
+        }
+        return;
     case Action::ToggleDiag: diag_ = !diag_; return;
     case Action::ToggleChannelsView: cycleStrip(); return;
     case Action::PatternFaster: actions.setPatternRowTicks(stepRowTicks(view.patternRowTicks, 1)); return;
@@ -138,9 +204,10 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
         else if (ev.action == Action::Down)
             actions.setVolume(std::clamp(view.volume - kVolumeStep, 0.0f, 1.0f));
         else if (ev.action == Action::Accept && !ev.repeat) actions.togglePlay();
+        else if (ev.action == Action::ResetMix && !ev.repeat) openSettings();   // pad: Y
         break;
     case Panel::Playlist:
-        if (ev.action == Action::Accept && !ev.repeat) actions.requestOpenFile();
+        applyPlaylist(ev, view, actions);
         break;
     case Panel::Tracker:
         // Wzorzec przewija sie razem z pozycja slyszana (seek: panel Odtwarzanie); Gora/Dol bez efektu,
@@ -167,6 +234,7 @@ void PlayerScreen::apply(const NavEvent& ev, Panel focus, const PlayerView& view
 void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& actions,
                          const FrameInfo& info)
 {
+    if (view.settings) setLang(view.settings->ui.language == i18n::Language::Pl ? Lang::Pl : Lang::En);
     for (const NavEvent& ev : nav.events()) apply(ev, nav.focus(), view, actions);
     nav.events().clear();
     if (seekHold_ > 0) --seekHold_;
@@ -186,19 +254,47 @@ void PlayerScreen::frame(NavInput& nav, const PlayerView& view, PlayerActions& a
     const float leftW = std::clamp(W * 0.32f, lh * 14.0f, lh * 30.0f);
     const float rightX = leftW + 2 * gap;
     const float rightW = W - rightX - gap;
-    const float playlistH = std::clamp(bodyH * 0.22f, lh * 4.5f, lh * 8.0f);
+    const float playlistH = std::clamp(bodyH * 0.5f, lh * 9.0f, bodyH * 0.65f);
     const float infoH = bodyH - playlistH - gap;
     const float scopeH = std::clamp(bodyH * 0.25f, lh * 5.0f, lh * 12.0f);
     const float trackerH = bodyH - scopeH - gap;
 
+    // Okno modalne: panele nie dostaja myszy (pozycja poza ekranem, brak klikniec), dialog ja odzyskuje.
+    if (view.notice && view.notice->serial != seenNotice_) {
+        seenNotice_ = view.notice->serial;
+        if (!view.notice->details.empty() || view.notice->needsAck) openDialog(DlgKind::Report);
+    }
+    const bool modal = modalOpen();
+    ImGuiIO& mio = ImGui::GetIO();
+    const ImVec2 savedPos = mio.MousePos;
+    bool savedClicked[3] = {}, savedDown[3] = {}, savedReleased[3] = {}, savedDouble[3] = {};
+    const float savedWheel = mio.MouseWheel;
+    if (modal) {
+        for (int i = 0; i < 3; ++i) {
+            savedClicked[i] = mio.MouseClicked[i]; savedDown[i] = mio.MouseDown[i];
+            savedReleased[i] = mio.MouseReleased[i]; savedDouble[i] = mio.MouseDoubleClicked[i];
+            mio.MouseClicked[i] = mio.MouseDown[i] = mio.MouseReleased[i] = mio.MouseDoubleClicked[i] = false;
+        }
+        mio.MousePos = ImVec2(-FLT_MAX, -FLT_MAX);
+        mio.MouseWheel = 0.0f;
+    }
     drawTransport(nav, view, actions, gap, gap, W - 2 * gap, transportH);
-    drawPlaylist(nav, view, gap, bodyY, leftW, playlistH);
-    drawInfo(view, gap, bodyY + playlistH + gap, leftW, infoH);
+    drawPlaylist(nav, view, actions, gap, bodyY, leftW, playlistH);
+    drawInfo(view, actions, gap, bodyY + playlistH + gap, leftW, infoH);
     drawTracker(nav, view, actions, rightX, bodyY, rightW, trackerH);
     drawScope(view, rightX, bodyY + trackerH + gap, rightW, scopeH);
     drawStatus(view, actions, gap, H - statusH - gap, W - 2 * gap, statusH);
     if (diag_) drawDiagnostics(view, info, rightX + rightW - std::min(rightW, lh * 30.0f), bodyY,
                                std::min(rightW, lh * 30.0f));
+    if (modal) {
+        for (int i = 0; i < 3; ++i) {
+            mio.MouseClicked[i] = savedClicked[i]; mio.MouseDown[i] = savedDown[i];
+            mio.MouseReleased[i] = savedReleased[i]; mio.MouseDoubleClicked[i] = savedDouble[i];
+        }
+        mio.MousePos = savedPos;
+        mio.MouseWheel = savedWheel;
+    }
+    drawModal(view, actions, W, H);
 }
 
 void PlayerScreen::updateMeters(const PlayerView& view, float dt)
@@ -253,7 +349,9 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
     const TransportState st = view.transport.state;
     const bool has = view.hasTrack();
     ButtonState btn[kTransportButtons];
-    btn[0] = {false, false};                                                    // prev: playlista (E2)
+    const bool hasList = view.playlists && view.playlists->playlistCount() > 0 &&
+                         !view.playlists->playlist(view.playlists->activeIndex()).entries.empty();
+    btn[0] = {hasList || has, false};                                           // prev
     btn[1] = {has && (st == TransportState::Stopped || st == TransportState::Paused ||
                       st == TransportState::Ended),
               st == TransportState::Playing};
@@ -261,7 +359,7 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
     btn[3] = {has && (st == TransportState::Playing || st == TransportState::Paused ||
                       st == TransportState::Ended),
               false};
-    btn[4] = {false, false};                                                    // next: playlista (E2)
+    btn[4] = {hasList, false};                                                  // next
     btn[5] = {true, false};                                                     // open
     const char* labels[kTransportButtons] = {tr(Str::BtnPrev), tr(Str::BtnPlay), tr(Str::BtnPause),
                                              tr(Str::BtnStop),  tr(Str::BtnNext), tr(Str::BtnOpen)};
@@ -309,6 +407,8 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
             if (enabled && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                 nav.setFocus(Panel::Transport);
                 switch (i) {
+                case 0: actions.playPrevious(); break;
+                case 4: actions.playNext(); break;
                 case 1: actions.play(); break;
                 case 2: actions.pause(); break;
                 case 3: actions.stop(); break;
@@ -362,7 +462,7 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
     const float ty = by + (bs - lh) * 0.5f;
     dl->AddText(ImVec2(tx, ty), col32(p.text), tb);
     const float titleX = tx + ImGui::CalcTextSize("00:00 / 00:00").x + lh;
-    const std::string title = view.loading ? sanitizeForDisplay(view.loadingName) : trackTitle(view, gd3Jp_);
+    const std::string title = view.loading ? sanitizeForDisplay(view.loadingName) : trackTitle(view, jp(view));
     clippedText(dl, titleX, volX0 - volLabelW - 8.0f * dpi, ty, col32(has ? p.accent : p.textDim), title.c_str());
 
     // Pasek pozycji (mysz: klik/przeciaganie; klawiatura: Lewo/Prawo przy fokusie panelu).
@@ -395,40 +495,7 @@ void PlayerScreen::drawTransport(NavInput& nav, const PlayerView& view, PlayerAc
     ImGui::End();
 }
 
-void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, float x, float y, float w, float h)
-{
-    const Palette& p = palette();
-    if (!beginPanel("##playlist", x, y, w, h)) { ImGui::End(); return; }
-    if (clickedInside()) nav.setFocus(Panel::Playlist);
-    ImDrawList* dl = ImGui::GetWindowDrawList();
-    const bool focused = nav.focus() == Panel::Playlist;
-    const float bar = drawFrame(dl, tr(Str::PanelPlaylist), focused);
-    const float dpi = ImGui::GetStyle().FontScaleDpi;
-    const float lh = ImGui::GetTextLineHeight();
-    const float rowH = lh + 2.0f * dpi;
-    const ImVec2 wp = ImGui::GetWindowPos();
-
-    float ry = wp.y + bar + 2.0f * dpi;
-    if (view.hasTrack()) {
-        const ImVec2 a(wp.x + 2.0f * dpi, ry), b(wp.x + w - 2.0f * dpi, ry + rowH);
-        dl->AddRectFilled(a, b, col32(focused ? p.cursorCell : p.gridBar));
-        const ImU32 tc = col32(focused ? p.cursorText : p.accent);
-        dl->AddText(ImVec2(a.x + 4.0f * dpi, ry + dpi), tc, ">01");
-        const std::string len = formatTime(framesToSeconds(view.info->totalFrames, view.sampleRate));
-        const float lenW = lh * 3.2f;
-        clippedText(dl, a.x + 4.0f * dpi + lh * 2.2f, b.x - lenW, ry + dpi, tc, trackTitle(view, gd3Jp_).c_str());
-        dl->AddText(ImVec2(b.x - lenW + 4.0f * dpi, ry + dpi), tc, len.c_str());
-        ry += rowH + 2.0f * dpi;
-        clippedText(dl, wp.x + 6.0f * dpi, wp.x + w - 4.0f * dpi, ry, col32(p.textDim), tr(Str::PlaylistNote));
-    } else {
-        clippedText(dl, wp.x + 6.0f * dpi, wp.x + w - 4.0f * dpi, ry + dpi, col32(p.textDim), tr(Str::NoFileHint));
-        ry += rowH + 2.0f * dpi;
-        clippedText(dl, wp.x + 6.0f * dpi, wp.x + w - 4.0f * dpi, ry, col32(p.textDim), tr(Str::PlaylistNote));
-    }
-    ImGui::End();
-}
-
-void PlayerScreen::drawInfo(const PlayerView& view, float x, float y, float w, float h)
+void PlayerScreen::drawInfo(const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h)
 {
     const Palette& p = palette();
     if (!beginPanel("##info", x, y, w, h)) { ImGui::End(); return; }
@@ -440,13 +507,13 @@ void PlayerScreen::drawInfo(const PlayerView& view, float x, float y, float w, f
 
     // Przelacznik jezyka tagow EN/JP (klik lub F3), przy prawej krawedzi paska.
     {
-        const char* lbl = gd3Jp_ ? "EN [JP]" : "[EN] JP";
+        const char* lbl = jp(view) ? "EN [JP]" : "[EN] JP";
         const ImVec2 ts = ImGui::CalcTextSize(lbl);
         const ImVec2 a(wp.x + w - ts.x - 12.0f * dpi, wp.y + 1.0f), b(wp.x + w - 2.0f * dpi, wp.y + bar);
         const bool hover = ImGui::IsMouseHoveringRect(a, b);
         if (hover) {
             ImGui::SetTooltip("%s", tr(Str::Gd3Toggle));
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) gd3Jp_ = !gd3Jp_;
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) toggleGd3(view, actions);
         }
         dl->AddText(ImVec2(wp.x + w - ts.x - 6.0f * dpi, wp.y + 2.0f * dpi),
                     col32(hover ? p.accent : p.text), lbl);
@@ -456,11 +523,11 @@ void PlayerScreen::drawInfo(const PlayerView& view, float x, float y, float w, f
     std::vector<Row> rows;
     if (view.hasTrack()) {
         const loader::LoadedTrack& t = *view.track;
-        const format::Gd3Language gl = gd3Lang(gd3Jp_);
+        const format::Gd3Language gl = gd3Lang(jp(view));
         auto add = [&](Str label, const std::string& value, bool notice = false) {
             if (!value.empty()) rows.push_back({tr(label), sanitizeForDisplay(value), notice});
         };
-        rows.push_back({tr(Str::GdTitle), trackTitle(view, gd3Jp_), false});
+        rows.push_back({tr(Str::GdTitle), trackTitle(view, jp(view)), false});
         if (t.gd3.present) {
             add(Str::GdGame, t.gd3.game(gl));
             add(Str::GdSystem, t.gd3.system(gl));
@@ -958,6 +1025,9 @@ void PlayerScreen::drawStatus(const PlayerView& view, PlayerActions& actions, fl
         text = std::string(tr(Str::ErrorPrefix)) + ": " + tr(Str::AudioUnavailable) + " (" +
                tr(Str::AudioSilentFallback) + ")  | " + view.audioError;
         color = p.error;
+    } else if (view.notice) {
+        text = view.notice->text;
+        color = view.notice->error ? p.error : p.notice;
     } else if (view.loading) {
         text = std::string(tr(Str::Loading)) + " " + view.loadingName + "...";
         color = p.text;
@@ -975,9 +1045,11 @@ void PlayerScreen::drawStatus(const PlayerView& view, PlayerActions& actions, fl
     }
     text = sanitizeForDisplay(text);
     clippedText(dl, x0, x1, ty, col32(color), text.c_str());
-    if (!text.empty() && (view.error || !view.audioError.empty()) && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
-        ImGui::IsWindowHovered())
-        actions.dismissError();
+    if (!text.empty() && (view.error || !view.audioError.empty() || view.notice) &&
+        ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::IsWindowHovered()) {
+        if (view.error || !view.audioError.empty()) actions.dismissError();
+        else actions.dismissNotice();
+    }
     ImGui::End();
 }
 

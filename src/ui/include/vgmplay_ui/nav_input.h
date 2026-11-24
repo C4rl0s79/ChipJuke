@@ -26,6 +26,12 @@ enum class Action {
     ToggleMute, ToggleSolo, UnmuteAll, ClearSolo, ResetMix,
     ToggleChannelsView,           // F4 / Select: pasek oscyloskopow maly -> duzy -> ukryty
     PatternFaster, PatternSlower, // +/-: krotszy / dluzszy wiersz wzorca (rowTicks)
+    // Playlista (E2).
+    Delete, MoveUp, MoveDown,     // Delete, Ctrl+Gora, Ctrl+Dol
+    Prev, Next,                   // P / N, klik lewego/prawego drazka pada
+    ToggleRepeat, Shuffle,        // F6, F7
+    ToggleSettings,               // F10
+    NewPlaylist, RenamePlaylist, DeletePlaylist,   // F8, F9, Shift+Delete (okna z potwierdzeniem)
     MuteChannel, SoloChannel   // arg = numer kanalu 0..9 (klawisze 1..9,0)
 };
 

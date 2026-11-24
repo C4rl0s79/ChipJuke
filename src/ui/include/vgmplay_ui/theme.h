@@ -35,6 +35,9 @@ struct Palette {
     ImVec4 vuOff;       // segment zgaszony
     ImVec4 muteOn;      // przelacznik MUTE wlaczony
     ImVec4 soloOn;      // przelacznik SOLO wlaczony
+    ImVec4 playing;     // biezacy wpis playlisty (znacznik)
+    ImVec4 overlay;     // przyciemnienie pod oknem dialogowym
+    ImVec4 dialog;      // tlo okna dialogowego
     ImVec4 channel[kChannelCount];
 };
 

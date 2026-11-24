@@ -18,15 +18,21 @@
 //    (CancelToken), a ich wyniki odrzucane po id.
 #pragma once
 
+#include "io_worker.h"
 #include "vgmplay/audio_out.hpp"
 #include "vgmplay/engine.hpp"
 #include "vgmplay/pcm_ring.hpp"
 #include "vgmplay_ui/channel_mix.h"
 #include "vgmplay_ui/channel_scopes.h"
 #include "vgmplay/chipstate.hpp"
+#include "vgmplay/library.hpp"
+#include "vgmplay/playlist.hpp"
+#include "vgmplay/settings.hpp"
+#include "vgmplay_ui/track_meta.h"
 #include "vgmplay_ui/player_view.h"
 #include "vgmplay_ui/scope_buffer.h"
 
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <filesystem>
@@ -49,7 +55,16 @@ struct ControllerOptions {
     // DIAGNOSTYKA: zamiast chipstate::buildPattern - sztuczny wzorzec z nutami dla kanalow ukladu.
     bool fakePattern = false;
     std::uint32_t rowTicks = 2205;   // poczatkowa dlugosc wiersza wzorca (ticki VGM 44100 Hz)
+    // Plik settings.json (playlists.json i library-cache.json leza w tym samym katalogu). Pusty =
+    // brak trwalosci (testy, tryb bez zapisu): nic nie jest czytane ani zapisywane.
+    std::filesystem::path settingsFile;
+    std::uint32_t saveDelayMs = 1000;   // opoznienie zapisu po ostatniej zmianie (debounce)
+    bool allowNetworkPaths = false;     // --allow-network-paths: UNC w playlists.json/settings/cache
+    bool noAppDataNotice = false;       // pokaz komunikat "brak AppData, ustawienia nie sa zapisywane"
 };
+
+// Prosby o okna systemowe (SDL) - obsluga w main/file_dialog; kontroler tylko prosi.
+enum class DialogRequest { AddFiles, AddFolder, ImportM3u, ExportM3u };
 
 class AppController final : public ui::PlayerActions {
 public:
@@ -67,8 +82,25 @@ public:
     // Wywolywany na watku UI po requestOpenFile().
     void setOpenDialogHandler(std::function<void()> handler) { openDialog_ = std::move(handler); }
 
-    // Dowolny watek. Zleca zaladowanie pliku na watku workera.
+    void setDialogHandler(std::function<void(DialogRequest)> handler) { dialogHandler_ = std::move(handler); }
+
+    // Dowolny watek. Zleca zaladowanie pliku na watku workera (poza playlista; autoplay z opcji).
     void loadFile(const std::filesystem::path& path);
+
+    // Dowolny watek (callbacki okien SDL, upuszczanie plikow): zlecenia trafiaja do skrzynki i sa
+    // wykonywane w pump() na watku UI, gdy playlisty sa wczytane.
+    void submitPaths(std::vector<std::filesystem::path> paths);   // pliki i foldery -> aktywna playlista
+    void submitFolder(const std::filesystem::path& folder);
+    void submitImportM3u(const std::filesystem::path& file);
+    void submitExportM3u(const std::filesystem::path& file);
+    // Watek UI. Plik z wiersza polecen: dodany do aktywnej playlisty i odtwarzany; sesja nie jest wznawiana.
+    void openStartupFile(const std::filesystem::path& file);
+
+    // Watek UI. Stan do odczytu/testow.
+    [[nodiscard]] const settings::Settings& settings() const { return settings_; }
+    [[nodiscard]] const playlist::PlaylistModel& playlists() const { return model_; }
+    [[nodiscard]] playlist::RepeatMode repeat() const { return repeat_; }
+    [[nodiscard]] bool playlistsReady() const { return playlistsReady_; }
 
     // Watek UI, raz na klatke: wyniki workera, komendy do silnika, zdarzenia, scope, snapshot.
     void pump();
@@ -91,6 +123,27 @@ public:
     void clearSolo() override;
     void setChannelScopesVisible(bool visible) override;
     void setPatternRowTicks(std::uint32_t ticks) override;
+    void playEntry(std::size_t index) override;
+    void playNext() override;
+    void playPrevious() override;
+    void removeEntry(std::size_t index) override;
+    void moveEntry(std::size_t from, std::size_t to) override;
+    void shufflePlaylist() override;
+    void setRepeat(playlist::RepeatMode mode) override;
+    void selectPlaylist(std::size_t index) override;
+    void createPlaylist(const std::string& name) override;
+    void renamePlaylist(std::size_t index, const std::string& name) override;
+    void deletePlaylist(std::size_t index) override;
+    void requestAddFolder() override;
+    void requestImportM3u() override;
+    void requestExportM3u() override;
+    void cancelScan() override;
+    void applySettings(const settings::Settings& s) override;
+    void downloadEntry(std::size_t index) override;
+    void dismissNotice() override;
+
+    // Prev w pierwszych kPrevRestartSeconds sekundach -> poprzedni wpis; pozniej poczatek utworu.
+    static constexpr double kPrevRestartSeconds = 3.0;
 
     // Stan komendy SetChannelScopes wyslanej do silnika (dla testow): ostatnia wartosc i liczba wyslan.
     [[nodiscard]] bool channelScopesRequested() const { return scopesRequested_; }
@@ -101,6 +154,16 @@ private:
         std::uint64_t id = 0;
         std::filesystem::path path;
         CancelToken cancel;
+        bool autoplay = true;
+    };
+    struct ScanEntry {
+        std::unique_ptr<library::ScanJob> job;
+        std::filesystem::path root;
+        std::string listName;   // playlista docelowa (po nazwie: indeksy moga sie zmienic)
+    };
+    struct Restore {
+        std::filesystem::path path;
+        std::uint64_t positionMs = 0;
     };
     struct PatternJob {
         std::uint64_t gen = 0;
@@ -120,10 +183,40 @@ private:
     struct Done {
         std::uint64_t id = 0;
         std::filesystem::path path;
+        bool autoplay = true;
         std::optional<Result<loader::LoadedTrack>> result;
     };
 
+    void loadFileEx(const std::filesystem::path& path, bool autoplay);
     void workerLoop();
+
+    // --- playlisty, ustawienia, sesja (watek UI) ---
+    void loadSettingsAtStart();
+    void installDefaultPlaylists();
+    void handleIo();
+    void handlePlaylistsLoaded(Result<playlist::PlaylistModel>& r);
+    void restoreSession();
+    void processInbox();
+    void processScans();
+    void flushPersistence(bool force);
+    [[nodiscard]] settings::Settings settingsForSave() const;
+    void markSettingsDirty();
+    void markPlaylistsDirty();
+    void applyRuntimeSettings(const settings::Settings& old, bool initial);
+    void loadCursor(bool autoplay);
+    void onTrackEnded();
+    std::size_t addEntries(std::size_t list, std::vector<playlist::Entry> entries, bool playIfIdle,
+                           std::size_t* firstIndex = nullptr);
+    std::optional<std::size_t> findList(const std::string& name) const;
+    void addAndPlay(const std::filesystem::path& path);
+    void addPathsNow(const std::vector<std::filesystem::path>& paths);
+    void addFolderNow(const std::filesystem::path& folder);
+    void importM3uDone(ImportDone& d);
+    void queueMetaFor(const std::vector<playlist::Entry>& entries);
+    bool nothingLoaded() const;
+    void postNotice(std::string text, std::vector<std::string> details = {}, bool error = false,
+                    bool needsAck = false);
+    void postInbox(std::function<void()> fn);
     static PatternDone buildPatternJob(const PatternJob& job);
     void requestPattern(const std::shared_ptr<const loader::LoadedTrack>& track,
                         const std::shared_ptr<const TrackInfo>& info);
@@ -188,6 +281,29 @@ private:
     std::uint64_t seekTarget_ = 0;
     std::uint64_t seekEpoch_ = 0;
     ui::PlayerView view_;
+
+    // Playlisty / ustawienia / sesja (watek UI, o ile nie zaznaczono inaczej).
+    settings::Settings settings_;
+    playlist::PlaylistModel model_;
+    playlist::RepeatMode repeat_ = playlist::RepeatMode::Off;
+    ui::TrackMetaStore metaStore_;
+    std::unique_ptr<IoWorker> io_;
+    bool persist_ = false;               // settingsFile podany
+    bool playlistsReady_ = false;
+    bool settingsBlocked_ = false;       // uszkodzony settings.json: brak zapisu do potwierdzenia
+    bool playlistsBlocked_ = false;      // uszkodzony playlists.json: brak zapisu do potwierdzenia
+    bool settingsDirty_ = false, playlistsDirty_ = false;
+    std::chrono::steady_clock::time_point settingsDirtyAt_, playlistsDirtyAt_, lastSessionTick_;
+    std::optional<std::filesystem::path> startupFile_;
+    std::optional<Restore> restore_;     // przewiniecie po TrackLoaded
+    bool restoreActive_ = false;         // sesja jest wznawiana (nie nadpisuj session)
+    std::vector<ScanEntry> scans_;
+    std::optional<ui::Notice> notice_;
+    std::chrono::steady_clock::time_point noticeUntil_;
+    std::uint64_t noticeSerial_ = 0;
+    std::function<void(DialogRequest)> dialogHandler_;
+    std::mutex inboxMutex_;
+    std::vector<std::function<void()>> inbox_;   // chroniony inboxMutex_
 };
 
 } // namespace vgmplay::app
