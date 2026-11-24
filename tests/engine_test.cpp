@@ -849,3 +849,52 @@ TEST_SUITE("engine/engine")
         CHECK(accepted == kCommandQueueSize);
     }
 }
+
+// Diagnostyka na zadanie: VGMPLAY_LIVE_COMPARE=<plik .vgm/.vgz> porownuje sciezke na zywo
+// (Engine -> PcmRing -> konsument jak callback) z renderem offline tym samym dekoderem.
+// Bez zmiennej przypadek jest pomijany. Wypisuje RMS sygnalu i roznicy (po wyrownaniu).
+#include <cstdlib>
+#include <string>
+#include "vgmplay/loader.hpp"
+TEST_SUITE("engine/live-compare")
+{
+    TEST_CASE("sciezka na zywo == render offline (VGMPLAY_LIVE_COMPARE)")
+    {
+        std::string path;
+#if defined(_WIN32)
+        { char* v = nullptr; size_t len = 0; if (_dupenv_s(&v, &len, "VGMPLAY_LIVE_COMPARE") == 0 && v) { path = v; } std::free(v); }
+#else
+        if (const char* v = std::getenv("VGMPLAY_LIVE_COMPARE")) path = v;
+#endif
+        if (path.empty()) { MESSAGE("pominiete: brak VGMPLAY_LIVE_COMPARE"); return; }
+        auto lt = loader::loadTrackFromFile(path);
+        REQUIRE(lt);
+        auto track = std::make_shared<const loader::LoadedTrack>(std::move(lt).value());
+
+        // offline
+        DecoderConfig dc; dc.sampleRate = 48000; dc.loopCount = 2; dc.fadeMs = 1000;
+        auto dec = makeVgmDecoder();
+        REQUIRE(dec->open(track->raw(), dc));
+        REQUIRE(dec->start());
+        std::vector<float> off, buf(2 * 512);
+        for (;;) { auto r = dec->render(buf.data(), 512, nullptr); off.insert(off.end(), buf.begin(), buf.begin() + 2 * r.frames); if (r.ended || r.frames == 0) break; }
+
+        // na zywo (8x czas rzeczywisty)
+        Rig rig(48000, 8.0, 2, 1000);
+        rig.recording = true;
+        rig.post(cmd::Load{track, true});
+        REQUIRE(rig.until([&] { return rig.count<evt::TrackEnded>() > 0; }, 600000));
+        rig.run(300);
+
+        // wyrownanie: pierwsza niezerowa probka
+        auto first = [](const std::vector<float>& v) { for (size_t i = 0; i < v.size(); ++i) if (std::fabs(v[i]) > 1e-4f) return i & ~size_t{1}; return size_t{0}; };
+        const size_t a0 = first(off), b0 = first(rig.rec);
+        const size_t n = std::min(off.size() - a0, rig.rec.size() - b0);
+        double s = 0, d = 0, maxd = 0; size_t worst = 0;
+        for (size_t i = 0; i < n; ++i) { const double x = off[a0 + i], y = rig.rec[b0 + i]; s += x * x; d += (x - y) * (x - y); if (std::fabs(x - y) > maxd) { maxd = std::fabs(x - y); worst = i; } }
+        MESSAGE("offline frames ", off.size() / 2, " live frames ", rig.rec.size() / 2, " offset ", (long long)b0 / 2 - (long long)a0 / 2,
+                " rms ", std::sqrt(s / n), " diff_rms ", std::sqrt(d / n), " max_diff ", maxd, " at frame ", worst / 2,
+                " underruns ", rig.pcm.underruns());
+        CHECK(std::sqrt(d / n) < 0.01 * std::sqrt(s / n) + 1e-6);
+    }
+}
