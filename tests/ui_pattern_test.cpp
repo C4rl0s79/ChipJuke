@@ -172,7 +172,11 @@ TEST_SUITE("ui/pattern_cells")
         formatNote(127, b);
         CHECK(std::string(b) == "G-9");
         formatNote(11, b);
-        CHECK(std::string(b) == "B--");                       // oktawa ujemna
+        CHECK(std::string(b) == "B-_");                       // oktawa -1: "_" zamiast cyfry
+        formatNote(1, b);
+        CHECK(std::string(b) == "C#_");
+        formatNote(0, b);
+        CHECK(std::string(b) == "C-_");
         formatNote(chipstate::kNoteNone, b);
         CHECK(std::string(b) == "---");
         formatNote(chipstate::kNoteOff, b);

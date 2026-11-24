@@ -282,3 +282,19 @@ TEST_CASE("chipstate YM2610: ADPCM-B - rejestry 0x10-0x1B na porcie 0, start/sto
     CHECK(p.at(2, kAdpcmB).note == kNoteNone);
     CHECK(p.at(3, kAdpcmB).note == kNoteOff);
 }
+
+TEST_CASE("chipstate YM2608: glissando F-number w bloku 0 (subbas, jak w Brandish 3 - Magma) daje nuty ponizej C-0, bez CH3 special")
+{
+    // 0x27 = 0x3A (tryb 0): ton kanalu 3 z 0xA2/0xA6. Blok 0, fnum 592 -> 15.7 Hz (MIDI 11); fnum 1402 -> 37.1 Hz (MIDI 26).
+    Stream v = opna();
+    v.p0(0x27, 0x3A);
+    fmSetup(v, 0, 2, 0, 592);
+    v.p0(0x28, 0xF2);
+    v.wait(735);
+    v.p0(0xA6, 0x05).p0(0xA2, 0x7A);         // blok 0, fnum 0x57A = 1402 (legato)
+    v.wait(735);
+    const Pattern p = build(v.bytes());
+    CHECK(p.at(0, 2).note == 11);
+    CHECK(p.at(0, 2).note == midiOf(592 * (kOpnaClock / 144.0) * std::ldexp(1.0, -21)));
+    CHECK(p.at(1, 2).note == 26);
+}
