@@ -23,8 +23,10 @@ inline constexpr std::int16_t kNoteNone = -1;     // pusta komorka
 inline constexpr std::int16_t kNoteOff = -2;      // wylaczenie nuty (key-off), FT2: "==="
 inline constexpr std::uint8_t kValueNone = 0xFF;  // brak instrumentu / glosnosci w komorce
 
-// Jedna komorka wzorca (kanal x wiersz). note: numer MIDI 0..127 (60 = C-4 w notacji
-// trackerow UI decyduje o oktawie), kNoteNone, kNoteOff. Komorka niesie zdarzenia, ktore
+// Jedna komorka wzorca (kanal x wiersz). note: numer MIDI 0..127, kNoteNone, kNoteOff.
+// Notacja w UI: oktawa = note/12 - 1 (60 = "C-4"), kNoteOff = "===", instrument i volume
+// jako 2 cyfry hex. effect: 0 = brak, 1..35 = znak 1-9, A-Z jak w FT2 (wiecej nie wyswietlane).
+// Komorka niesie zdarzenia, ktore
 // zaszly w czasie wiersza; zmiana glosnosci bez nowej nuty = tylko volume.
 struct Cell {
     std::int16_t note = kNoteNone;
