@@ -9,6 +9,7 @@ target_link_libraries(vgmplay_app PUBLIC
     vgmplay::options
     vgmplay::ui
     vgmplay::loader
+    vgmplay::chipstate
     vgmplay::engine
     vgmplay::audio_out)
 

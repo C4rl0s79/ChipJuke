@@ -61,6 +61,8 @@ bool mapKey(SDL_Scancode sc, bool shift, Action& a, int& arg)
     case SDL_SCANCODE_F2: a = Action::ToggleLang; return true;
     case SDL_SCANCODE_F3: a = Action::ToggleGd3Lang; return true;
     case SDL_SCANCODE_F4: a = Action::ToggleChannelsView; return true;
+    case SDL_SCANCODE_EQUALS: case SDL_SCANCODE_KP_PLUS: a = Action::PatternFaster; return true;
+    case SDL_SCANCODE_MINUS: case SDL_SCANCODE_KP_MINUS: a = Action::PatternSlower; return true;
     case SDL_SCANCODE_M: a = Action::ToggleMute; return true;
     case SDL_SCANCODE_S: a = Action::ToggleSolo; return true;
     case SDL_SCANCODE_U: a = Action::UnmuteAll; return true;

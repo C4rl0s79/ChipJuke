@@ -3,6 +3,7 @@
 // Ekrany nigdy nie widza Engine, AudioOut ani watkow; cala logika jest po stronie src/app.
 #pragma once
 
+#include "vgmplay/chipstate.hpp"
 #include "vgmplay/core.hpp"
 #include "vgmplay/decoder.hpp"
 #include "vgmplay/engine.hpp"
@@ -48,6 +49,15 @@ struct PlayerView {
     const ChannelScopeBuffer* channelScopes = nullptr;  // strumienie kanalow (po SetChannelScopes)
     const ChannelMix* mix = nullptr;                    // MUTE/SOLO kanalow biezacego utworu
 
+    // Wzorzec (E1.5): liczony w tle po zaladowaniu i po zmianie rowTicks. Pusty wskaznik = brak
+    // (budowany, blad, nic nie zaladowano) - odtwarzanie nie zalezy od wzorca. Wzorzec dotyczy
+    // zawsze biezacego utworu; jego rowTicks moze byc przez chwile inny niz patternRowTicks
+    // (przeliczanie w tle) - mapowanie pozycji uzywa pattern->rowTicks.
+    std::shared_ptr<const chipstate::Pattern> pattern;
+    bool patternBuilding = false;
+    bool patternHasEffects = false;                     // czy rysowac kolumne efektow
+    std::uint32_t patternRowTicks = 735;                // zadana dlugosc wiersza (ticki VGM, 44100 Hz)
+
     [[nodiscard]] bool hasTrack() const { return track && info; }
 };
 
@@ -75,6 +85,8 @@ public:
     // UI deklaruje, czy widok kanalow (oscyloskopy/VU) jest widoczny; kontroler wysyla komende do
     // silnika tylko przy zmianie.
     virtual void setChannelScopesVisible(bool visible) = 0;
+    // Dlugosc wiersza wzorca w tickach VGM (44100 Hz); kontroler przelicza wzorzec w tle.
+    virtual void setPatternRowTicks(std::uint32_t ticks) = 0;
 };
 
 } // namespace vgmplay::ui

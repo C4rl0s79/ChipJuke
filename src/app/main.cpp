@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -106,7 +107,9 @@ struct CommandLine {
     bool noAutoplay = false;
     bool diag = false;
     bool fakeChannelScopes = false;
-    bool patternView = false;
+    bool fakePattern = false;
+    int scopeStrip = 0;              // 0 = maly, 1 = duzy, 2 = ukryty
+    unsigned rowTicks = 735;
 };
 
 // Argumenty z GetCommandLineW (UTF-16): nazwy plikow spoza strony kodowej ANSI dzialaja poprawnie.
@@ -123,7 +126,10 @@ CommandLine parseCommandLine()
         else if (a == L"--no-autoplay") cl.noAutoplay = true;     // po zaladowaniu: Stopped
         else if (a == L"--diag") cl.diag = true;                  // start z diagnostyka (jak F12)
         else if (a == L"--fake-channel-scopes") cl.fakeChannelScopes = true; // DIAGNOSTYKA: syntetyczne przebiegi kanalow
-        else if (a == L"--pattern-view") cl.patternView = true;   // start z podgladem wzorca zamiast oscyloskopow
+        else if (a == L"--fake-pattern") cl.fakePattern = true;   // DIAGNOSTYKA: sztuczne nuty zamiast chipstate
+        else if (a == L"--scopes-large") cl.scopeStrip = 1;       // start z duzym paskiem oscyloskopow
+        else if (a == L"--scopes-hidden") cl.scopeStrip = 2;      // start bez paska oscyloskopow
+        else if (a.rfind(L"--row-ticks=", 0) == 0) cl.rowTicks = static_cast<unsigned>(std::max(1, _wtoi(a.c_str() + 12)));
         else if (a.rfind(L"--", 0) != 0 && !cl.file) cl.file = std::filesystem::path(a);
     }
     LocalFree(argv);
@@ -186,6 +192,8 @@ int main()
     options.nullAudio = cl.nullAudio;
     options.autoplay = !cl.noAutoplay;
     options.fakeChannelScopes = cl.fakeChannelScopes;
+    options.fakePattern = cl.fakePattern;
+    options.rowTicks = cl.rowTicks;
     auto controller = std::make_unique<vgmplay::app::AppController>(options);
     controller->setWakeCallback([wakeEvent] {
         SDL_Event e{};
@@ -202,7 +210,9 @@ int main()
     vgmplay::ui::NavInput nav;
     vgmplay::ui::PlayerScreen screen;
     screen.setDiagnosticsVisible(cl.diag);
-    screen.setScopesView(!cl.patternView);
+    screen.setScopeStrip(cl.scopeStrip == 1 ? vgmplay::ui::ScopeStrip::Large
+                         : cl.scopeStrip == 2 ? vgmplay::ui::ScopeStrip::Hidden
+                                              : vgmplay::ui::ScopeStrip::Small);
 
     bool running = true;
     bool minimized = false;

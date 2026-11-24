@@ -35,7 +35,7 @@ enum class Str {
     InfoChips,
     LoopNone,
     LoopDisabled,
-    Preview,
+    PatternBuilding,
     NoFileHint,
     NoFileTitle,
     Loading,
@@ -53,7 +53,7 @@ enum class Str {
     Fps,
     PanelChannels,
     ViewScopes,
-    ViewPattern,
+    RowSpeed,
     BtnUnmuteAll,
     BtnClearSolo,
     BtnMuteAll,
@@ -63,6 +63,11 @@ enum class Str {
     ScopeNa,
     HintChannels,
     ViewToggle,
+    StripSmall,
+    StripLarge,
+    StripHidden,
+    RowSpeedTip,
+    PatternNone,
     Count
 };
 

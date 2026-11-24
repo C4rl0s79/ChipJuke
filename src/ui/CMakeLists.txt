@@ -6,6 +6,7 @@ add_library(vgmplay_ui STATIC
     channel_widgets.cpp
     format.cpp
     nav_input.cpp
+    pattern_view.cpp
     player_screen.cpp
     scope_buffer.cpp
     strings.cpp
