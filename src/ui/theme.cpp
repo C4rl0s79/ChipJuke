@@ -44,6 +44,9 @@ const Palette& palette()
         /*vuOff*/ rgb(0x1C2230),
         /*muteOn*/ rgb(0xFF6B6B),
         /*soloOn*/ rgb(0xFFD54F),
+        /*playing*/ rgb(0x69F0AE),
+        /*overlay*/ rgb(0x000000, 0.55f),
+        /*dialog*/ rgb(0x161A24),
         /*channel*/
         {rgb(0xFF6B6B), rgb(0xFFB74D), rgb(0xFFEB6B), rgb(0x69F0AE), rgb(0x4FC3F7),
          rgb(0xC792EA)},
@@ -84,6 +87,10 @@ void applyTheme(float dpiScale)
     c[ImGuiCol_Text] = p.text;
     c[ImGuiCol_TextDisabled] = p.textDim;
     c[ImGuiCol_Border] = p.border;
+    c[ImGuiCol_FrameBg] = p.panelHeader;
+    c[ImGuiCol_FrameBgHovered] = p.gridBar;
+    c[ImGuiCol_FrameBgActive] = p.gridBar;
+    c[ImGuiCol_TextSelectedBg] = withAlpha(p.accent, 0.35f);
 }
 
 } // namespace vgmplay::ui

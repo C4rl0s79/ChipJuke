@@ -8,6 +8,7 @@
 #include "vgmplay_ui/nav_input.h"
 #include "vgmplay_ui/player_screen.h"
 #include "vgmplay_ui/strings.h"
+#include "vgmplay/settings.hpp"
 #include "vgmplay_ui/theme.h"
 
 #include <SDL3/SDL.h>
@@ -17,7 +18,9 @@
 
 #include <d3d11.h>
 #include <dxgi.h>
+#include <knownfolders.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -28,6 +31,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -101,7 +105,7 @@ const void* loadFontResource(int& size)
 }
 
 struct CommandLine {
-    std::optional<std::filesystem::path> file;
+    std::vector<std::filesystem::path> files;   // pliki/foldery z wiersza polecen
     bool pl = false;
     bool nullAudio = false;
     bool noAutoplay = false;
@@ -109,7 +113,8 @@ struct CommandLine {
     bool fakeChannelScopes = false;
     bool fakePattern = false;
     int scopeStrip = 0;              // 0 = maly, 1 = duzy, 2 = ukryty
-    unsigned rowTicks = 2205;
+    std::optional<unsigned> rowTicks;
+    std::optional<std::filesystem::path> settingsDir;   // --settings-dir=<katalog>: settings.json, playlists.json, cache
 };
 
 // Argumenty z GetCommandLineW (UTF-16): nazwy plikow spoza strony kodowej ANSI dzialaja poprawnie.
@@ -130,10 +135,32 @@ CommandLine parseCommandLine()
         else if (a == L"--scopes-large") cl.scopeStrip = 1;       // start z duzym paskiem oscyloskopow
         else if (a == L"--scopes-hidden") cl.scopeStrip = 2;      // start bez paska oscyloskopow
         else if (a.rfind(L"--row-ticks=", 0) == 0) cl.rowTicks = static_cast<unsigned>(std::max(1, _wtoi(a.c_str() + 12)));
-        else if (a.rfind(L"--", 0) != 0 && !cl.file) cl.file = std::filesystem::path(a);
+        else if (a.rfind(L"--settings-dir=", 0) == 0) cl.settingsDir = std::filesystem::path(a.substr(15));
+        else if (a.rfind(L"--", 0) != 0) cl.files.emplace_back(a);
     }
     LocalFree(argv);
     return cl;
+}
+
+// %APPDATA% z SHGetKnownFolderPath (nie ze zmiennej srodowiskowej). Sciezki UNC i \\?\ odrzucamy.
+bool roamingAppData(std::filesystem::path& out)
+{
+    PWSTR w = nullptr;
+    const HRESULT hr = SHGetKnownFolderPath(FOLDERID_RoamingAppData, KF_FLAG_DEFAULT, nullptr, &w);
+    bool ok = false;
+    if (SUCCEEDED(hr) && w) {
+        const std::wstring s = w;
+        ok = !s.empty() && s.rfind(L"\\\\", 0) != 0;   // zaczyna sie od \\ (UNC / \\?\) -> odrzuc
+        if (ok) out = s;
+    }
+    if (w) CoTaskMemFree(w);
+    return ok;
+}
+
+std::filesystem::path exeDirectory()
+{
+    const char* base = SDL_GetBasePath();   // UTF-8, z koncowym separatorem
+    return base ? std::filesystem::path(reinterpret_cast<const char8_t*>(base)) : std::filesystem::path();
 }
 
 } // namespace
@@ -189,11 +216,19 @@ int main()
     const Uint32 wakeEvent = SDL_RegisterEvents(1);
 
     vgmplay::app::ControllerOptions options;
+    if (cl.settingsDir) {
+        options.settingsFile = *cl.settingsDir / L"settings.json";
+    } else {
+        std::filesystem::path appData;
+        const bool appDataOk = roamingAppData(appData);
+        const auto loc = vgmplay::settings::resolveSettingsLocation(exeDirectory(), appDataOk ? appData : std::filesystem::path());
+        if (loc.portable || appDataOk) options.settingsFile = loc.file;
+        else options.noAppDataNotice = true;   // brak zapisywalnego katalogu: bez trwalosci
+    }
     options.nullAudio = cl.nullAudio;
     options.autoplay = !cl.noAutoplay;
     options.fakeChannelScopes = cl.fakeChannelScopes;
     options.fakePattern = cl.fakePattern;
-    options.rowTicks = cl.rowTicks;
     auto controller = std::make_unique<vgmplay::app::AppController>(options);
     controller->setWakeCallback([wakeEvent] {
         SDL_Event e{};
@@ -202,10 +237,29 @@ int main()
     });
     controller->setOpenDialogHandler(
         [&] { vgmplay::app::showOpenFileDialog(window, *controller); });
+    controller->setDialogHandler([&](vgmplay::app::DialogRequest r) {
+        using vgmplay::app::DialogRequest;
+        switch (r) {
+        case DialogRequest::AddFiles: vgmplay::app::showOpenFileDialog(window, *controller); break;
+        case DialogRequest::AddFolder: vgmplay::app::showOpenFolderDialog(window, *controller); break;
+        case DialogRequest::ImportM3u: vgmplay::app::showImportM3uDialog(window, *controller); break;
+        case DialogRequest::ExportM3u: vgmplay::app::showExportM3uDialog(window, *controller); break;
+        }
+    });
     controller->start();
     if (!controller->view().audioError.empty())
         std::fprintf(stderr, "audio: %s\n", controller->view().audioError.c_str());
-    if (cl.file) controller->loadFile(*cl.file);
+    {   // opcje wiersza polecen nadpisuja wczytane ustawienia
+        vgmplay::settings::Settings st = controller->settings();
+        bool changed = false;
+        if (cl.pl) { st.ui.language = vgmplay::i18n::Language::Pl; changed = true; }
+        if (cl.rowTicks) { st.ui.rowTicks = *cl.rowTicks; changed = true; }
+        if (changed) controller->applySettings(st);
+    }
+    if (cl.files.size() == 1 && !std::filesystem::is_directory(cl.files[0]))
+        controller->openStartupFile(cl.files[0]);   // jeden plik: dodany do playlisty i odtwarzany
+    else if (!cl.files.empty())
+        controller->submitPaths(cl.files);          // foldery/wiele plikow: do aktywnej playlisty
 
     vgmplay::ui::NavInput nav;
     vgmplay::ui::PlayerScreen screen;
@@ -221,9 +275,19 @@ int main()
     int fpsFrames = 0;
     float fps = 0.0f;
 
+    std::vector<std::filesystem::path> dropBatch;   // pliki upuszczone w jednym geście
+    bool dropOpen = false;
+    auto flushDrop = [&] {
+        if (!dropBatch.empty()) controller->submitPaths(std::move(dropBatch));
+        dropBatch.clear();
+    };
+
     auto handle = [&](SDL_Event& e) {
         ImGui_ImplSDL3_ProcessEvent(&e);
-        nav.handleEvent(e, SDL_GetTicks());
+        // Pole tekstowe (nazwa playlisty) przejmuje klawisze: bez skrotow i nawigacji.
+        const bool typing = e.type == SDL_EVENT_KEY_DOWN && ImGui::GetIO().WantTextInput;
+        if (!typing) nav.handleEvent(e, SDL_GetTicks());
+        if (typing) { settle = 12; return; }
         switch (e.type) {
         case SDL_EVENT_QUIT:
         case SDL_EVENT_WINDOW_CLOSE_REQUESTED: running = false; break;
@@ -239,15 +303,26 @@ int main()
         case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
             vgmplay::ui::applyTheme(SDL_GetWindowDisplayScale(window));
             break;
+        case SDL_EVENT_DROP_BEGIN: dropOpen = true; break;
         case SDL_EVENT_DROP_FILE:
             if (e.drop.data) {
                 // UTF-8 -> sciezka (bez strony kodowej ANSI).
-                controller->loadFile(std::filesystem::path(reinterpret_cast<const char8_t*>(e.drop.data)));
+                dropBatch.emplace_back(reinterpret_cast<const char8_t*>(e.drop.data));
             }
             break;
+        case SDL_EVENT_DROP_COMPLETE:
+            dropOpen = false;
+            flushDrop();
+            break;
         case SDL_EVENT_KEY_DOWN:
-            if (e.key.scancode == SDL_SCANCODE_O && (e.key.mod & SDL_KMOD_CTRL) && !e.key.repeat)
-                controller->requestOpenFile();
+            if ((e.key.mod & SDL_KMOD_CTRL) && !e.key.repeat) {
+                const bool shift = (e.key.mod & SDL_KMOD_SHIFT) != 0;
+                if (e.key.scancode == SDL_SCANCODE_O) {
+                    if (shift) controller->requestAddFolder();
+                    else controller->requestOpenFile();
+                } else if (e.key.scancode == SDL_SCANCODE_I) controller->requestImportM3u();
+                else if (e.key.scancode == SDL_SCANCODE_E) controller->requestExportM3u();
+            }
             break;
         default: break;
         }
@@ -264,6 +339,7 @@ int main()
             if (SDL_WaitEventTimeout(&e, 500)) handle(e);
         }
         while (SDL_PollEvent(&e)) handle(e);
+        if (!dropOpen) flushDrop();   // SDL bez DROP_COMPLETE (pojedynczy plik na starszych backendach)
         if (!running) break;
 
         controller->pump(); // takze w minimalizacji: zdarzenia silnika i wyniki ladowania

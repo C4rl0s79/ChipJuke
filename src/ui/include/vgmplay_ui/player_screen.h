@@ -12,6 +12,7 @@
 
 #include <imgui.h>
 
+#include <string>
 #include <vector>
 
 namespace vgmplay::ui {
@@ -33,6 +34,14 @@ public:
     // true => potrzebne ciagle klatki (odtwarzanie, ladowanie, przeciaganie suwaka).
     bool wantsAnimation(const PlayerView& view) const;
 
+    // --- Playlista / okna (E2); akcesory glownie dla testow ---
+    enum class DlgKind { None, NewList, RenameList, DeleteList, DeleteEntry, EntryMenu, Report };
+    DlgKind dialog() const { return dlg_.kind; }
+    bool settingsOpen() const { return settingsOpen_; }
+    void openSettings() { settingsOpen_ = true; setSel_ = 0; }
+    long long playlistSelection() const { return plSel_; }
+    bool modalOpen() const { return dlg_.kind != DlgKind::None || settingsOpen_; }
+
     bool diagnosticsVisible() const { return diag_; }
     void setDiagnosticsVisible(bool v) { diag_ = v; }
     void setTagsJapanese(bool jp) { gd3Jp_ = jp; }
@@ -53,8 +62,24 @@ private:
     void apply(const NavEvent& ev, Panel focus, const PlayerView& view, PlayerActions& actions);
     void drawTransport(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
                        float w, float h);
-    void drawPlaylist(NavInput& nav, const PlayerView& view, float x, float y, float w, float h);
-    void drawInfo(const PlayerView& view, float x, float y, float w, float h);
+    void drawPlaylist(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
+                      float w, float h);
+    void applyPlaylist(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
+    void applyModal(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
+    void drawModal(const PlayerView& view, PlayerActions& actions, float W, float H);
+    void drawSettings(const PlayerView& view, PlayerActions& actions, float W, float H);
+    void drawDialog(const PlayerView& view, PlayerActions& actions, float W, float H);
+    void changeSetting(int row, int dir, const PlayerView& view, PlayerActions& actions);
+    void openDialog(DlgKind k, std::size_t index = 0, std::string text = {});
+    void closeDialog();
+    void confirmDialog(const PlayerView& view, PlayerActions& actions);
+    [[nodiscard]] bool jp(const PlayerView& v) const
+    {
+        return v.settings ? v.settings->ui.gd3Language == format::Gd3Language::Jp : gd3Jp_;
+    }
+    void toggleLanguage(const PlayerView& view, PlayerActions& actions);
+    void toggleGd3(const PlayerView& view, PlayerActions& actions);
+    void drawInfo(const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h);
     void drawTracker(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
                      float w, float h);
     void drawChannelToolbar(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
@@ -63,6 +88,27 @@ private:
     void drawScope(const PlayerView& view, float x, float y, float w, float h);
     void drawStatus(const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h);
     void drawDiagnostics(const PlayerView& view, const FrameInfo& info, float x, float y, float w);
+
+    struct Dialog {
+        DlgKind kind = DlgKind::None;
+        int sel = 0;
+        std::size_t index = 0;
+        std::string text;
+        bool focusText = false;
+        int age = 0;
+    };
+    Dialog dlg_;
+    bool settingsOpen_ = false;
+    int setSel_ = 0;
+    std::uint64_t seenNotice_ = 0;
+    long long plSel_ = 0;
+    long long plLastCursor_ = -2;
+    std::size_t plLastList_ = static_cast<std::size_t>(-1);
+    int plScroll_ = 0;
+    int plVisible_ = 1;
+    int dragFrom_ = -1;
+    bool dragging_ = false;
+    ImVec2 dragStart_;
 
     bool gd3Jp_ = false;
     bool diag_ = false;

@@ -2,6 +2,8 @@
 # Dopisuj zrodla i zaleznosci tylko w tym pliku.
 add_library(vgmplay_app STATIC
     app_controller.cpp
+    app_playlists.cpp
+    io_worker.cpp
 )
 add_library(vgmplay::app ALIAS vgmplay_app)
 target_include_directories(vgmplay_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -11,6 +13,9 @@ target_link_libraries(vgmplay_app PUBLIC
     vgmplay::loader
     vgmplay::chipstate
     vgmplay::engine
+    vgmplay::playlist
+    vgmplay::library
+    vgmplay::settings
     vgmplay::audio_out)
 
 add_executable(vgmplay
@@ -23,7 +28,7 @@ target_link_libraries(vgmplay PRIVATE
     vgmplay::app
     imgui::imgui
     SDL3::SDL3
-    d3d11 dxgi d3dcompiler shell32)
+    d3d11 dxgi d3dcompiler shell32 ole32)
 set_property(SOURCE app.rc APPEND PROPERTY OBJECT_DEPENDS
     "${CMAKE_SOURCE_DIR}/assets/fonts/BIZUDGothic-Regular.ttf")
 

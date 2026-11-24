@@ -17,6 +17,7 @@ bool isRepeatable(Action a)
     switch (a) {
     case Action::Up: case Action::Down: case Action::Left: case Action::Right:
     case Action::PageUp: case Action::PageDown:
+    case Action::MoveUp: case Action::MoveDown:
         return true;
     default:
         return false;
@@ -37,12 +38,19 @@ bool mapPadButton(Uint8 b, Action& a)
     case SDL_GAMEPAD_BUTTON_WEST: a = Action::ToggleSolo; return true;      // X
     case SDL_GAMEPAD_BUTTON_NORTH: a = Action::ResetMix; return true;       // Y
     case SDL_GAMEPAD_BUTTON_BACK: a = Action::ToggleChannelsView; return true;
+    case SDL_GAMEPAD_BUTTON_LEFT_STICK: a = Action::Prev; return true;
+    case SDL_GAMEPAD_BUTTON_RIGHT_STICK: a = Action::Next; return true;
     default: return false;
     }
 }
 
-bool mapKey(SDL_Scancode sc, bool shift, Action& a, int& arg)
+bool mapKey(SDL_Scancode sc, bool shift, bool ctrl, Action& a, int& arg)
 {
+    if (ctrl) { // Ctrl+Gora/Dol przenosi wpis; inne Ctrl+... naleza do aplikacji (Ctrl+O itd.)
+        if (sc == SDL_SCANCODE_UP) { a = Action::MoveUp; return true; }
+        if (sc == SDL_SCANCODE_DOWN) { a = Action::MoveDown; return true; }
+        return false;
+    }
     if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_0) { // 1..9, 0 -> kanaly 0..9
         arg = static_cast<int>(sc - SDL_SCANCODE_1);
         a = shift ? Action::SoloChannel : Action::MuteChannel;
@@ -68,6 +76,14 @@ bool mapKey(SDL_Scancode sc, bool shift, Action& a, int& arg)
     case SDL_SCANCODE_U: a = Action::UnmuteAll; return true;
     case SDL_SCANCODE_C: a = Action::ClearSolo; return true;
     case SDL_SCANCODE_R: a = Action::ResetMix; return true;
+    case SDL_SCANCODE_DELETE: a = shift ? Action::DeletePlaylist : Action::Delete; return true;
+    case SDL_SCANCODE_F8: a = Action::NewPlaylist; return true;
+    case SDL_SCANCODE_F9: a = Action::RenamePlaylist; return true;
+    case SDL_SCANCODE_P: a = Action::Prev; return true;
+    case SDL_SCANCODE_N: a = Action::Next; return true;
+    case SDL_SCANCODE_F6: a = Action::ToggleRepeat; return true;
+    case SDL_SCANCODE_F7: a = Action::Shuffle; return true;
+    case SDL_SCANCODE_F10: a = Action::ToggleSettings; return true;
     case SDL_SCANCODE_F12: a = Action::ToggleDiag; return true;
     default: return false; // Tab obslugiwany osobno
     }
@@ -157,7 +173,7 @@ void NavInput::handleEvent(const SDL_Event& e, std::uint64_t now)
         }
         Action a;
         int arg = 0;
-        if (mapKey(e.key.scancode, (e.key.mod & SDL_KMOD_SHIFT) != 0, a, arg)) press(key, a, now, arg);
+        if (mapKey(e.key.scancode, (e.key.mod & SDL_KMOD_SHIFT) != 0, (e.key.mod & SDL_KMOD_CTRL) != 0, a, arg)) press(key, a, now, arg);
         break;
     }
     case SDL_EVENT_KEY_UP: // puszczenie zawsze, bez warunku na fokus

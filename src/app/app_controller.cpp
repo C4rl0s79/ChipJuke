@@ -57,6 +57,9 @@ AppController::AppController(ControllerOptions options) : options_(options)
 
 AppController::~AppController()
 {
+    scans_.clear();   // ScanJob: anuluje i dolacza watek
+    flushPersistence(true);
+    io_.reset();      // dopisuje zalegle zapisy i dolacza watek
     {
         std::lock_guard lock(mutex_);
         quit_ = true;
@@ -75,6 +78,8 @@ bool AppController::start()
     if (started_) return true;
     started_ = true;
 
+    loadSettingsAtStart();
+
     audio_out::Config cfg;
     cfg.backend = options_.nullAudio ? audio_out::Config::Backend::Null : audio_out::Config::Backend::Default;
     auto opened = audio_.open(cfg);
@@ -90,7 +95,7 @@ bool AppController::start()
     engine_ = std::make_unique<engine::Engine>(ec, pcm_);
     engineThread_ = std::thread([this] { engine_->run(); });
     view_.sampleRate = rate;
-    send(engine::cmd::SetVolume{volume_});
+    applyRuntimeSettings(settings::Settings{}, true);
 
     if (opened.ok()) {
         auto s = audio_.start();
@@ -100,13 +105,26 @@ bool AppController::start()
     }
 
     worker_ = std::thread([this] { workerLoop(); });
+
+    IoWorker::Paths paths;
+    if (persist_) {
+        const std::filesystem::path dir = options_.settingsFile.parent_path();
+        paths.settings = options_.settingsFile;
+        paths.playlists = dir / L"playlists.json";
+        paths.cache = dir / L"library-cache.json";
+    }
+    io_ = std::make_unique<IoWorker>(paths, [this] { if (wake_) wake_(); });
+    if (persist_) io_->loadPlaylists();
+    else installDefaultPlaylists();
     pump();
     return true;
 }
 
 // ------------------------------------------------------------------ worker ladowania
 
-void AppController::loadFile(const std::filesystem::path& path)
+void AppController::loadFile(const std::filesystem::path& path) { loadFileEx(path, options_.autoplay); }
+
+void AppController::loadFileEx(const std::filesystem::path& path, bool autoplay)
 {
     {
         std::lock_guard lock(mutex_);
@@ -114,7 +132,7 @@ void AppController::loadFile(const std::filesystem::path& path)
         currentCancel_ = CancelToken();
         const std::uint64_t id = ++latestId_;
         latestPath_ = path;
-        pending_ = Request{id, path, currentCancel_};
+        pending_ = Request{id, path, currentCancel_, autoplay};
     }
     cv_.notify_one();
     if (wake_) wake_();
@@ -149,6 +167,7 @@ void AppController::workerLoop()
         Done done;
         done.id = req->id;
         done.path = req->path;
+        done.autoplay = req->autoplay;
         try {
             done.result.emplace(loader::loadTrackFromFile(req->path, {}, req->cancel));
         } catch (const std::exception& e) {
@@ -238,13 +257,15 @@ void AppController::handleDone(Done& d)
         if (d.result->error().code == ErrorCode::Cancelled) return;
         error_ = d.result->error();
         errorFile_ = fileNameUtf8(d.path);
+        restore_.reset();
+        restoreActive_ = false;
         return; // poprzedni utwor gra dalej
     }
     error_.reset();
     errorFile_.clear();
     auto track = std::make_shared<const loader::LoadedTrack>(std::move(d.result->value()));
     inflight_.push_back(track);
-    send(engine::cmd::Load{track, options_.autoplay});
+    send(engine::cmd::Load{track, d.autoplay});
     if (!options_.fakePattern) requestPattern(track, nullptr);   // worker liczy wzorzec od razu po loaderze
 }
 
@@ -256,12 +277,37 @@ void AppController::handleEvent(const engine::EngineEvent& e)
             inflight_.pop_front();
         }
         info_ = loaded->info;
+        if (track_) { // tytul GD3 do listy (zanim worker metadanych zdazy); dlugosc zostaje z workera
+            const ui::TrackDisplay* old = metaStore_.find(track_->path);
+            ui::TrackDisplay d = old ? *old : ui::TrackDisplay{};
+            if (track_->gd3.present) {
+                d.trackEn = track_->gd3.track(format::Gd3Language::En);
+                d.trackJp = track_->gd3.track(format::Gd3Language::Jp);
+                d.failed = false;
+                metaStore_.put(track_->path, std::move(d));
+            }
+        }
+        if (restore_ && track_) { // wznowienie sesji: przewin tylko dla tej samej sciezki
+            if (restore_->positionMs > 0 && ui::pathKey(restore_->path) == ui::pathKey(track_->path)) {
+                const std::uint64_t frame = restore_->positionMs * view_.sampleRate / 1000;
+                const std::uint64_t limit = info_->introFrames + info_->loopFrames;
+                if (limit > 0 && frame < limit) send(engine::cmd::Seek{frame});
+            }
+            restore_.reset();
+        }
+        restoreActive_ = false;
+        lastSessionTick_ = std::chrono::steady_clock::now();
+        markSettingsDirty();   // session.trackPath
         if (options_.fakePattern) requestPattern(track_, info_);   // sztuczny wzorzec potrzebuje ukladu kanalow
         mix_.setLayout(info_->layout); // silnik zeruje MUTE/SOLO przy Load
         if (scopesRequested_) sendChannelScopes(true); // stan silnika po Load nie jest gwarantowany
         error_.reset();
         errorFile_.clear();
+    } else if (std::holds_alternative<engine::evt::TrackEnded>(e)) {
+        onTrackEnded();
     } else if (const auto* err = std::get_if<engine::evt::Error>(&e)) {
+        restore_.reset();
+        restoreActive_ = false;
         error_ = err->error;
         if (!inflight_.empty()) { // blad ladowania: silnik zamknal poprzedni utwor
             errorFile_ = fileNameUtf8(inflight_.front()->path);
@@ -292,6 +338,9 @@ void AppController::pump()
         done.swap(done_);
         patterns.swap(patternDone_);
     }
+    handleIo();
+    processInbox();
+    processScans();
     for (Done& d : done) handleDone(d);
     for (PatternDone& pd : patterns) {
         if (pd.gen != patternGen_) continue;   // przestarzaly (nowszy utwor lub rowTicks)
@@ -333,6 +382,23 @@ void AppController::pump()
         scope_->push(*scopeBlock_);
         channelScopes_.push(*scopeBlock_);
     }
+
+    flushPersistence(false);
+    if (notice_ && !notice_->needsAck && std::chrono::steady_clock::now() >= noticeUntil_ && notice_->details.empty())
+        notice_.reset();
+    view_.playlists = &model_;
+    view_.meta = &metaStore_;
+    view_.settings = &settings_;
+    view_.repeat = repeat_;
+    view_.playlistsLoading = persist_ && !playlistsReady_;
+    view_.scan = {};
+    for (const ScanEntry& se : scans_) {
+        const library::ScanProgress pr = se.job->progress();
+        view_.scan.active = true;
+        view_.scan.files += pr.filesFound;
+        view_.scan.dirs += pr.directoriesVisited;
+    }
+    view_.notice = notice_;
 
     view_.volume = volume_;
     view_.loading = (latest != handled) || !inflight_.empty();
@@ -424,6 +490,10 @@ void AppController::setVolume(float linear)
 {
     volume_ = std::clamp(linear, 0.0f, 1.0f);
     view_.volume = volume_;
+    if (settings_.playback.volume != volume_) {
+        settings_.playback.volume = volume_;
+        markSettingsDirty();
+    }
     send(engine::cmd::SetVolume{volume_});
 }
 
@@ -460,6 +530,10 @@ void AppController::setPatternRowTicks(std::uint32_t ticks)
     if (ticks == rowTicks_) return;
     rowTicks_ = ticks;
     view_.patternRowTicks = ticks;
+    if (settings_.ui.rowTicks != ticks) {
+        settings_.ui.rowTicks = ticks;
+        markSettingsDirty();
+    }
     if (track_ && patternTrack_ == track_) requestPattern(track_, info_);   // przeliczenie w tle
     // Wzorzec utworu jeszcze ladowanego dostanie nowe rowTicks po odebraniu wyniku (pump).
 }
