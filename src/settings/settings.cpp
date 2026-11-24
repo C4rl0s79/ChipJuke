@@ -25,6 +25,8 @@ constexpr std::size_t kMaxCores = 128;
 constexpr std::size_t kMaxStringBytes = 4096;
 constexpr std::size_t kMaxDeviceIdBytes = 512;
 constexpr const char* kSettingsFileName = "settings.json";
+constexpr const wchar_t* kAppDataDirName = L"ChipJuke";        // [E5] nazwa produktu
+constexpr const wchar_t* kLegacyAppDataDirName = L"vgmplay";   // do 1.0.0-rc1 (przed zmiana nazwy)
 
 // Sciezka zapisana w pliku (ostatnie foldery, session.trackPath) musi byc bezwzgledna: "C:\x", "\\srv\sh\x".
 // Odrzuca wzgledne ("a\b", "..\x"), zalezne od biezacego katalogu ("\x") i od biezacego katalogu dysku ("C:x").
@@ -410,12 +412,27 @@ bool isDirectoryWritable(const std::filesystem::path& dir)
     return true;
 }
 
+bool migrateLegacyAppDataDir(const std::filesystem::path& appDataDir)
+{
+    if (appDataDir.empty() || fsutil::startsWithDoubleSeparator(appDataDir.native())) return false;
+    std::error_code ec;
+    const auto oldDir = appDataDir / kLegacyAppDataDirName;
+    const auto newDir = appDataDir / kAppDataDirName;
+    if (std::filesystem::exists(newDir, ec) || ec) return false;
+    ec.clear();
+    const auto st = std::filesystem::symlink_status(oldDir, ec);
+    if (ec || st.type() != std::filesystem::file_type::directory) return false;   // bez dowiazan i junctions
+    // Na Windows "vgmplay" i "ChipJuke" to rozne nazwy; rename w obrebie jednego wolumenu jest atomowy.
+    std::filesystem::rename(oldDir, newDir, ec);
+    return !ec;
+}
+
 SettingsLocation resolveSettingsLocation(const std::filesystem::path& exeDir, const std::filesystem::path& appDataDir)
 {
     if (isDirectoryWritable(exeDir)) return SettingsLocation{exeDir / kSettingsFileName, true};
     // appDataDir ze sciezka sieciowa / przestrzenia urzadzen (UNC, \?\, \.\) jest odrzucany: traktujemy jak brak.
     if (appDataDir.empty() || fsutil::startsWithDoubleSeparator(appDataDir.native())) return SettingsLocation{exeDir / kSettingsFileName, false};   // ostatnia deska ratunku
-    return SettingsLocation{appDataDir / L"vgmplay" / kSettingsFileName, false};
+    return SettingsLocation{appDataDir / kAppDataDirName / kSettingsFileName, false};
 }
 
 Result<Settings> loadSettings(const std::filesystem::path& file, std::vector<Warning>* warnings, bool allowNetworkPaths)

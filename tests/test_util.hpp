@@ -19,8 +19,11 @@ namespace vgmplay::testutil {
 // instancje, fuzz, CI). Zmienna srodowiskowa VGMPLAY_PERF_STRICT=1 przywraca ostre progi (pomiary na spokojnej maszynie).
 inline bool perfStrict()
 {
-    const char* v = std::getenv("VGMPLAY_PERF_STRICT");
-    return v && *v && *v != '0';
+    char* v = nullptr;
+    std::size_t n = 0;
+    const bool on = _dupenv_s(&v, &n, "VGMPLAY_PERF_STRICT") == 0 && v && *v && *v != '0';
+    std::free(v);
+    return on;
 }
 inline double perfLimit(double strictLimit) { return perfStrict() ? strictLimit : strictLimit * 5.0; }
 

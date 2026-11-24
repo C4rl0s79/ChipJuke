@@ -1,28 +1,32 @@
-# vgmplay — instrukcja użytkownika (PL)
+# ChipJuke — instrukcja użytkownika (PL)
 
-vgmplay to odtwarzacz plików VGM / VGZ w stylu trackera dla Windows. Wersja 1.0.0-rc1 (kandydat na wydanie).
+> ChipJuke to niezależny projekt. Emulację układów zapewnia biblioteka libvgm (Valley Bell), wbudowana statycznie
+> w `ChipJuke.exe`. Wcześniejsza robocza nazwa to *vgmplay*: ustawienia z `%APPDATA%\vgmplay` są przy pierwszym
+> uruchomieniu przenoszone do `%APPDATA%\ChipJuke`.
+
+ChipJuke to odtwarzacz plików VGM / VGZ w stylu trackera dla Windows. Wersja 1.0.0-rc1 (kandydat na wydanie).
 Licencja: GPL-2.0-only. Angielski opis projektu: [README.md](../README.md).
 
 ## Wymagania
 
 - Windows 10 22H2 lub nowszy, 64-bitowy.
 - Karta graficzna ze sterownikiem Direct3D 11 oraz urządzenie wyjściowe audio.
-- Nic nie trzeba instalować: jeden plik `vgmplay.exe`, bez dodatkowych DLL i bez pakietu Visual C++ Redistributable.
+- Nic nie trzeba instalować: jeden plik `ChipJuke.exe`, bez dodatkowych DLL i bez pakietu Visual C++ Redistributable.
 
 ## Instalacja (wersja przenośna)
 
-1. Pobierz `vgmplay-<wersja>-win64.zip`.
-2. Opcjonalnie sprawdź sumę: `Get-FileHash vgmplay-<wersja>-win64.zip -Algorithm SHA256` (PowerShell) — wynik musi
+1. Pobierz `ChipJuke-<wersja>-win64.zip`.
+2. Opcjonalnie sprawdź sumę: `Get-FileHash ChipJuke-<wersja>-win64.zip -Algorithm SHA256` (PowerShell) — wynik musi
    być taki jak w `SHA256SUMS.txt`.
-3. Rozpakuj ZIP w dowolnym miejscu (np. `D:\Narzedzia\vgmplay`) i uruchom `vgmplay.exe`.
+3. Rozpakuj ZIP w dowolnym miejscu (np. `D:\Narzedzia\ChipJuke`) i uruchom `ChipJuke.exe`.
 
-Nie ma instalatora. Odinstalowanie to usunięcie folderu (oraz `%APPDATA%\vgmplay`, jeśli powstał).
+Nie ma instalatora. Odinstalowanie to usunięcie folderu (oraz `%APPDATA%\ChipJuke`, jeśli powstał).
 W folderze `samples\` są krótkie, syntetyczne pliki testowe z generatora projektu (to nie są rippy z gier).
 
 ## Uruchamianie
 
 ```
-vgmplay.exe [opcje] [plik.vgm|plik.vgz|folder ...]
+ChipJuke.exe [opcje] [plik.vgm|plik.vgz|folder ...]
 ```
 
 - bez argumentów: wraca ostatnia sesja (playlisty, utwór, pozycja) — w pauzie;
@@ -45,9 +49,9 @@ Opcje `--fake-channel-scopes` i `--fake-pattern` służą tylko do diagnostyki.
 
 ## Gdzie zapisywane są ustawienia
 
-Pliki `settings.json`, `playlists.json` i `library-cache.json` leżą **obok `vgmplay.exe`**, jeśli ten folder
+Pliki `settings.json`, `playlists.json` i `library-cache.json` leżą **obok `ChipJuke.exe`**, jeśli ten folder
 jest zapisywalny (tryb przenośny; nie trzeba żadnego pliku-znacznika). W przeciwnym razie (np. rozpakowanie do
-`C:\Program Files`) trafiają do `%APPDATA%\vgmplay`. Flaga `--settings-dir=<katalog>` ma pierwszeństwo.
+`C:\Program Files`) trafiają do `%APPDATA%\ChipJuke`. Flaga `--settings-dir=<katalog>` ma pierwszeństwo.
 Uszkodzony plik ustawień jest zachowywany jako kopia `.bad`, a program startuje z ustawieniami domyślnymi.
 
 ## Okno programu
@@ -152,5 +156,5 @@ na litery dysków używane z programem.
 
 ## Licencje i kod źródłowy
 
-vgmplay jest na licencji GPL-2.0-only (plik `LICENSE`). Składniki zewnętrzne: `THIRD_PARTY_NOTICES.md` i folder
+ChipJuke jest na licencji GPL-2.0-only (plik `LICENSE`). Składniki zewnętrzne: `THIRD_PARTY_NOTICES.md` i folder
 `licenses\`. Kod źródłowy odpowiadający tej binarce: plik `SOURCE.txt` (adres repozytorium i commit).

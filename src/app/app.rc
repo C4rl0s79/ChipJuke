@@ -3,7 +3,7 @@
 #include "app_resources.h"
 #include <vgmplay/version_rc.h>   // generowany przez CMake (wersja z project(VERSION))
 
-IDI_APP_ICON ICON "vgmplay.ico"
+IDI_APP_ICON ICON "chipjuke.ico"
 
 IDR_FONT_UI RCDATA "../../assets/fonts/BIZUDGothic-Regular.ttf"
 
@@ -24,13 +24,13 @@ BEGIN
     BEGIN
         BLOCK "040904B0"   // en-US, Unicode
         BEGIN
-            VALUE "CompanyName",      "vgmplay contributors\0"
-            VALUE "FileDescription",  "vgmplay - VGM/VGZ tracker-style player\0"
+            VALUE "CompanyName",      "ChipJuke contributors\0"
+            VALUE "FileDescription",  "ChipJuke - tracker-style VGM/VGZ jukebox\0"
             VALUE "FileVersion",      VGMPLAY_RC_VERSION_STR " (" VGMPLAY_RC_GIT_COMMIT ")\0"
-            VALUE "InternalName",     "vgmplay\0"
-            VALUE "LegalCopyright",   "Copyright (C) vgmplay contributors. Licensed under GPL-2.0-only.\0"
-            VALUE "OriginalFilename", "vgmplay.exe\0"
-            VALUE "ProductName",      "vgmplay\0"
+            VALUE "InternalName",     "ChipJuke\0"
+            VALUE "LegalCopyright",   "Copyright (C) ChipJuke contributors. Licensed under GPL-2.0-only.\0"
+            VALUE "OriginalFilename", "ChipJuke.exe\0"
+            VALUE "ProductName",      "ChipJuke\0"
             VALUE "ProductVersion",   VGMPLAY_RC_VERSION_STR "\0"
         END
     END

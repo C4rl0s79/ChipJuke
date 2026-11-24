@@ -26,13 +26,16 @@ add_executable(vgmplay
     app.rc
 )
 target_include_directories(vgmplay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# Nazwa produktu: ChipJuke (cel CMake i przestrzen nazw w kodzie pozostaja "vgmplay").
+set_target_properties(vgmplay PROPERTIES OUTPUT_NAME "ChipJuke")
 target_link_libraries(vgmplay PRIVATE
     vgmplay::app
     imgui::imgui
     SDL3::SDL3
     d3d11 dxgi d3dcompiler shell32 ole32)
 set_property(SOURCE app.rc APPEND PROPERTY OBJECT_DEPENDS
-    "${CMAKE_SOURCE_DIR}/assets/fonts/BIZUDGothic-Regular.ttf")
+    "${CMAKE_SOURCE_DIR}/assets/fonts/BIZUDGothic-Regular.ttf"
+    "${CMAKE_CURRENT_SOURCE_DIR}/chipjuke.ico")
 
 if(MSVC)
     # Release: podsystem WINDOWS (bez konsoli); Debug: CONSOLE (logi na stderr).

@@ -132,6 +132,10 @@ struct SettingsLocation {
 // exeDir: katalog pliku wykonywalnego. appDataDir: %APPDATA% (wstrzykiwane dla testow).
 // appDataDir zaczynajacy sie od dwoch separatorow (UNC, \?\) jest ignorowany [E2-sec]: wynik jak dla pustego
 // (settings.json obok exe, portable=false).
+// [E5] Zmiana nazwy produktu na ChipJuke: katalog w %APPDATA% to "ChipJuke". Jesli go nie ma, a istnieje
+// dawny "%APPDATA%\vgmplay" (prawdziwy katalog, nie dowiazanie), przenosi go pod nowa nazwe (rename).
+// Zwraca true, gdy przeniesiono. Wolac przed resolveSettingsLocation (watek startowy).
+bool migrateLegacyAppDataDir(const std::filesystem::path& appDataDir);
 [[nodiscard]] SettingsLocation resolveSettingsLocation(const std::filesystem::path& exeDir,
                                                        const std::filesystem::path& appDataDir);
 [[nodiscard]] bool isDirectoryWritable(const std::filesystem::path& dir);

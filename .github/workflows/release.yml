@@ -2,7 +2,7 @@ name: Release
 
 # Wydanie powstaje po wypchnieciu tagu v* (np. v1.0.0-rc1). Tag musi zgadzac sie z wersja w CMakeLists.txt
 # i wskazywac commit z historii origin/main.
-# Wynik: DRAFT release na GitHubie z plikami vgmplay-<wersja>-win64.zip i SHA256SUMS.txt
+# Wynik: DRAFT release na GitHubie z plikami ChipJuke-<wersja>-win64.zip i SHA256SUMS.txt
 # (publikacje robi czlowiek po sprawdzeniu). Tag z sufiksem pre-release (np. -rc1) jest oznaczany jako pre-release.
 #
 # Dwa joby o rozdzielonych uprawnieniach:
@@ -84,7 +84,7 @@ jobs:
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: vgmplay-win64
+          name: ChipJuke-win64
           path: |
             out/dist/*.zip
             out/dist/SHA256SUMS.txt
@@ -105,7 +105,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: vgmplay-win64
+          name: ChipJuke-win64
           path: dist
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -121,11 +121,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           $prerelease = if ($env:GITHUB_REF_NAME -match '-') { '--prerelease' } else { '' }
-          $zip = Get-ChildItem dist -Filter 'vgmplay-*-win64.zip' | Select-Object -First 1
+          $zip = Get-ChildItem dist -Filter 'ChipJuke-*-win64.zip' | Select-Object -First 1
           if (-not $zip) { throw 'Brak ZIP w dist' }
           if (-not (Test-Path dist/SHA256SUMS.txt)) { throw 'Brak SHA256SUMS.txt w dist' }
           $ghArgs = @('release', 'create', $env:GITHUB_REF_NAME, $zip.FullName, 'dist/SHA256SUMS.txt',
-                    '--draft', '--verify-tag', '--title', "vgmplay $($env:GITHUB_REF_NAME.TrimStart('v'))",
+                    '--draft', '--verify-tag', '--title', "ChipJuke $($env:GITHUB_REF_NAME.TrimStart('v'))",
                     '--notes-file', 'notes/CHANGELOG.md')
           if ($prerelease) { $ghArgs += $prerelease }
           gh @ghArgs

@@ -5,7 +5,7 @@ Pre-release suffixes (`-rc1`) are stored in `VGMPLAY_VERSION_SUFFIX` in `CMakeLi
 
 ## [1.0.0-rc1] - 2026-11-24
 
-First release candidate. Distribution: portable ZIP only (Windows 10 22H2+, x64, single `vgmplay.exe`).
+First release candidate. Distribution: portable ZIP only (Windows 10 22H2+, x64, single `ChipJuke.exe`).
 
 ### Added
 - Playback of VGM and VGZ (libvgm): loops (x2 and 1 s fade-out by default), tunes without a loop end without a fade;
@@ -17,7 +17,7 @@ First release candidate. Distribution: portable ZIP only (Windows 10 22H2+, x64,
 - Playlists: multiple named playlists, M3U import/export, folder scan in the background, Prev/Next, automatic advance,
   repeat Off/All/One, shuffle, metadata (title, length) filled in after load, session restore.
 - Settings (F10): loops, fade, behaviour at end without loop, volume, language, GD3 language, pattern row length,
-  audio output device, network paths, button hints. Stored next to the executable (portable) or in `%APPDATA%\vgmplay`.
+  audio output device, network paths, button hints. Stored next to the executable (portable) or in `%APPDATA%\ChipJuke`.
 - Full gamepad control of the whole application, button hints bar, remappable keyboard and gamepad bindings with
   conflict handling and restore of defaults.
 - UI in English and Polish; `--settings-dir`, `--pl`, `--allow-network-paths` and other command-line options.
@@ -38,4 +38,4 @@ First release candidate. Distribution: portable ZIP only (Windows 10 22H2+, x64,
 - Licences of some libvgm cores are not declared upstream (see `docs/licensing/libvgm-audit.md`).
   Enabled by decision: NSFPlay-derived NES cores, Maxim SN76489, Gens YM2612/SCD PCM, superctr QSound.
 
-[1.0.0-rc1]: https://github.com/C4rl0s79/VGMPlay/releases/tag/v1.0.0-rc1
+[1.0.0-rc1]: https://github.com/C4rl0s79/ChipJuke/releases/tag/v1.0.0-rc1

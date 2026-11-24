@@ -188,7 +188,7 @@ int main()
         const float s = SDL_GetDisplayContentScale(SDL_GetPrimaryDisplay());
         return s > 0.0f ? s : 1.0f;
     }();
-    SDL_Window* window = SDL_CreateWindow("vgmplay", static_cast<int>(1280 * scale),
+    SDL_Window* window = SDL_CreateWindow("ChipJuke", static_cast<int>(1280 * scale),
                                           static_cast<int>(720 * scale),
                                           SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY);
     if (!window) {
@@ -228,6 +228,7 @@ int main()
     } else {
         std::filesystem::path appData;
         const bool appDataOk = roamingAppData(appData);
+        if (appDataOk) (void)vgmplay::settings::migrateLegacyAppDataDir(appData);
         const auto loc = vgmplay::settings::resolveSettingsLocation(exeDirectory(), appDataOk ? appData : std::filesystem::path());
         if (loc.portable || appDataOk) options.settingsFile = loc.file;
         else options.noAppDataNotice = true;   // brak zapisywalnego katalogu: bez trwalosci

@@ -1,4 +1,4 @@
-# Sklada przenosna paczke ZIP vgmplay (Windows x64).
+# Sklada przenosna paczke ZIP ChipJuke (Windows x64).
 #
 # Uzycie (Windows PowerShell):
 #   powershell -NoProfile -ExecutionPolicy Bypass -File tools\package.ps1 [-NoBuild] [-NoSamples]
@@ -8,15 +8,15 @@
 #   -NoBuild     uzywa istniejacego builda (np. z CI po osobnych krokach build + test); testy nie sa
 #                wtedy uruchamiane ponownie
 #   -SourceUrl   adres repozytorium zrodel wpisywany do SOURCE.txt (GPL-2.0: zrodla odpowiadajace
-#                binarce). Domyslnie $env:VGMPLAY_SOURCE_URL, a gdy brak - https://github.com/C4rl0s79/VGMPlay.
+#                binarce). Domyslnie $env:VGMPLAY_SOURCE_URL, a gdy brak - https://github.com/C4rl0s79/ChipJuke.
 #
-# Wynik: out\dist\vgmplay-<wersja>-win64\ , out\dist\vgmplay-<wersja>-win64.zip , out\dist\SHA256SUMS.txt
+# Wynik: out\dist\ChipJuke-<wersja>-win64\ , out\dist\ChipJuke-<wersja>-win64.zip , out\dist\SHA256SUMS.txt
 # Skrypt przerywa przy bledzie budowy/testu/kontroli paczki.
 param(
     [string]$Preset = 'msvc-x64-release',
     [switch]$NoBuild,
     [switch]$NoSamples,
-    [string]$SourceUrl = $(if ($env:VGMPLAY_SOURCE_URL) { $env:VGMPLAY_SOURCE_URL } else { 'https://github.com/C4rl0s79/VGMPlay' })
+    [string]$SourceUrl = $(if ($env:VGMPLAY_SOURCE_URL) { $env:VGMPLAY_SOURCE_URL } else { 'https://github.com/C4rl0s79/ChipJuke' })
 )
 $ErrorActionPreference = 'Stop'
 $Placeholder = '<REPOSITORY-URL: uzupelnic przy publikacji / fill in at publication>'
@@ -52,7 +52,7 @@ if (-not $NoBuild) {
     ctest --preset $Preset;            if ($LASTEXITCODE -ne 0) { Fail 'testy nie przechodza - paczka NIE powstaje' }
 }
 
-$exe = Join-Path $buildDir 'src\app\vgmplay.exe'
+$exe = Join-Path $buildDir 'src\app\ChipJuke.exe'
 if (-not (Test-Path $exe)) { Fail "Brak $exe (zbuduj projekt albo uzyj bez -NoBuild)." }
 
 # --- Wersja z wygenerowanego naglowka (jedno zrodlo prawdy: CMake) ---
@@ -70,7 +70,7 @@ if ($dirty) { Write-Warning 'Drzewo robocze ma niezatwierdzone zmiany - paczka n
 $fv = (Get-Item $exe).VersionInfo
 if ($fv.ProductVersion -ne $version) { Fail "ProductVersion exe ($($fv.ProductVersion)) != $version (przebuduj od zera)." }
 
-$name     = "vgmplay-$version-win64"
+$name     = "ChipJuke-$version-win64"
 $distRoot = Join-Path $root 'out\dist'
 $stage    = Join-Path $distRoot $name
 $zip      = Join-Path $distRoot "$name.zip"
@@ -87,7 +87,7 @@ function CopyTo([string]$from, [string]$dstRel) {
     Copy-Item $from $dst
 }
 
-CopyTo $exe 'vgmplay.exe'
+CopyTo $exe 'ChipJuke.exe'
 foreach ($f in 'LICENSE','README.md','CHANGELOG.md','THIRD_PARTY_NOTICES.md') { CopyTo (Join-Path $root $f) $f }
 CopyTo (Join-Path $root 'docs\user-guide.pl.md') 'docs\user-guide.pl.md'
 # licenses\ - teksty licencji skladnikow + audyt libvgm + licencja fontu.
@@ -95,7 +95,7 @@ Get-ChildItem (Join-Path $root 'licenses') -File | ForEach-Object { CopyTo $_.Fu
 CopyTo (Join-Path $root 'docs\licensing\libvgm-audit.md') 'licenses\libvgm-audit.md'
 CopyTo (Join-Path $root 'assets\fonts\OFL.txt') 'licenses\BIZUDGothic-OFL.txt'
 # Tryb przenosny nie wymaga znacznika: settings.json powstaje obok exe, gdy katalog jest zapisywalny
-# (src/settings: resolveSettingsLocation), inaczej w %APPDATA%\vgmplay. Dlatego brak portable.txt.
+# (src/settings: resolveSettingsLocation), inaczej w %APPDATA%\ChipJuke. Dlatego brak portable.txt.
 
 # samples\ - syntetyczne pliki z generatora (tools\vgmgen), korpus tests\data\valid (wersjonowany w git).
 if (-not $NoSamples) {
@@ -108,10 +108,10 @@ $fullCommit = (git -C $root rev-parse HEAD).Trim()
 $srcUrl = if ($SourceUrl) { $SourceUrl } else { $Placeholder }
 $dirtyNote = if ($dirty) { ' (+ uncommitted changes)' } else { '' }
 $srcText = @"
-vgmplay $version - source code / kod zrodlowy
+ChipJuke $version - source code / kod zrodlowy
 =========================================
 
-vgmplay is licensed under GPL-2.0-only (see LICENSE). The complete corresponding source code
+ChipJuke is licensed under GPL-2.0-only (see LICENSE). The complete corresponding source code
 for this binary is available at:
 
   Repository : $srcUrl
@@ -133,10 +133,10 @@ if ($bad) { Fail ("Niepozadane pliki w paczce: " + ($bad.Name -join ', ')) }
 
 $dumpbin = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
 if (-not $dumpbin) { Fail 'Brak dumpbin.exe (srodowisko MSVC).' }
-$deps = @(& dumpbin.exe /nologo /dependents (Join-Path $stage 'vgmplay.exe') |
+$deps = @(& dumpbin.exe /nologo /dependents (Join-Path $stage 'ChipJuke.exe') |
     ForEach-Object { if ($_ -match '^\s+(\S+\.dll)\s*$') { $Matches[1] } } | Sort-Object -Unique)
 if ($deps.Count -eq 0) { Fail 'dumpbin nie zwrocil zadnych zaleznosci - nieoczekiwany wynik.' }
-Write-Host 'Zaleznosci DLL vgmplay.exe:'
+Write-Host 'Zaleznosci DLL ChipJuke.exe:'
 $deps | ForEach-Object { Write-Host "  $_" }
 $sysdir = Join-Path $env:SystemRoot 'System32'
 $nonSystem = @()
@@ -149,8 +149,8 @@ $crt = @($deps | Where-Object { $_ -match '^(vcruntime|msvcp|concrt|ucrtbase)' }
 if ($nonSystem.Count -gt 0) { Fail ("DLL spoza systemu Windows: " + ($nonSystem -join ', ')) }
 if ($crt.Count -gt 0)       { Fail ("Exe zalezy od dynamicznego CRT: " + ($crt -join ', ')) }
 
-$exeSize = (Get-Item (Join-Path $stage 'vgmplay.exe')).Length
-Write-Host ("Rozmiar vgmplay.exe: {0:N0} B ({1:N2} MiB)" -f $exeSize, ($exeSize / 1MB))
+$exeSize = (Get-Item (Join-Path $stage 'ChipJuke.exe')).Length
+Write-Host ("Rozmiar ChipJuke.exe: {0:N0} B ({1:N2} MiB)" -f $exeSize, ($exeSize / 1MB))
 
 # --- ZIP deterministyczny: stala kolejnosc wpisow (porzadkowa), stala data, stale atrybuty ---
 Step 'ZIP'

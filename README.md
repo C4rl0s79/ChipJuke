@@ -1,6 +1,11 @@
-# vgmplay
+# ChipJuke
 
-![VGMPlay](docs/images/banner.png)
+![ChipJuke](docs/images/banner.png)
+
+> ChipJuke is an independent project. Chip emulation comes from [libvgm](https://github.com/ValleyBell/libvgm)
+> by Valley Bell, built statically into `ChipJuke.exe`; ChipJuke is not affiliated with libvgm or the VGMPlay player.
+> Formerly developed under the working name *vgmplay*: settings in `%APPDATA%\vgmplay` are moved to
+> `%APPDATA%\ChipJuke` automatically on first start.
 
 A tracker-style player for VGM / VGZ files on Windows. Chip emulation is provided by
 [libvgm](https://github.com/ValleyBell/libvgm); the interface uses SDL3 and Dear ImGui (Direct3D 11),
@@ -28,27 +33,27 @@ Polish user guide: [docs/user-guide.pl.md](docs/user-guide.pl.md). Changes: [CHA
 
 - Windows 10 22H2 or newer, 64-bit.
 - A Direct3D 11 capable GPU/driver and an audio output device.
-- Nothing to install: a single `vgmplay.exe`, no extra DLLs, no Visual C++ redistributable.
+- Nothing to install: a single `ChipJuke.exe`, no extra DLLs, no Visual C++ redistributable.
 
 ## Installation (portable)
 
-1. Download `vgmplay-<version>-win64.zip` from the release page.
-2. Optionally verify it: `Get-FileHash vgmplay-<version>-win64.zip -Algorithm SHA256` must match `SHA256SUMS.txt`.
-3. Extract the ZIP anywhere (for example `D:\Tools\vgmplay`) and run `vgmplay.exe`.
+1. Download `ChipJuke-<version>-win64.zip` from the release page.
+2. Optionally verify it: `Get-FileHash ChipJuke-<version>-win64.zip -Algorithm SHA256` must match `SHA256SUMS.txt`.
+3. Extract the ZIP anywhere (for example `D:\Tools\ChipJuke`) and run `ChipJuke.exe`.
 
-There is no installer. To uninstall, delete the folder (and `%APPDATA%\vgmplay`, if it exists).
+There is no installer. To uninstall, delete the folder (and `%APPDATA%\ChipJuke`, if it exists).
 The `samples\` folder contains short synthetic test files made by the project's generator (not game rips).
 
 ## Where settings are stored
 
-`settings.json`, `playlists.json` and `library-cache.json` are written **next to `vgmplay.exe`** when that
+`settings.json`, `playlists.json` and `library-cache.json` are written **next to `ChipJuke.exe`** when that
 folder is writable (portable mode, no marker file needed). Otherwise (for example when extracted under
-`C:\Program Files`) they go to `%APPDATA%\vgmplay`. `--settings-dir=<folder>` overrides both.
+`C:\Program Files`) they go to `%APPDATA%\ChipJuke`. `--settings-dir=<folder>` overrides both.
 
 ## Command line
 
 ```
-vgmplay.exe [options] [file.vgm|file.vgz|folder ...]
+ChipJuke.exe [options] [file.vgm|file.vgz|folder ...]
 ```
 
 Files and folders are added to the active playlist and played; with no arguments the last session is restored (paused).
@@ -140,8 +145,8 @@ Requirements: Visual Studio 2022 (or Build Tools) with the C++ workload (MSVC x6
 [vcpkg](https://github.com/microsoft/vcpkg) with `VCPKG_ROOT` set.
 
 ```powershell
-git clone --recurse-submodules https://github.com/C4rl0s79/VGMPlay vgmplay
-cd vgmplay
+git clone --recurse-submodules https://github.com/C4rl0s79/ChipJuke ChipJuke
+cd ChipJuke
 # If cloned without --recurse-submodules:
 git submodule update --init --recursive
 
@@ -149,7 +154,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\dev-build.ps1     # co
 powershell -NoProfile -ExecutionPolicy Bypass -File tools\package.ps1       # clean build + tests + portable ZIP
 ```
 
-`tools\package.ps1` builds from scratch, runs the tests (aborts on failure), assembles `out\dist\vgmplay-<version>-win64\`,
+`tools\package.ps1` builds from scratch, runs the tests (aborts on failure), assembles `out\dist\ChipJuke-<version>-win64\`,
 checks it (no debug files, no non-system DLL dependencies) and writes a deterministic ZIP plus `SHA256SUMS.txt`.
 Dependencies (SDL3, Dear ImGui, miniaudio, zlib, nlohmann-json) come from vcpkg (manifest mode, `vcpkg.json`,
 triplet `x64-windows-static`, pinned by `builtin-baseline`). The version has one source: `project(VERSION)` and
@@ -161,11 +166,11 @@ CMake options: `VGMPLAY_BUILD_TESTS`, `VGMPLAY_BUILD_FUZZ`, `VGMPLAY_STATIC_CRT`
 ## Source code (GPL-2.0)
 
 The corresponding source for every binary release is the repository at the tag/commit recorded in the `SOURCE.txt`
-file inside the ZIP. Repository: `https://github.com/C4rl0s79/VGMPlay`.
+file inside the ZIP. Repository: `https://github.com/C4rl0s79/ChipJuke`.
 
 ## Licensing
 
-vgmplay is **GPL-2.0-only**; the full text is in [LICENSE](LICENSE). Third-party components and their licences:
+ChipJuke is **GPL-2.0-only**; the full text is in [LICENSE](LICENSE). Third-party components and their licences:
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the `licenses/` folder. libvgm contains emulation cores under
 several licences and its own code has no licence file upstream; the audit and the decisions taken are in
 [docs/licensing/libvgm-audit.md](docs/licensing/libvgm-audit.md).

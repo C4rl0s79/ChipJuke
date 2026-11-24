@@ -1,14 +1,14 @@
 # Składniki zewnętrzne
 
-vgmplay jest dystrybuowany na licencji GPL-2.0-only (zob. `LICENSE`). Poniżej składniki innych autorów.
+ChipJuke jest dystrybuowany na licencji GPL-2.0-only (zob. `LICENSE`). Poniżej składniki innych autorów.
 Teksty licencji składników dołączane do paczki ZIP są w folderze `licenses/` (pliki `*-LICENSE.txt` skopiowano
 z `vcpkg_installed/x64-windows-static/share/<pakiet>/copyright` dla wersji z `vcpkg.json` + `builtin-baseline`;
 po aktualizacji zależności trzeba je odświeżyć).
-Wszystkie biblioteki są linkowane statycznie do `vgmplay.exe` (triplet `x64-windows-static`, statyczne CRT),
+Wszystkie biblioteki są linkowane statycznie do `ChipJuke.exe` (triplet `x64-windows-static`, statyczne CRT),
 więc paczka nie zawiera żadnych DLL.
 
 **Kod źródłowy odpowiadający binarce (GPL-2.0)**: repozytorium i commit są zapisane w pliku `SOURCE.txt` w paczce
-(adres repozytorium: `https://github.com/C4rl0s79/VGMPlay`).
+(adres repozytorium: `https://github.com/C4rl0s79/ChipJuke`).
 
 | Składnik | Licencja | Uwagi |
 |---|---|---|
