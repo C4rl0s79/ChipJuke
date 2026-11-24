@@ -134,6 +134,64 @@ TEST_SUITE("app/io_worker")
         CHECK(countFiles(td.path) == 999);   // bez pliku tymczasowego i bez (1000)
     }
 
+    TEST_CASE("eksport M3U: overwrite (systemowe okno po potwierdzeniu) zastepuje plik, bez (2) i bez smieci")
+    {
+        TempDir td;
+        const fs::path want = td.path / L"Zastap.m3u8";
+        writeAll(want, "STARY");
+        IoWorker io(IoWorker::Paths{}, [] {});
+        io.exportM3u(want, "NOWY", true);
+        auto r = waitFor(io, [](const IoResults& x) { return !x.exports.empty(); });
+        REQUIRE(r.exports.size() == 1);
+        CHECK_FALSE(r.exports[0].error);
+        CHECK(r.exports[0].written == want);
+        CHECK(readAll(want) == "NOWY");
+        CHECK(countFiles(td.path) == 1);
+    }
+
+    TEST_CASE("eksport M3U: propozycja juz ponumerowana nie dostaje drugiego numeru (Mix (2) -> Mix (3), nie Mix (2) (2))")
+    {
+        TempDir td;
+        writeAll(td.path / L"Mix.m3u8", "0");
+        writeAll(td.path / L"Mix (2).m3u8", "2");
+        IoWorker io(IoWorker::Paths{}, [] {});
+        io.exportM3u(td.path / L"Mix (2).m3u8", "A");   // zapowiedz przegladarki, ktora zdazyla sie zajac
+        io.exportM3u(td.path / L"Mix (2).m3u8", "B");
+        auto r = waitFor(io, [](const IoResults& x) { return x.exports.size() >= 2; });
+        REQUIRE(r.exports.size() == 2);
+        CHECK(r.exports[0].written == td.path / L"Mix (3).m3u8");
+        CHECK(r.exports[1].written == td.path / L"Mix (4).m3u8");
+        CHECK(readAll(td.path / L"Mix (2).m3u8") == "2");
+        CHECK_FALSE(fs::exists(td.path / L"Mix (2) (2).m3u8"));
+        // Wolna ponumerowana propozycja zostaje bez zmian; nazwa z rokiem w nawiasie nie jest numerem kolejnym.
+        io.exportM3u(td.path / L"Nowy (7).m3u8", "C");
+        io.exportM3u(td.path / L"Raport (2019).m3u8", "D");
+        auto r2 = waitFor(io, [](const IoResults& x) { return x.exports.size() >= 2; });
+        REQUIRE(r2.exports.size() == 2);
+        CHECK(r2.exports[0].written == td.path / L"Nowy (7).m3u8");
+        CHECK(r2.exports[1].written == td.path / L"Raport (2019).m3u8");
+    }
+
+    TEST_CASE("classifyPaths: tag wraca razem z wynikiem (ten sam indeks)")
+    {
+        TempDir td;
+        writeAll(td.path / L"a.vgm", "x");
+        IoWorker io(IoWorker::Paths{}, [] {});
+        io.classifyPaths({td.path / L"a.vgm"}, "Lista A");
+        io.classifyPaths({td.path / L"a.vgm"}, "Lista B");
+        IoResults all;
+        const auto t0 = std::chrono::steady_clock::now();
+        while (all.classified.size() < 2 && std::chrono::steady_clock::now() - t0 < std::chrono::seconds(60)) {
+            IoResults r = io.take();
+            for (auto& c : r.classified) all.classified.push_back(std::move(c));
+            for (auto& t : r.classifiedTags) all.classifiedTags.push_back(std::move(t));
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        REQUIRE(all.classifiedTags.size() == 2);
+        CHECK(all.classifiedTags[0] == "Lista A");
+        CHECK(all.classifiedTags[1] == "Lista B");
+    }
+
     TEST_CASE("eksport M3U: nieistniejacy katalog -> blad (katalogow nie tworzymy)")
     {
         TempDir td;

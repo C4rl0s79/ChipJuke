@@ -92,7 +92,9 @@ public:
     void submitPaths(std::vector<std::filesystem::path> paths);   // pliki i foldery -> aktywna playlista
     void submitFolder(const std::filesystem::path& folder);
     void submitImportM3u(const std::filesystem::path& file);
-    void submitExportM3u(const std::filesystem::path& file);
+    // overwrite=true: uzytkownik potwierdzil zastapienie w systemowym oknie zapisu (atomowa zamiana); false: wbudowana
+    // przegladarka, nigdy nie nadpisuje (kolejna wolna nazwa).
+    void submitExportM3u(const std::filesystem::path& file, bool overwrite = false);
     // Watek UI. Plik z wiersza polecen: dodany do aktywnej playlisty i odtwarzany; sesja nie jest wznawiana.
     void openStartupFile(const std::filesystem::path& file);
 
@@ -217,8 +219,9 @@ private:
     std::optional<std::size_t> findList(const std::string& name) const;
     void addAndPlay(const std::filesystem::path& path);
     void addPathsNow(const std::vector<std::filesystem::path>& paths);   // zleca rozpoznanie plik/katalog workerowi
-    void addClassifiedNow(const std::vector<ClassifiedPath>& paths);      // po rozpoznaniu (watek UI, bez dysku)
-    void addFolderNow(const std::filesystem::path& folder);
+    // po rozpoznaniu (watek UI, bez dysku); `listName` = playlista docelowa z chwili zlecenia (pusta = aktywna)
+    void addClassifiedNow(const std::vector<ClassifiedPath>& paths, const std::string& listName = {});
+    void addFolderNow(const std::filesystem::path& folder, const std::string& listName = {});
     void importM3uDone(ImportDone& d);
     void queueMetaFor(const std::vector<playlist::Entry>& entries);
     bool nothingLoaded() const;

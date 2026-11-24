@@ -16,12 +16,26 @@ param(
     [string]$Preset = 'msvc-x64-release',
     [switch]$NoBuild,
     [switch]$NoSamples,
-    [string]$SourceUrl = $(if ($env:VGMPLAY_SOURCE_URL) { $env:VGMPLAY_SOURCE_URL } else { 'https://github.com/C4rl0s79/ChipJuke' })
+    [string]$SourceUrl = $env:VGMPLAY_SOURCE_URL
 )
 $ErrorActionPreference = 'Stop'
 $Placeholder = '<REPOSITORY-URL: uzupelnic przy publikacji / fill in at publication>'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
+
+# Adres zrodel: -SourceUrl / $env:VGMPLAY_SOURCE_URL, inaczej https z `git remote get-url origin` (ssh scp-like i ssh:// -> https,
+# bez user:haslo@ i konczacego .git). Brak remote'a: $SourceUrl zostaje pusty (placeholder + ostrzezenie nizej).
+if (-not $SourceUrl) {
+    $origin = (git -C $root remote get-url origin 2>$null)
+    if ($LASTEXITCODE -eq 0 -and $origin) {
+        $u = "$origin".Trim()
+        if ($u -match '^[\w.-]+@([^:/]+):(.+)$')        { $u = "https://$($Matches[1])/$($Matches[2])" }
+        elseif ($u -match '^ssh://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+)$') { $u = "https://$($Matches[1])/$($Matches[2])" }
+        elseif ($u -match '^https?://(?:[^@/]+@)?(.+)$') { $u = "https://$($Matches[1])" }
+        else { $u = '' }
+        if ($u) { $SourceUrl = $u -replace '\.git/?$', '' }
+    }
+}
 
 function Fail([string]$m) { Write-Host "BLAD: $m" -ForegroundColor Red; exit 1 }
 function Step([string]$m) { Write-Host "== $m" -ForegroundColor Cyan }

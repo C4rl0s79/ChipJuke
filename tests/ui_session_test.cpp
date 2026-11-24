@@ -407,6 +407,35 @@ TEST_SUITE("app/m3u_and_corruption")
         CHECK_FALSE(fs::exists(td.path / L"out.m3u8.tmp"));
     }
 
+    TEST_CASE("dodawanie sciezek: trafia do playlisty z chwili zlecenia, nie do aktywnej w chwili zakonczenia")
+    {
+        AppController c(nullOpts(false));
+        REQUIRE(c.start());
+        c.createPlaylist("Druga");
+        REQUIRE(c.playlists().playlistCount() == 2);
+        c.selectPlaylist(0);
+        c.submitPaths({kA});
+        c.pump();                // zlecenie wyszlo do workera z celem "playlista 0"
+        c.selectPlaylist(1);     // uzytkownik przelacza liste, zanim rozpoznanie sie skonczy
+        REQUIRE(pumpUntil(c, [&] { return c.playlists().playlist(0).entries.size() == 1; }));
+        CHECK(c.playlists().playlist(1).entries.empty());
+    }
+
+    TEST_CASE("dodawanie sciezek: playlista docelowa usunieta w miedzyczasie -> aktywna, z komunikatem")
+    {
+        AppController c(nullOpts(false));
+        REQUIRE(c.start());
+        c.createPlaylist("Druga");
+        c.selectPlaylist(0);
+        c.submitPaths({kA});
+        c.pump();
+        c.deletePlaylist(0);     // cel znika
+        REQUIRE(c.playlists().playlistCount() == 1);
+        REQUIRE(pumpUntil(c, [&] { return countOf(c) == 1; }));
+        REQUIRE(c.view().notice.has_value());
+        CHECK_FALSE(c.view().notice->details.empty());
+    }
+
     TEST_CASE("uszkodzony playlists.json: komunikat, brak nadpisania do potwierdzenia")
     {
         TempDir td;

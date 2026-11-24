@@ -231,13 +231,13 @@ void AppController::submitImportM3u(const fs::path& file)
     postInbox([this, file] { if (io_) io_->importM3u(file); });
 }
 
-void AppController::submitExportM3u(const fs::path& file)
+void AppController::submitExportM3u(const fs::path& file, bool overwrite)
 {
-    postInbox([this, file] {
+    postInbox([this, file, overwrite] {
         if (!io_ || model_.playlistCount() == 0) return;
         playlist::M3uExportOptions o;
         o.baseDir = file.parent_path();
-        io_->exportM3u(file, playlist::exportM3u(model_.playlist(model_.activeIndex()), o));
+        io_->exportM3u(file, playlist::exportM3u(model_.playlist(model_.activeIndex()), o), overwrite);
     });
 }
 
@@ -414,7 +414,7 @@ void AppController::addPathsNow(const std::vector<fs::path>& paths)
     if (model_.playlistCount() == 0) return;
     // Rozpoznanie plik/katalog robi IoWorker (dysk poza watkiem UI); wynik wraca przez handleIo() -> addClassifiedNow().
     if (io_) {
-        io_->classifyPaths(paths);
+        io_->classifyPaths(paths, model_.playlist(model_.activeIndex()).name);   // cel zapamietany teraz, nie po rozpoznaniu
         return;
     }
     std::vector<ClassifiedPath> flat;   // bez workera: tylko po rozszerzeniu (bez dotykania dysku)
@@ -423,16 +423,28 @@ void AppController::addPathsNow(const std::vector<fs::path>& paths)
     addClassifiedNow(flat);
 }
 
-void AppController::addClassifiedNow(const std::vector<ClassifiedPath>& paths)
+void AppController::addClassifiedNow(const std::vector<ClassifiedPath>& paths, const std::string& listName)
 {
     if (model_.playlistCount() == 0) return;
+    // Playlista z chwili zlecenia (po nazwie); gdy w miedzyczasie zniknela - aktywna, z komunikatem.
+    std::size_t list = model_.activeIndex();
+    std::string target = model_.playlist(list).name;
+    bool gone = false;
+    if (!listName.empty()) {
+        if (const auto found = findList(listName)) {
+            list = *found;
+            target = listName;
+        } else {
+            gone = true;
+        }
+    }
     std::vector<playlist::Entry> entries;
     unsigned skipped = 0;
     bool folders = false;
     for (const ClassifiedPath& cp : paths) {
         const fs::path& p = cp.path;
         if (cp.isDirectory) {
-            addFolderNow(p);
+            addFolderNow(p, target);
             folders = true;
         } else if (isVgmFile(p)) {
             playlist::Entry e;
@@ -442,19 +454,20 @@ void AppController::addClassifiedNow(const std::vector<ClassifiedPath>& paths)
             ++skipped;
         }
     }
-    const std::size_t list = model_.activeIndex();
     const std::size_t n = addEntries(list, std::move(entries), true);
     if (n > 0) {
         std::string t = fmt(ui::tr(ui::Str::NtAdded), static_cast<unsigned>(n),
                             model_.playlist(list).name.c_str());
         if (skipped) t += "; " + fmt(ui::tr(ui::Str::NtSkipped), skipped);
-        postNotice(t);
+        postNotice(t, gone ? std::vector<std::string>{ui::tr(ui::Str::NtListGone)} : std::vector<std::string>{});
     } else if (skipped && !folders) {
         postNotice(ui::tr(ui::Str::NtNonVgm), {}, true);
+    } else if (gone && folders) {
+        postNotice(ui::tr(ui::Str::NtListGone));
     }
 }
 
-void AppController::addFolderNow(const fs::path& folder)
+void AppController::addFolderNow(const fs::path& folder, const std::string& listName)
 {
     auto r = library::ScanJob::start(folder);
     if (!r.ok()) {
@@ -464,7 +477,8 @@ void AppController::addFolderNow(const fs::path& folder)
     ScanEntry se;
     se.job = std::move(r.value());
     se.root = folder;
-    if (model_.playlistCount() > 0) se.listName = model_.playlist(model_.activeIndex()).name;
+    if (!listName.empty()) se.listName = listName;
+    else if (model_.playlistCount() > 0) se.listName = model_.playlist(model_.activeIndex()).name;
     scans_.push_back(std::move(se));
 }
 
@@ -555,7 +569,8 @@ void AppController::handleIo()
         if (model_.updateEntryMeta(ups) > 0) markPlaylistsDirty();   // [E3] tytul i dlugosc ze skanu do wpisow
     }
     for (ImportDone& d : r.imports) importM3uDone(d);
-    for (const auto& batch : r.classified) addClassifiedNow(batch);
+    for (std::size_t i = 0; i < r.classified.size(); ++i)
+        addClassifiedNow(r.classified[i], i < r.classifiedTags.size() ? r.classifiedTags[i] : std::string());
     for (ExportDone& d : r.exports) {
         if (d.error) postNotice(ui::tr(ui::Str::NtExportFail), {d.error->message}, true);
         else postNotice(fmt(ui::tr(ui::Str::NtExportOk), u8(d.written.filename()).c_str()));   // faktyczna nazwa

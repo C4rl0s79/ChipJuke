@@ -107,9 +107,11 @@ enum class PathClass : std::uint8_t { Local, Network, Rejected };
                                                      DriveKind (*kindOf)(wchar_t letter) = nullptr);
 // Czy tekst celu dowiazania ("\??\UNC\srv\sh", "\\srv\sh", "Z:\x" z litera zmapowana na siec) wskazuje na siec.
 [[nodiscard]] bool isNetworkLinkTarget(const std::wstring& target);
-// Czy sam wpis jest dowiazaniem (lancuch do 8 skokow, BEZ podazania za nim) prowadzacym do sieci. Dla zwyklego pliku/katalogu false.
+// Czy sciezka (lacznie z dowiazaniami w srodku) rozwiazuje sie do sieci; to samo co isNetworkRedirected.
 [[nodiscard]] bool linkPointsToNetwork(const std::filesystem::path& p);
-// Czy katalog lezy na dysku zmapowanym na siec albo jest/zawiera dowiazanie rozwiazujace sie do UNC (watek roboczy).
+// Czy sciezka lezy na dysku zmapowanym na siec albo jest/zawiera dowiazanie rozwiazujace sie do UNC. Idzie skladnik po
+// skladniku od korzenia (reparse przez CreateFileW z FILE_FLAG_OPEN_REPARSE_POINT na samym skladniku), zatrzymuje sie na
+// pierwszym dowiazaniu do sieci i NIGDY nie otwiera pelnej sciezki, wiec nie laczy sie z serwerem. Dla watku roboczego.
 [[nodiscard]] bool isNetworkRedirected(const std::filesystem::path& dir);
 // Widok "Ten komputer": ostatnie foldery (bez UNC bez zgody) + dyski.
 [[nodiscard]] std::vector<BrowserEntry> rootEntries(const std::vector<std::string>& recent, bool allowNetwork,

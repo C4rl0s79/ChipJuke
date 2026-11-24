@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cwctype>
+#include <deque>
 #include <string_view>
 #include <system_error>
 #include <thread>
@@ -341,42 +342,68 @@ bool readReparseTarget(const fs::path& link, std::wstring& target)
 } // namespace
 #endif
 
-bool linkPointsToNetwork(const fs::path& p)
-{
 #ifdef _WIN32
-    fs::path cur = p;
-    for (int hop = 0; hop < 8; ++hop) {
-        const DWORD a = GetFileAttributesW(cur.c_str());   // bez podazania za ostatnim skladnikiem
-        if (a == INVALID_FILE_ATTRIBUTES || (a & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
-        std::wstring w;
-        if (!readReparseTarget(cur, w) || w.empty()) return false;
-        if (isNetworkLinkTarget(w)) return true;
-        if (startsWithNoCase(w, LR"(\??\)") || startsWithNoCase(w, LR"(\\?\)")) w.erase(0, 4);
-        fs::path next(w);
-        if (next.is_relative()) next = cur.parent_path() / next;
-        cur = next.lexically_normal();
-    }
-#else
-    (void)p;
-#endif
-    return false;
+namespace {
+
+// Atrybuty SAMEGO skladnika (FILE_FLAG_OPEN_REPARSE_POINT: bez podazania za dowiazaniem). Prefiks sciezki jest juz
+// sprawdzony jako lokalny, wiec otwarcie nie moze polaczyc z serwerem. 0 = nie istnieje / brak dostepu.
+DWORD componentAttributes(const fs::path& p)
+{
+    HANDLE h = CreateFileW(p.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    BY_HANDLE_FILE_INFORMATION info{};
+    const BOOL ok = GetFileInformationByHandle(h, &info);
+    CloseHandle(h);
+    return ok ? info.dwFileAttributes : 0;
 }
+
+} // namespace
+#endif
 
 bool isNetworkRedirected(const fs::path& dir)
 {
 #ifdef _WIN32
-    const std::wstring w = dir.wstring();
-    if (hasDriveLetter(w) && isRemoteDriveLetter(static_cast<wchar_t>(std::towupper(w[0])))) return true;
-    if (linkPointsToNetwork(dir)) return true;
-    // Dowiazanie w srodku sciezki (C:\a\link\b): rozwiazanie przez uchwyt lokalnego katalogu.
-    fs::path fin;
-    DWORD err = 0;
-    if (fsutil::finalPathOf(dir, fin, err) && isNetworkLinkTarget(fin.wstring())) return true;
+    // Idziemy od korzenia skladnik po skladniku. Nigdy nie otwieramy pelnej sciezki: system rozwiazalby wczesniejsze
+    // dowiazania i polaczyl sie z serwerem. Kazdy skladnik jest badany dopiero wtedy, gdy jego prefiks jest lokalny.
+    fs::path norm = dir.lexically_normal();
+    if (isNetworkLinkTarget(norm.wstring())) return true;   // UNC, przestrzen urzadzen, litera zmapowana na siec
+    fs::path base = norm.root_path();
+    std::deque<fs::path> rest;
+    for (const fs::path& c : norm.relative_path())
+        if (!c.empty() && c != L".") rest.push_back(c);
+    int hops = 0;
+    while (!rest.empty()) {
+        const fs::path next = base / rest.front();
+        rest.pop_front();
+        const DWORD a = componentAttributes(next);
+        if (a == 0) return false;   // dalej nic nie istnieje: nic do polaczenia
+        if ((a & FILE_ATTRIBUTE_REPARSE_POINT) == 0) { base = next; continue; }
+        std::wstring w;
+        if (!readReparseTarget(next, w) || w.empty()) { base = next; continue; }   // inny reparse (np. chmura): lokalny
+        if (isNetworkLinkTarget(w)) return true;
+        if (++hops > 16) return true;   // cykl/zbyt dlugi lancuch: traktujemy jak zablokowany
+        if (startsWithNoCase(w, LR"(\??\)") || startsWithNoCase(w, LR"(\\?\)")) w.erase(0, 4);
+        if (startsWithNoCase(w, L"Volume{")) return false;   // wolumin lokalny bez litery: nie ma dalej jak sprawdzac
+        fs::path t(w);
+        if (t.is_relative()) t = base / t;
+        else if (!t.has_root_name()) t = base.root_name() / t;   // cel "\dir" bez dysku: ten sam dysk
+        t = t.lexically_normal();
+        if (isNetworkLinkTarget(t.wstring())) return true;
+        std::deque<fs::path> chain;
+        for (const fs::path& c : t.relative_path())
+            if (!c.empty() && c != L".") chain.push_back(c);
+        for (fs::path& c : rest) chain.push_back(std::move(c));
+        rest = std::move(chain);
+        base = t.root_path();
+    }
 #else
     (void)dir;
 #endif
     return false;
 }
+
+bool linkPointsToNetwork(const fs::path& p) { return isNetworkRedirected(p); }
 
 std::vector<BrowserEntry> driveEntries(std::uint32_t mask, bool allowNetwork, DriveKind (*kindOf)(wchar_t))
 {
@@ -860,7 +887,8 @@ BrowserOutcome FileBrowser::activate()
         if (mode_ != BrowserMode::AddFiles) return {};
         o.kind = BrowserOutcome::Kind::AddPaths;
         for (std::size_t i = 0; i < entries_.size(); ++i)
-            if (entries_[i].kind == EntryKind::File && (marks_[i] || static_cast<int>(i) == sel_)) o.paths.push_back(entries_[i].path);
+            if (entries_[i].kind == EntryKind::File && !entries_[i].blocked && (marks_[i] || static_cast<int>(i) == sel_))
+                o.paths.push_back(entries_[i].path);
         return o;
     }
     }
@@ -883,6 +911,8 @@ BrowserOutcome FileBrowser::useHere()
 {
     BrowserOutcome o;
     o.folder = dir_;
+    // Listowanie zwrocilo `blocked` (dysk zmapowany / dowiazanie do UNC bez zgody): tego folderu nie wolno ani dodac, ani zapisac w nim.
+    if (status_.blocked) return {};
     switch (mode_) {
     case BrowserMode::AddFiles:
         if (dir_.empty() || loading_) return {};
@@ -893,7 +923,7 @@ BrowserOutcome FileBrowser::useHere()
         if (markedCount() > 0) {
             o.kind = BrowserOutcome::Kind::AddPaths;
             for (std::size_t i = 0; i < entries_.size(); ++i)
-                if (marks_[i] && entries_[i].kind == EntryKind::Dir) o.paths.push_back(entries_[i].path);
+                if (marks_[i] && entries_[i].kind == EntryKind::Dir && !entries_[i].blocked) o.paths.push_back(entries_[i].path);
             return o;
         }
         if (dir_.empty() || loading_) return {};
@@ -916,7 +946,7 @@ void FileBrowser::toggleMark()
     clampSelection();
     const BrowserEntry& e = entries_[static_cast<std::size_t>(sel_)];
     const bool ok = mode_ == BrowserMode::AddFiles ? e.kind == EntryKind::File : e.kind == EntryKind::Dir;
-    if (!ok) return;
+    if (!ok || e.blocked) return;   // wpisu zablokowanego (siec bez zgody) nie da sie zaznaczyc
     marks_[static_cast<std::size_t>(sel_)] = !marks_[static_cast<std::size_t>(sel_)];
     move(1);
 }

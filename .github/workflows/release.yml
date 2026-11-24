@@ -124,9 +124,23 @@ jobs:
           $zip = Get-ChildItem dist -Filter 'ChipJuke-*-win64.zip' | Select-Object -First 1
           if (-not $zip) { throw 'Brak ZIP w dist' }
           if (-not (Test-Path dist/SHA256SUMS.txt)) { throw 'Brak SHA256SUMS.txt w dist' }
+          # Notatki = tylko sekcja tej wersji z CHANGELOG.md: od naglowka "## [<wersja>]" do nastepnego "## [".
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
+          $section = New-Object System.Collections.Generic.List[string]
+          $inSection = $false
+          foreach ($line in (Get-Content -LiteralPath 'notes/CHANGELOG.md' -Encoding utf8)) {
+              if ($line.StartsWith('## [')) {
+                  if ($inSection) { break }
+                  if ($line.StartsWith("## [$version]")) { $inSection = $true }
+              }
+              if ($inSection) { $section.Add($line) }
+          }
+          if ($section.Count -eq 0) { throw "CHANGELOG.md nie ma sekcji '## [$version]'" }
+          $notesFile = 'notes/RELEASE_NOTES.md'
+          Set-Content -LiteralPath $notesFile -Value $section -Encoding utf8
           $ghArgs = @('release', 'create', $env:GITHUB_REF_NAME, $zip.FullName, 'dist/SHA256SUMS.txt',
-                    '--draft', '--verify-tag', '--title', "ChipJuke $($env:GITHUB_REF_NAME.TrimStart('v'))",
-                    '--notes-file', 'notes/CHANGELOG.md')
+                    '--draft', '--verify-tag', '--title', "ChipJuke $version",
+                    '--notes-file', $notesFile)
           if ($prerelease) { $ghArgs += $prerelease }
           gh @ghArgs
           if ($LASTEXITCODE -ne 0) { throw 'gh release create nie powiodl sie' }

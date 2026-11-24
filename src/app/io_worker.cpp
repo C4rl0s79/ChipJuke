@@ -85,20 +85,20 @@ void IoWorker::importM3u(fs::path file)
     cv_.notify_one();
 }
 
-void IoWorker::exportM3u(fs::path file, std::string text)
+void IoWorker::exportM3u(fs::path file, std::string text, bool overwrite)
 {
     {
         std::lock_guard lock(mutex_);
-        exportQueue_.emplace_back(std::move(file), std::move(text));
+        exportQueue_.push_back(ExportJob{std::move(file), std::move(text), overwrite});
     }
     cv_.notify_one();
 }
 
-void IoWorker::classifyPaths(std::vector<fs::path> paths)
+void IoWorker::classifyPaths(std::vector<fs::path> paths, std::string tag)
 {
     {
         std::lock_guard lock(mutex_);
-        classifyQueue_.push_back(std::move(paths));
+        classifyQueue_.emplace_back(std::move(paths), std::move(tag));
     }
     cv_.notify_one();
 }
@@ -121,6 +121,7 @@ void IoWorker::post(IoResults& add)
         for (auto& i : add.imports) results_.imports.push_back(std::move(i));
         for (auto& e : add.exports) results_.exports.push_back(std::move(e));
         for (auto& c : add.classified) results_.classified.push_back(std::move(c));
+        for (auto& t : add.classifiedTags) results_.classifiedTags.push_back(std::move(t));
         for (auto& f : add.saveFailures) results_.saveFailures.push_back(std::move(f));
     }
     if (!wakePending_.exchange(true) && wake_) wake_();
@@ -161,8 +162,8 @@ void IoWorker::loop()
         std::optional<playlist::PlaylistModel> pl;
         bool doLoad = false;
         std::optional<fs::path> imp;
-        std::optional<std::pair<fs::path, std::string>> exp;
-        std::optional<std::vector<fs::path>> cls;
+        std::optional<ExportJob> exp;
+        std::optional<std::pair<std::vector<fs::path>, std::string>> cls;
         std::optional<fs::path> meta;
         bool allowCloud = false;
         bool quitting = false;
@@ -238,21 +239,29 @@ void IoWorker::loop()
         }
         if (exp) {
             ExportDone d;
-            d.file = exp->first;
-            // Nazwa wolna jest wybierana TERAZ i plik powstaje bez nadpisywania (MoveFileExW bez REPLACE_EXISTING).
-            auto r = fsutil::createFileExclusive(exp->first, exp->second);
-            if (r.ok()) d.written = std::move(r.value());
-            else d.error = r.error();
+            d.file = exp->file;
+            if (exp->overwrite) {
+                // Systemowe okno zapisu: uzytkownik potwierdzil zastapienie, wiec atomowa zamiana (stara albo nowa tresc).
+                auto r = fsutil::atomicWriteFile(exp->file, exp->text);
+                if (r.ok()) d.written = exp->file;
+                else d.error = r.error();
+            } else {
+                // Nazwa wolna jest wybierana TERAZ i plik powstaje bez nadpisywania (MoveFileExW bez REPLACE_EXISTING).
+                auto r = fsutil::createFileExclusive(exp->file, exp->text);
+                if (r.ok()) d.written = std::move(r.value());
+                else d.error = r.error();
+            }
             out.exports.push_back(std::move(d));
         }
         if (cls) {
             std::vector<ClassifiedPath> done;
-            done.reserve(cls->size());
+            done.reserve(cls->first.size());
             const bool net = allowNetwork_.load(std::memory_order_relaxed);
-            for (fs::path& p : *cls) {
+            for (fs::path& p : cls->first) {
                 ClassifiedPath c;
-                // Sciezka UNC bez zgody: nie dotykamy sieci (nie pytamy serwera o typ).
-                if (ui::isPathAllowed(p, net)) {
+                // Bez zgody na siec: ani UNC, ani dysk zmapowany (DRIVE_REMOTE), ani dowiazanie do sieci - nie pytamy serwera
+                // o typ (isNetworkRedirected idzie skladnik po skladniku i nie otwiera pelnej sciezki).
+                if (ui::isPathAllowed(p, net) && (net || !ui::isNetworkRedirected(p))) {
                     std::error_code ec;
                     c.isDirectory = fs::is_directory(p, ec);
                 }
@@ -260,6 +269,7 @@ void IoWorker::loop()
                 done.push_back(std::move(c));
             }
             out.classified.push_back(std::move(done));
+            out.classifiedTags.push_back(std::move(cls->second));
         }
         // 4) metadane (jeden plik na obieg, zeby zapisy nie czekaly)
         if (meta) {

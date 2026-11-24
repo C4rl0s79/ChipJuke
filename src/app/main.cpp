@@ -5,6 +5,7 @@
 #include "app_resources.h"
 #include "file_dialog.h"
 
+#include "vgmplay_ui/file_browser.h"
 #include "vgmplay_ui/nav_input.h"
 #include "vgmplay_ui/player_screen.h"
 #include "vgmplay_ui/strings.h"
@@ -27,6 +28,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cwctype>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -228,8 +230,11 @@ int main()
     } else {
         std::filesystem::path appData;
         const bool appDataOk = roamingAppData(appData);
-        if (appDataOk) (void)vgmplay::settings::migrateLegacyAppDataDir(appData);
         const auto loc = vgmplay::settings::resolveSettingsLocation(exeDirectory(), appDataOk ? appData : std::filesystem::path());
+        // Dawny katalog "vgmplay" w %APPDATA% przenosimy tylko, gdy ustawienia faktycznie pojda do %APPDATA% (exe w katalogu bez
+        // zapisu); w trybie przenosnym nie ruszamy cudzego katalogu.
+        if (!loc.portable && appDataOk && loc.file.native().rfind(appData.native(), 0) == 0)
+            (void)vgmplay::settings::migrateLegacyAppDataDir(appData);
         if (loc.portable || appDataOk) options.settingsFile = loc.file;
         else options.noAppDataNotice = true;   // brak zapisywalnego katalogu: bez trwalosci
     }
@@ -265,10 +270,24 @@ int main()
         if (cl.rowTicks) { st.ui.rowTicks = *cl.rowTicks; changed = true; }
         if (changed) controller->applySettings(st);
     }
-    if (cl.files.size() == 1 && !std::filesystem::is_directory(cl.files[0]))
-        controller->openStartupFile(cl.files[0]);   // jeden plik: dodany do playlisty i odtwarzany
-    else if (!cl.files.empty())
-        controller->submitPaths(cl.files);          // foldery/wiele plikow: do aktywnej playlisty
+    {
+        // Bez zgody na siec nie dotykamy sciezek UNC / urzadzen (ani is_directory, ani otwarcie): odrzucone z komunikatem.
+        std::vector<std::filesystem::path> startup;
+        for (const auto& f : cl.files) {
+            if (vgmplay::ui::isPathAllowed(f, cl.allowNetwork)) startup.push_back(f);
+            else std::fprintf(stderr, "Pominieto sciezke sieciowa (wymaga --allow-network-paths): %s\n", f.string().c_str());
+        }
+        // Katalog od pliku odroznia worker (submitPaths), nie watek UI: jeden plik .vgm/.vgz = odtwarzanie od razu.
+        const auto isVgmExt = [](const std::filesystem::path& p) {
+            std::wstring e = p.extension().wstring();
+            for (wchar_t& c : e) c = static_cast<wchar_t>(std::towlower(c));
+            return e == L".vgm" || e == L".vgz";
+        };
+        if (startup.size() == 1 && isVgmExt(startup[0]))
+            controller->openStartupFile(startup[0]);   // jeden plik: dodany do playlisty i odtwarzany
+        else if (!startup.empty())
+            controller->submitPaths(std::move(startup));   // foldery/wiele plikow: do aktywnej playlisty
+    }
 
     vgmplay::ui::NavInput nav;
     vgmplay::ui::PlayerScreen screen;

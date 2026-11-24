@@ -846,7 +846,9 @@ void PlayerScreen::drawTracker(NavInput& nav, const PlayerView& view, PlayerActi
     const float sbY0 = wp.y + h - sbH, sbY1 = wp.y + h - dpi;
     if (scrollable) {
         const Thumb th = scrollThumb(colScroll_, content, viewW, viewW, 16.0f * dpi);
-        if (!colDrag_ && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+        // Start przeciagania tylko gdy okno trackera jest pod kursorem i nie ma modalu (inaczej klik w okno/okno dialogowe
+        // nad trackerem przejmowalby pasek).
+        if (!colDrag_ && !modalOpen() && ImGui::IsWindowHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
             ImGui::IsMouseHoveringRect(ImVec2(viewL, sbY0), ImVec2(rightEdge, sbY1))) {
             colDrag_ = true;
             const float mx = io.MousePos.x - viewL;

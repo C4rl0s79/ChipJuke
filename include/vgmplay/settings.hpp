@@ -134,7 +134,9 @@ struct SettingsLocation {
 // (settings.json obok exe, portable=false).
 // [E5] Zmiana nazwy produktu na ChipJuke: katalog w %APPDATA% to "ChipJuke". Jesli go nie ma, a istnieje
 // dawny "%APPDATA%\vgmplay" (prawdziwy katalog, nie dowiazanie), przenosi go pod nowa nazwe (rename).
-// Zwraca true, gdy przeniesiono. Wolac przed resolveSettingsLocation (watek startowy).
+// Zwraca true, gdy przeniesiono. Wolac (watek startowy) TYLKO wtedy, gdy ustawienia faktycznie pojda do %APPDATA%, czyli
+// resolveSettingsLocation zwrocilo portable=false i plik pod appDataDir (main.cpp); w trybie przenosnym lub z --settings-dir
+// nie wolac. Migracja nie zalezy od kolejnosci wzgledem resolveSettingsLocation (ta tylko liczy sciezke).
 bool migrateLegacyAppDataDir(const std::filesystem::path& appDataDir);
 [[nodiscard]] SettingsLocation resolveSettingsLocation(const std::filesystem::path& exeDir,
                                                        const std::filesystem::path& appDataDir);

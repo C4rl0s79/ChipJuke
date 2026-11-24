@@ -398,11 +398,27 @@ inline int cleanupOrphanTemps(const std::filesystem::path& file, std::uint64_t m
         auto w = writeTempBeside(wanted, data, tmp);
         if (!w.ok()) return w.error();
     }
-    const std::wstring stem = wanted.stem().wstring();
+    // Propozycja moze byc juz ponumerowana ("Mix (2).m3u8" z zapowiedzi przegladarki): bierzemy czysty rdzen
+    // i kontynuujemy numeracje, zamiast dopisywac drugi numer ("Mix (2) (2)").
+    std::wstring stem = wanted.stem().wstring();
     const std::wstring ext = wanted.extension().wstring();
+    int firstN = 1;
+    {
+        const std::size_t open = stem.rfind(L" (");
+        if (open != std::wstring::npos && stem.size() > open + 3 && stem.back() == L')') {
+            const std::wstring digits = stem.substr(open + 2, stem.size() - open - 3);
+            if (digits.size() <= 3 && digits.find_first_not_of(L"0123456789") == std::wstring::npos && digits[0] != L'0') {
+                const int v = std::stoi(digits);
+                if (v >= 2) {
+                    stem.resize(open);
+                    firstN = v;
+                }
+            }
+        }
+    }
     DWORD err = ERROR_ALREADY_EXISTS;
-    for (int n = 1; n <= maxTries; ++n) {
-        const std::filesystem::path cand = n == 1 ? wanted : dir / (stem + L" (" + std::to_wstring(n) + L")" + ext);
+    for (int n = firstN; n <= maxTries; ++n) {
+        const std::filesystem::path cand = n == firstN ? wanted : dir / (stem + L" (" + std::to_wstring(n) + L")" + ext);
         for (int attempt = 0; attempt < 5; ++attempt) {   // antywirus / indeksator moga chwilowo trzymac plik
             if (::MoveFileExW(tmp.c_str(), cand.c_str(), MOVEFILE_WRITE_THROUGH)) return cand;
             err = ::GetLastError();

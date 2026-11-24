@@ -118,6 +118,7 @@ enum class Str {
     NtSaveFail,
     NtNoAppData,
     NtNonVgm,
+    NtListGone,
     SetTitle,
     SetAudio,
     SetAudioDefault,

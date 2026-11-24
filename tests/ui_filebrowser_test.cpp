@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -649,6 +650,72 @@ TEST_SUITE("ui/file_browser")
         (void)b.activate();
         CHECK(b.networkBlocked());
         CHECK(b.dir() == t.path);   // zostajemy w biezacym katalogu
+
+        // Zaznaczanie wpisu zablokowanego jest odrzucane (X nie doda go do playlisty).
+        b.select(indexOf(b, "netlink"));
+        b.toggleMark();
+        CHECK(b.markedCount() == 0);
+
+        // Folder, ktorego listowanie wrocilo `blocked` (wejscie np. z listy ostatnich): ani dodania, ani zapisu.
+        for (BrowserMode m : {BrowserMode::AddFiles, BrowserMode::AddFolder, BrowserMode::ExportM3u}) {
+            FileBrowser c;
+            c.setDriveMaskForTest(0b100);
+            c.open(m, {}, false, "Lista");
+            c.navigate(t.path / L"netlink");
+            REQUIRE(settle(c));
+            CHECK(c.status().blocked);
+            CHECK(c.useHere().kind == BrowserOutcome::Kind::None);
+            CHECK(c.activate().kind == BrowserOutcome::Kind::None);
+        }
+    }
+
+    TEST_CASE("sec: sprawdzenie sieci idzie skladnik po skladniku - junction lokalny->lokalny dozwolony, dowiazanie do UNC w srodku sciezki zablokowane")
+    {
+        TempDir t;
+        t.dir(L"real/sub");
+        t.file(L"real/sub/a.vgm");
+        const std::string cmd = "mklink /J \"" + (t.path / L"jn").string() + "\" \"" + (t.path / L"real").string() + "\" >nul 2>nul";
+        if (std::system(cmd.c_str()) == 0 && fs::exists(t.path / L"jn")) {
+            CHECK_FALSE(isNetworkRedirected(t.path / L"jn"));
+            CHECK_FALSE(isNetworkRedirected(t.path / L"jn" / L"sub"));
+            CHECK_FALSE(isNetworkRedirected(t.path / L"jn" / L"sub" / L"nie_ma"));
+            ListOptions o;
+            o.allowNetwork = false;
+            const Listing l = listDirectory(t.path / L"jn" / L"sub", o);
+            CHECK_FALSE(l.blocked);
+            CHECK(l.error.empty());
+        } else {
+            MESSAGE("nie mozna utworzyc junction (mklink /J) - czesc testu pominieta");
+        }
+        CHECK_FALSE(isNetworkRedirected(t.path / L"real" / L"sub"));
+        CHECK_FALSE(isNetworkRedirected(t.path));
+
+        std::error_code ec;
+        fs::create_directory_symlink(L"\\\\srv.invalid\\share", t.path / L"netlink", ec);
+        if (ec) {
+            MESSAGE("brak uprawnien do dowiazan symbolicznych (" << ec.message() << ") - czesc testu pominieta");
+            return;
+        }
+        // Dowiazanie do UNC jako NIE ostatni skladnik: wykrywane na samym skladniku, bez otwierania pelnej sciezki.
+        CHECK(isNetworkRedirected(t.path / L"netlink"));
+        CHECK(isNetworkRedirected(t.path / L"netlink" / L"sub" / L"deeper"));
+        // Lokalne dowiazanie, ktorego cel prowadzi przez dowiazanie do UNC.
+        fs::create_directory_symlink(t.path / L"netlink" / L"x", t.path / L"viaNet", ec);
+        if (!ec) CHECK(isNetworkRedirected(t.path / L"viaNet"));
+        // Wzgledny cel lokalny.
+        fs::create_directory_symlink(L"real", t.path / L"rel", ec);
+        if (!ec) CHECK_FALSE(isNetworkRedirected(t.path / L"rel" / L"sub"));
+    }
+
+    TEST_CASE("sec: cel dowiazania jako tekst - UNC, mapowany dysk, wolumin lokalny")
+    {
+        CHECK(isNetworkLinkTarget(L"\\??\\UNC\\srv\\share"));
+        CHECK_FALSE(isNetworkLinkTarget(L"\\??\\C:\\Users"));
+        CHECK_FALSE(isNetworkLinkTarget(L"\\??\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\"));
+        const auto kind = +[](wchar_t c) { return c == L'Z' ? DriveKind::Network : DriveKind::Fixed; };
+        const auto on = driveEntries(1u << 25, false, kind);
+        REQUIRE(on.size() == 1);
+        CHECK(on[0].blocked);
     }
 
     TEST_CASE("sec: DirectoryLister - limit watkow listujacych: nadmiar czeka (queued) i rusza po zwolnieniu miejsca")

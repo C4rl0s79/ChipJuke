@@ -61,7 +61,7 @@ target_compile_definitions(vgmplay_options INTERFACE
 # Wersja. Generuje <build>/generated/vgmplay/version.hpp (C++: kVersion, kGitCommit, ...)
 # i version_rc.h (makra dla app.rc). Naglowek jest widoczny przez vgmplay::options:
 #   #include <vgmplay/version.hpp>
-# Skrot commita jest ustalany przy konfiguracji (i ponownie po zmianie HEAD).
+# Skrot commita jest ustalany przy konfiguracji (i ponownie po zmianie HEAD, galezi, packed-refs albo indeksu).
 # ---------------------------------------------------------------------------
 set(VGMPLAY_VERSION_FULL "${PROJECT_VERSION}")
 if(VGMPLAY_VERSION_SUFFIX)
@@ -83,13 +83,26 @@ if(GIT_FOUND)
         if(_vgmplay_status)
             set(VGMPLAY_GIT_DIRTY 1)
         endif()
-        # Przekonfiguruj po zmianie HEAD (rowniez w worktree, gdzie .git jest plikiem).
-        execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --path-format=absolute --git-path HEAD
+        # Przekonfiguruj po kazdej zmianie, ktora zmienia commit albo "dirty": HEAD (przelaczenie galezi), plik rozwiazanej
+        # galezi (refs/heads/<galaz>: nowy commit zmienia tylko ten plik), packed-refs (po gc/pack), index (git add/commit/
+        # reset/checkout). Dziala tez w worktree, gdzie .git jest plikiem (--git-path daje sciezki wlasciwe worktree).
+        # Ograniczenie: sama edycja sledzonego pliku bez `git add` nie zmienia zadnego z nich, wiec flaga dirty odswiezy sie
+        # dopiero przy nastepnej rekonfiguracji (np. po zmianie CMakeLists.txt albo `git add`).
+        set(_vgmplay_dep_names HEAD packed-refs index)
+        execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --symbolic-full-name HEAD
             WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-            OUTPUT_VARIABLE _vgmplay_head ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
-        if(_vgmplay_head AND EXISTS "${_vgmplay_head}")
-            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_vgmplay_head}")
+            OUTPUT_VARIABLE _vgmplay_ref ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(_vgmplay_ref AND NOT _vgmplay_ref STREQUAL "HEAD")   # odlaczony HEAD: samo "HEAD"
+            list(APPEND _vgmplay_dep_names "${_vgmplay_ref}")
         endif()
+        foreach(_vgmplay_dep IN LISTS _vgmplay_dep_names)
+            execute_process(COMMAND "${GIT_EXECUTABLE}" rev-parse --path-format=absolute --git-path "${_vgmplay_dep}"
+                WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+                OUTPUT_VARIABLE _vgmplay_dep_path ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+            if(_vgmplay_dep_path AND EXISTS "${_vgmplay_dep_path}")
+                set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_vgmplay_dep_path}")
+            endif()
+        endforeach()
     endif()
 endif()
 # Numeryczne skladniki dla VERSIONINFO (cztery liczby; ostatnia = 0).

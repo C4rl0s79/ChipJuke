@@ -121,6 +121,7 @@ constexpr Entry kTexts[] = {
     /*NtSaveFail*/ {"Saving failed", "Zapis nie powiódł się"},
     /*NtNoAppData*/ {"The AppData folder is unavailable; settings are not saved", "Folder AppData jest niedostępny; ustawienia nie będą zapisywane"},
     /*NtNonVgm*/ {"Not a .vgm/.vgz file", "To nie jest plik .vgm/.vgz"},
+    /*NtListGone*/ {"The target playlist no longer exists; added to the active one", "Docelowa playlista już nie istnieje; dodano do aktywnej"},
     /*SetTitle*/ {"SETTINGS (F10)", "USTAWIENIA (F10)"},
     /*SetAudio*/ {"Audio device", "Urządzenie audio"},
     /*SetAudioDefault*/ {"system default", "domyślne systemowe"},
