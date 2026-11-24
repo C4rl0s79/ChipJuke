@@ -8,7 +8,7 @@
 #   -NoBuild     uzywa istniejacego builda (np. z CI po osobnych krokach build + test); testy nie sa
 #                wtedy uruchamiane ponownie
 #   -SourceUrl   adres repozytorium zrodel wpisywany do SOURCE.txt (GPL-2.0: zrodla odpowiadajace
-#                binarce). Domyslnie $env:VGMPLAY_SOURCE_URL; bez niego zostaje WYRAZNY PLACEHOLDER.
+#                binarce). Domyslnie $env:VGMPLAY_SOURCE_URL, a gdy brak - https://github.com/C4rl0s79/VGMPlay.
 #
 # Wynik: out\dist\vgmplay-<wersja>-win64\ , out\dist\vgmplay-<wersja>-win64.zip , out\dist\SHA256SUMS.txt
 # Skrypt przerywa przy bledzie budowy/testu/kontroli paczki.
@@ -16,7 +16,7 @@ param(
     [string]$Preset = 'msvc-x64-release',
     [switch]$NoBuild,
     [switch]$NoSamples,
-    [string]$SourceUrl = $env:VGMPLAY_SOURCE_URL
+    [string]$SourceUrl = $(if ($env:VGMPLAY_SOURCE_URL) { $env:VGMPLAY_SOURCE_URL } else { 'https://github.com/C4rl0s79/VGMPlay' })
 )
 $ErrorActionPreference = 'Stop'
 $Placeholder = '<REPOSITORY-URL: uzupelnic przy publikacji / fill in at publication>'

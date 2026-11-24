@@ -1,5 +1,7 @@
 # vgmplay
 
+<!-- Banner: docs/images/banner.png (to be added) -->
+
 A tracker-style player for VGM / VGZ files on Windows. Chip emulation is provided by
 [libvgm](https://github.com/ValleyBell/libvgm); the interface uses SDL3 and Dear ImGui (Direct3D 11),
 audio output uses miniaudio (WASAPI).
@@ -123,7 +125,7 @@ Requirements: Visual Studio 2022 (or Build Tools) with the C++ workload (MSVC x6
 [vcpkg](https://github.com/microsoft/vcpkg) with `VCPKG_ROOT` set.
 
 ```powershell
-git clone --recurse-submodules <REPOSITORY-URL> vgmplay
+git clone --recurse-submodules https://github.com/C4rl0s79/VGMPlay vgmplay
 cd vgmplay
 # If cloned without --recurse-submodules:
 git submodule update --init --recursive
@@ -144,7 +146,7 @@ CMake options: `VGMPLAY_BUILD_TESTS`, `VGMPLAY_BUILD_FUZZ`, `VGMPLAY_STATIC_CRT`
 ## Source code (GPL-2.0)
 
 The corresponding source for every binary release is the repository at the tag/commit recorded in the `SOURCE.txt`
-file inside the ZIP. Repository: `<REPOSITORY-URL: fill in at publication>`.
+file inside the ZIP. Repository: `https://github.com/C4rl0s79/VGMPlay`.
 
 ## Licensing
 

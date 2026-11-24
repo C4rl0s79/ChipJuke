@@ -8,7 +8,7 @@ Wszystkie biblioteki są linkowane statycznie do `vgmplay.exe` (triplet `x64-win
 więc paczka nie zawiera żadnych DLL.
 
 **Kod źródłowy odpowiadający binarce (GPL-2.0)**: repozytorium i commit są zapisane w pliku `SOURCE.txt` w paczce
-(adres repozytorium: `<REPOSITORY-URL: uzupełnić przy publikacji>`).
+(adres repozytorium: `https://github.com/C4rl0s79/VGMPlay`).
 
 | Składnik | Licencja | Uwagi |
 |---|---|---|

@@ -38,4 +38,4 @@ First release candidate. Distribution: portable ZIP only (Windows 10 22H2+, x64,
 - Licences of some libvgm cores are not declared upstream (see `docs/licensing/libvgm-audit.md`).
   Enabled by decision: NSFPlay-derived NES cores, Maxim SN76489, Gens YM2612/SCD PCM, superctr QSound.
 
-[1.0.0-rc1]: <REPOSITORY-URL>/releases/tag/v1.0.0-rc1
+[1.0.0-rc1]: https://github.com/C4rl0s79/VGMPlay/releases/tag/v1.0.0-rc1
