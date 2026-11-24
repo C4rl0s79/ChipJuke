@@ -23,6 +23,7 @@ constexpr std::size_t kMaxJsonValues = 50000;
 constexpr std::size_t kMaxBindings = 1024;
 constexpr std::size_t kMaxCores = 128;
 constexpr std::size_t kMaxStringBytes = 4096;
+constexpr std::size_t kMaxDeviceIdBytes = 512;
 constexpr const char* kSettingsFileName = "settings.json";
 
 // ---- nazwy enumow w pliku (trwale; wartosci liczbowe enumow NIE sa zapisywane) ----
@@ -123,6 +124,28 @@ constexpr std::array<const char*, 3> kScopeModes = {"master", "perDevice", "perC
 constexpr std::array<const char*, 2> kTrackerViews = {"notes", "scopes"};
 constexpr std::array<const char*, 2> kGd3Langs = {"en", "jp"};
 constexpr std::array<const char*, 2> kNonLoopEnds = {"stop", "fadeOut"};
+constexpr std::array<const char*, 3> kRepeats = {"off", "one", "all"};
+constexpr std::array<const char*, 3> kScopeBars = {"small", "large", "hidden"};
+
+// Nazwa enuma do zapisu (wartosc spoza zakresu -> pierwsza, czyli domyslna).
+template <class E, std::size_t N>
+const char* enumName(const std::array<const char*, N>& names, E v)
+{
+    const auto i = static_cast<std::size_t>(v);
+    return names[i < N ? i : 0];
+}
+
+bool getBool(const Ctx& c, const json& o, const char* key, bool& out)
+{
+    auto it = o.find(key);
+    if (it == o.end()) return false;
+    if (!it->is_boolean()) {
+        c.warn(std::string("invalid boolean, default used: ") + key);
+        return false;
+    }
+    out = it->get<bool>();
+    return true;
+}
 
 ChipType chipTypeFromName(std::string_view name)
 {
@@ -171,12 +194,22 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
         migrate(root, ver, c);
 
         Settings s;
+        // Flaga zapamietanej zgody na sciezki sieciowe: czytana PRZED walidacja session.trackPath.
+        if (const json* lib = getObject(c, root, "library")) {
+            bool b = false;
+            if (getBool(c, *lib, "allowNetworkPaths", b)) s.library.allowNetworkPaths = b;
+        }
+        const bool effectiveAllowNetwork = allowNetworkPaths || s.library.allowNetworkPaths;
         std::uint64_t u = 0;
         float f = 0;
         std::string str;
 
         if (const json* a = getObject(c, root, "audio")) {
-            if (getString(c, *a, "device", str)) s.audio.device = str;
+            if (getString(c, *a, "device", str)) {
+                // Id urzadzenia z pliku: bez znakow sterujacych/kierunkowych, max 512 B.
+                s.audio.device = fsutil::sanitizeTitle(str, kMaxDeviceIdBytes);
+                if (s.audio.device != str) c.warn("audio.device sanitized");
+            }
             if (getUint(c, *a, "bufferMs", u)) s.audio.bufferMs = static_cast<std::uint32_t>((std::min<std::uint64_t>)(u, 1u << 20));
             if (getUint(c, *a, "sampleRate", u)) s.audio.sampleRate = static_cast<std::uint32_t>((std::min<std::uint64_t>)(u, 1u << 24));
         }
@@ -188,6 +221,7 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
             if (getUint(c, *p, "fadeMs", u)) s.playback.fadeMs = static_cast<std::uint32_t>((std::min<std::uint64_t>)(u, 1u << 20));
             if (getFloat(c, *p, "volume", f)) s.playback.volume = f;
             getEnumByName(c, *p, "nonLoopEnd", kNonLoopEnds, s.playback.nonLoopEnd);
+            getEnumByName(c, *p, "repeat", kRepeats, s.playback.repeat);
             if (auto it = p->find("cores"); it != p->end()) {
                 if (!it->is_array()) c.warn("playback.cores is not an array, ignored");
                 else {
@@ -223,6 +257,8 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
             if (getFloat(c, *ui, "fontScale", f)) s.ui.fontScale = f;
             getEnumByName(c, *ui, "scopeMode", kScopeModes, s.ui.scopeMode);
             getEnumByName(c, *ui, "trackerView", kTrackerViews, s.ui.trackerView);
+            getEnumByName(c, *ui, "scopeBar", kScopeBars, s.ui.scopeBar);
+            (void)getBool(c, *ui, "showButtonHints", s.ui.showButtonHints);
             if (getUint(c, *ui, "rowTicks", u)) s.ui.rowTicks = static_cast<std::uint32_t>((std::min<std::uint64_t>)(u, 1u << 24));
         }
         s.ui.fontScale = clampWarn<float>(c, "ui.fontScale", s.ui.fontScale, 0.5f, 3.0f);
@@ -258,7 +294,7 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
 
         if (const json* se = getObject(c, root, "session")) {
             if (getString(c, *se, "trackPath", str)) {
-                if (str.empty() || !fsutil::isUnsafeStoredPath(str, allowNetworkPaths)) s.session.trackPath = str;
+                if (str.empty() || !fsutil::isUnsafeStoredPath(str, effectiveAllowNetwork)) s.session.trackPath = str;
                 else c.warn("session.trackPath rejected (URL, network or device path)");
             }
             if (getUint(c, *se, "positionMs", u)) s.session.positionMs = (std::min<std::uint64_t>)(u, 24ull * 3600 * 1000);
@@ -285,6 +321,7 @@ std::string toJson(const Settings& s)
                         {"fadeMs", s.playback.fadeMs},
                         {"volume", round3(s.playback.volume)},
                         {"nonLoopEnd", kNonLoopEnds[nl < kNonLoopEnds.size() ? nl : 0]},
+                        {"repeat", enumName(kRepeats, s.playback.repeat)},
                         {"cores", std::move(cores)}};
 
     root["ui"] = {{"language", s.ui.language == i18n::Language::En ? "en" : "pl"},
@@ -293,6 +330,8 @@ std::string toJson(const Settings& s)
                   {"fontScale", round3(s.ui.fontScale)},
                   {"scopeMode", kScopeModes[static_cast<std::size_t>(s.ui.scopeMode) < 3 ? static_cast<std::size_t>(s.ui.scopeMode) : 0]},
                   {"trackerView", kTrackerViews[static_cast<std::size_t>(s.ui.trackerView) < 2 ? static_cast<std::size_t>(s.ui.trackerView) : 0]},
+                  {"scopeBar", enumName(kScopeBars, s.ui.scopeBar)},
+                  {"showButtonHints", s.ui.showButtonHints},
                   {"rowTicks", s.ui.rowTicks}};
 
     json binds = json::array();
@@ -303,6 +342,7 @@ std::string toJson(const Settings& s)
         binds.push_back({{"action", kActionNames[a]}, {"source", kSourceKinds[k]}, {"code", b.source.code}});
     }
     root["input"] = {{"bindings", std::move(binds)}, {"repeatDelayMs", s.input.repeatDelayMs}, {"repeatRateMs", s.input.repeatRateMs}};
+    root["library"] = {{"allowNetworkPaths", s.library.allowNetworkPaths}};
     root["session"] = {{"trackPath", s.session.trackPath}, {"positionMs", s.session.positionMs}};
     return root.dump(2, ' ', false, json::error_handler_t::replace) + "\n";
 }

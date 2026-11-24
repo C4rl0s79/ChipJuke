@@ -61,7 +61,7 @@ Result<FileStamp> statFile(const fs::path& path)
 
 bool isCloudPlaceholderError(const Error& e) noexcept
 {
-    return e.code == ErrorCode::AccessDenied && e.message.rfind("cloud placeholder", 0) == 0;
+    return e.code == ErrorCode::CloudPlaceholder;
 }
 
 Result<TrackMeta> readTrackMeta(const fs::path& path, const CancelToken& cancel, bool allowCloudDownload)
@@ -70,7 +70,7 @@ Result<TrackMeta> readTrackMeta(const fs::path& path, const CancelToken& cancel,
         if (!allowCloudDownload) {
             const DWORD a = ::GetFileAttributesW(path.c_str());
             if (a != INVALID_FILE_ATTRIBUTES && isCloudPlaceholder(a))
-                return makeError(ErrorCode::AccessDenied, "cloud placeholder (content not local); download not requested");
+                return makeError(ErrorCode::CloudPlaceholder, "cloud placeholder (content not local); download not requested");
         }
         auto stamp = statFile(path);   // przed odczytem: zmiana w trakcie => cache niezgodny przy nastepnym uzyciu
         if (!stamp.ok()) return stamp.error();

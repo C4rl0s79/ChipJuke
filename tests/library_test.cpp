@@ -449,8 +449,9 @@ TEST_CASE("library sec: pliki w chmurze - readTrackMeta/getOrRead pomijaja, 'pob
     auto skipped = readTrackMeta(f);
     REQUIRE_FALSE(skipped.ok());
     CHECK(isCloudPlaceholderError(skipped.error()));
-    CHECK(skipped.error().code == ErrorCode::AccessDenied);
+    CHECK(skipped.error().code == ErrorCode::CloudPlaceholder);
     CHECK_FALSE(isCloudPlaceholderError(makeError(ErrorCode::AccessDenied, "other")));
+    CHECK_FALSE(isCloudPlaceholderError(makeError(ErrorCode::AccessDenied, "cloud placeholder (prefiks nie wystarcza)")));
 
     MetaCache c;
     auto s2 = c.getOrRead(f);
