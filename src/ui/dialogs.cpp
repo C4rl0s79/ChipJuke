@@ -153,6 +153,7 @@ void PlayerScreen::applyModal(const NavEvent& ev, const PlayerView& view, Player
         }
         return;
     }
+    if (dlg_.kind == DlgKind::None && browser_.isOpen()) { applyBrowser(ev, view, actions); return; }   // [E4]
     if (ev.repeat && ev.action != Action::Up && ev.action != Action::Down) return;
     switch (ev.action) {
     case Action::Back:
@@ -195,6 +196,7 @@ void PlayerScreen::drawModal(NavInput& nav, const PlayerView& view, PlayerAction
     dl->AddRectFilled(ImVec2(0, 0), ImVec2(W, H), col32(p.overlay));
     if (bindingsOpen_) drawBindings(nav, view, actions, W, H);
     else if (settingsOpen_ && dlg_.kind != DlgKind::NetworkConfirm) drawSettings(view, actions, W, H);
+    else if (dlg_.kind == DlgKind::None && browser_.isOpen()) drawBrowser(nav, view, actions, W, H);   // [E4]
     else drawDialog(view, actions, W, H);
     ImGui::End();
 }

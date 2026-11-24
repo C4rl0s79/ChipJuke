@@ -27,7 +27,11 @@ bool isVgmFile(const fs::path& p)
 {
     std::wstring e = p.extension().wstring();
     for (wchar_t& c : e) c = static_cast<wchar_t>(std::towlower(c));
-    return e == L".vgm" || e == L".vgz";
+    if (e == L".vgm" || e == L".vgz") return true;
+    // [E4] ".vgm.gz" (przegladarka plikow je pokazuje; loader rozpoznaje gzip po zawartosci)
+    std::wstring n = p.filename().wstring();
+    for (wchar_t& c : n) c = static_cast<wchar_t>(std::towlower(c));
+    return n.size() > 7 && n.compare(n.size() - 7, 7, L".vgm.gz") == 0;
 }
 
 template <class... A>

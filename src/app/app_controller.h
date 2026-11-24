@@ -142,6 +142,9 @@ public:
     void downloadEntry(std::size_t index) override;
     void dismissNotice() override;
     void refreshAudioDevices() override;   // [E3] lista urzadzen odtwarzania (blokuje do ~100 ms)
+    void addPaths(std::vector<std::filesystem::path> paths) override { submitPaths(std::move(paths)); }   // [E4]
+    void importM3uFile(const std::filesystem::path& file) override { submitImportM3u(file); }
+    void exportM3uFile(const std::filesystem::path& file) override { submitExportM3u(file); }
 
     // Prev w pierwszych kPrevRestartSeconds sekundach -> poprzedni wpis; pozniej poczatek utworu.
     static constexpr double kPrevRestartSeconds = 3.0;

@@ -12,6 +12,7 @@
 // Wartosci domyslne oznaczone [robocze] to propozycje do zmiany bez zmiany kontraktu.
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -66,7 +67,9 @@ struct UiSettings {
     // Zakres po walidacji: 64 .. 44100.  [dodatek E2]
     std::uint32_t rowTicks = 2205;
     ScopeBar scopeBar = ScopeBar::Small;   // [dodatek E3]
-    bool showButtonHints = true;           // [dodatek E3] pasek podpowiedzi przyciskow pada
+    // [dodatek E3] pasek podpowiedzi przyciskow pada. [E4] Domyslnie WYLACZONY (decyzja uzytkownika po tescie E3):
+    // pasek jest widoczny wylacznie przy wlaczonym ustawieniu (takze przy uzyciu pada).
+    bool showButtonHints = false;
 };
 
 // [dodatek E3] Biblioteka / dostep do plikow.
@@ -78,6 +81,12 @@ struct LibrarySettings {
     // (flaga --allow-network-paths lub efektywna wartosc przekazana przez aplikacje).
     // URL i przestrzen urzadzen zawsze odrzucane.
     bool allowNetworkPaths = false;
+
+    // [dodatek E4] Ostatnio uzywane foldery wbudowanej przegladarki plikow (UTF-8), najnowszy pierwszy,
+    // maks. kMaxRecentFolders. Przegladarka startuje w pierwszym z nich i pokazuje je na gorze listy dyskow.
+    // fromJson odrzuca wpisy niebezpieczne (URL, przestrzen urzadzen, UNC bez zgody - jak session.trackPath).
+    static constexpr std::size_t kMaxRecentFolders = 8;
+    std::vector<std::string> recentFolders;
 };
 
 struct InputSettings {

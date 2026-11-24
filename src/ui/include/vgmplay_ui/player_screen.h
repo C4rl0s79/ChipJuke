@@ -7,9 +7,13 @@
 
 #include "vgmplay/input.hpp"
 #include "vgmplay_ui/channel_scopes.h"
+#include "vgmplay_ui/file_browser.h"
+#include "vgmplay_ui/focus_grid.h"
 #include "vgmplay_ui/nav_input.h"
 #include "vgmplay_ui/pattern_view.h"
 #include "vgmplay_ui/player_view.h"
+#include "vgmplay_ui/scroll_layout.h"
+#include "vgmplay_ui/strings.h"
 
 #include <imgui.h>
 
@@ -48,10 +52,13 @@ public:
     int settingsSelection() const { return setSel_; }
     int focusRow(Panel p) const { return grid(p).row; }
     int focusCol(Panel p) const { return grid(p).col; }
-    // Czy ostatnio zaznaczony element otwiera okno systemowe (pad nie da rady).
-    bool focusNeedsKeyboard() const { return focusKbdOnly_; }
     long long playlistSelection() const { return plSel_; }
-    bool modalOpen() const { return dlg_.kind != DlgKind::None || settingsOpen_; }
+    bool modalOpen() const { return dlg_.kind != DlgKind::None || settingsOpen_ || browser_.isOpen(); }
+    // [E4] wbudowana przegladarka plikow (pad)
+    bool browserOpen() const { return browser_.isOpen(); }
+    const FileBrowser& browser() const { return browser_; }
+    FileBrowser& browser() { return browser_; }
+
 
     bool diagnosticsVisible() const { return diag_; }
     void setDiagnosticsVisible(bool v) { diag_ = v; }
@@ -63,6 +70,20 @@ public:
     // Liczba kolumn widocznych w ostatniej klatce (testy) i pierwsza widoczna.
     int visibleColumns() const { return visCols_; }
     int firstColumn() const { return firstChan_; }
+    // [E4] poziome przewijanie kolumn kanalow: przesuniecie (px), kanal z fokusem, czy kanal jest w pelni widoczny.
+    float columnScroll() const { return colScroll_; }
+    int channelCursor() const { return chan_; }
+    bool channelFullyVisible() const { return chanFullyVisible_; }
+    float columnWidthPx() const { return colWidthPx_; }
+    float infoScroll() const { return infoScrollPx_; }
+    float infoContentHeight() const { return infoContentH_; }
+    float infoViewHeight() const { return infoViewH_; }
+    float trackerPanelWidth() const { return trackerW_; }
+    float sidePanelWidth() const { return sideW_; }
+    // Czy kursor mapy fokusu panelu stoi na elemencie narysowanym w ostatniej klatce (testy).
+    bool focusRegistered(Panel p) const { return grid(p).has(grid(p).row, grid(p).col); }
+    // Otwiera wbudowana przegladarke (pad); mysz i klawiatura uzywaja okien systemowych (openPicker).
+    void openBrowser(BrowserMode mode, const PlayerView& view);
 
 private:
     void cycleStrip()
@@ -70,40 +91,6 @@ private:
         strip_ = strip_ == ScopeStrip::Small ? ScopeStrip::Large
                  : strip_ == ScopeStrip::Large ? ScopeStrip::Hidden : ScopeStrip::Small;
     }
-    // [E3] Mapa fokusu panelu: wiersze elementow (liczone w ostatniej klatce) i kursor.
-    struct FocusGrid {
-        int row = 0, col = 0;
-        std::vector<int> sizes;      // rozmiary wierszy z ostatniej klatki
-        std::vector<int> building;   // w trakcie rysowania
-        void begin() { building.clear(); }
-        void reg(int r, int c)
-        {
-            if (static_cast<int>(building.size()) <= r) building.resize(static_cast<std::size_t>(r) + 1, 0);
-            if (building[static_cast<std::size_t>(r)] < c + 1) building[static_cast<std::size_t>(r)] = c + 1;
-        }
-        void end()
-        {
-            sizes = building;
-            const int rows = static_cast<int>(sizes.size());
-            if (rows > 0) {
-                row = std::min(std::max(row, 0), rows - 1);
-                col = std::min(std::max(col, 0), std::max(0, sizes[static_cast<std::size_t>(row)] - 1));
-            }
-        }
-        [[nodiscard]] bool at(int r, int c) const { return row == r && col == c; }
-        void moveRow(int d)
-        {
-            const int rows = std::max(1, static_cast<int>(sizes.size()));
-            row = std::min(std::max(row + d, 0), rows - 1);
-            const int n = row < static_cast<int>(sizes.size()) ? sizes[static_cast<std::size_t>(row)] : 1;
-            col = std::min(col, std::max(0, n - 1));
-        }
-        void moveCol(int d)
-        {
-            const int n = row < static_cast<int>(sizes.size()) ? sizes[static_cast<std::size_t>(row)] : 1;
-            col = std::min(std::max(col + d, 0), std::max(0, n - 1));
-        }
-    };
     FocusGrid& grid(Panel p) { return p == Panel::Transport ? tGrid_ : p == Panel::Playlist ? pGrid_ : kGrid_; }
     const FocusGrid& grid(Panel p) const { return p == Panel::Transport ? tGrid_ : p == Panel::Playlist ? pGrid_ : kGrid_; }
     // Element (row,col) panelu jest zaznaczony padem/klawiatura: true => rysuj pierscien.
@@ -116,7 +103,21 @@ private:
     {
         return activate_ && ringAt(g, panelFocused, r, c);
     }
+    struct Hint {
+        Action action;                 // akcja, ktorej przycisk pada pokazujemy
+        Str label;
+        bool dpad = false;             // Up/Down/Left/Right: pokaz "D-pad", gdy przypisany
+        Action also = Action::None;    // druga akcja pary (np. LB/RB)
+    };
     void drawHints(NavInput& nav, const PlayerView& view, float x, float y, float w, float h);
+    void drawHintRow(ImDrawList* dl, const std::vector<Hint>& hints, const std::string& note, const ImVec4& noteColor,
+                     float x, float y, float w, float h);
+    [[nodiscard]] std::vector<Hint> browserHints() const;
+    // [E4] przegladarka plikow (file_browser_screen.cpp)
+    void openPicker(BrowserMode mode, const PlayerView& view, PlayerActions& actions, bool viaPad);
+    void applyBrowser(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
+    void drawBrowser(NavInput& nav, const PlayerView& view, PlayerActions& actions, float W, float H);
+    void finishBrowser(const BrowserOutcome& out, const PlayerView& view, PlayerActions& actions);
     void drawBindings(NavInput& nav, const PlayerView& view, PlayerActions& actions, float W, float H);
     void applyBindings(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
     void applyTransport(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
@@ -168,9 +169,10 @@ private:
         int age = 0;
     };
     Dialog dlg_;
-    FocusGrid tGrid_{1, 0, {}, {}}, pGrid_{2, 0, {}, {}}, kGrid_{1, 0, {}, {}};
+    FocusGrid tGrid_{1, 0}, pGrid_{2, 0}, kGrid_{1, 0};
     bool activate_ = false;
-    bool focusKbdOnly_ = false;
+    FileBrowser browser_;
+    bool navActivated_ = false;      // aktywacja z mapy fokusu (nie myszka) w tej klatce przez btn()
     bool needDeviceRefresh_ = false;
     bool bindingsOpen_ = false;
     std::vector<input::Binding> bind_;
@@ -208,7 +210,16 @@ private:
     int firstChan_ = 0;
     int visCols_ = 0;
     long long currentRow_ = -1;
-    int infoScroll_ = 0;
+    float infoViewH_ = 100.0f, infoContentH_ = 0.0f, infoStep_ = 18.0f;
+    float lastViewW_ = 0.0f;
+    float trackerW_ = 0.0f, sideW_ = 0.0f;
+    float infoScrollPx_ = 0.0f;                // [E4] przewijanie Info w pikselach (wiersze zawijane)
+    float colScroll_ = 0.0f;                   // [E4] wspolne poziome przesuniecie kolumn kanalow (px)
+    int lastRevealChan_ = -1;
+    bool chanFullyVisible_ = true;
+    float colWidthPx_ = 0.0f;
+    bool colDrag_ = false;
+    float colDragGrab_ = 0.0f;
     std::vector<float> scopeL_, scopeR_;
     ScopeStrip strip_ = ScopeStrip::Small;
     VuBank vu_;

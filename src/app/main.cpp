@@ -113,6 +113,7 @@ struct CommandLine {
     bool diag = false;
     bool fakeChannelScopes = false;
     bool fakePattern = false;
+    std::optional<vgmplay::ui::BrowserMode> browser;   // DIAGNOSTYKA: --browser=files|folder|import|export otwiera przegladarke plikow przy starcie
     int scopeStrip = -1;             // -1 = z ustawien (ui.scopeBar), 0 = maly, 1 = duzy, 2 = ukryty
     std::optional<unsigned> rowTicks;
     std::optional<std::filesystem::path> settingsDir;   // --settings-dir=<katalog>: settings.json, playlists.json, cache
@@ -134,6 +135,10 @@ CommandLine parseCommandLine()
         else if (a == L"--diag") cl.diag = true;                  // start z diagnostyka (jak F12)
         else if (a == L"--fake-channel-scopes") cl.fakeChannelScopes = true; // DIAGNOSTYKA: syntetyczne przebiegi kanalow
         else if (a == L"--fake-pattern") cl.fakePattern = true;   // DIAGNOSTYKA: sztuczne nuty zamiast chipstate
+        else if (a == L"--browser" || a == L"--browser=files") cl.browser = vgmplay::ui::BrowserMode::AddFiles;
+        else if (a == L"--browser=folder") cl.browser = vgmplay::ui::BrowserMode::AddFolder;
+        else if (a == L"--browser=import") cl.browser = vgmplay::ui::BrowserMode::ImportM3u;
+        else if (a == L"--browser=export") cl.browser = vgmplay::ui::BrowserMode::ExportM3u;
         else if (a == L"--scopes-large") cl.scopeStrip = 1;       // start z duzym paskiem oscyloskopow
         else if (a == L"--scopes-hidden") cl.scopeStrip = 2;      // start bez paska oscyloskopow
         else if (a.rfind(L"--row-ticks=", 0) == 0) cl.rowTicks = static_cast<unsigned>(std::max(1, _wtoi(a.c_str() + 12)));
@@ -267,6 +272,7 @@ int main()
     vgmplay::ui::NavInput nav;
     vgmplay::ui::PlayerScreen screen;
     screen.setDiagnosticsVisible(cl.diag);
+    std::optional<vgmplay::ui::BrowserMode> pendingBrowser = cl.browser;   // DIAGNOSTYKA: po pierwszym pump() (view.settings)
     const int stripChoice = cl.scopeStrip >= 0 ? cl.scopeStrip : static_cast<int>(controller->settings().ui.scopeBar);
     screen.setScopeStrip(stripChoice == 1 ? vgmplay::ui::ScopeStrip::Large
                          : stripChoice == 2 ? vgmplay::ui::ScopeStrip::Hidden
@@ -366,6 +372,10 @@ int main()
             d3d.occluded = false;
         }
 
+        if (pendingBrowser && controller->view().settings) {
+            screen.openBrowser(*pendingBrowser, controller->view());
+            pendingBrowser.reset();
+        }
         ImGui_ImplDX11_NewFrame();
         ImGui_ImplSDL3_NewFrame();
         ImGui::NewFrame();

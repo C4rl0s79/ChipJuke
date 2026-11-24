@@ -209,6 +209,27 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
         if (const json* lib = getObject(c, root, "library")) {
             bool b = false;
             if (getBool(c, *lib, "allowNetworkPaths", b)) s.library.allowNetworkPaths = b;
+            auto rf = lib->find("recentFolders");   // [E4] ostatnie foldery przegladarki
+            if (rf != lib->end()) {
+                if (!rf->is_array()) {
+                    c.warn("invalid array, default used: recentFolders");
+                } else {
+                    for (const json& item : *rf) {
+                        if (s.library.recentFolders.size() >= LibrarySettings::kMaxRecentFolders) {
+                            c.warn("library.recentFolders truncated");
+                            break;
+                        }
+                        if (!item.is_string()) { c.warn("library.recentFolders entry is not a string"); continue; }
+                        std::string rp = item.get<std::string>();
+                        if (rp.size() > kMaxStringBytes || fsutil::isUnsafeStoredPath(rp, allowNetworkPaths)) {
+                            c.warn("library.recentFolders entry rejected (URL, network or device path)");
+                            continue;
+                        }
+                        if (std::find(s.library.recentFolders.begin(), s.library.recentFolders.end(), rp) == s.library.recentFolders.end())
+                            s.library.recentFolders.push_back(std::move(rp));
+                    }
+                }
+            }
         }
         // [E3-sec] UNC w session.trackPath honorowane TYLKO przez parametr (flaga lub efektywna wartosc z aplikacji);
         // library.allowNetworkPaths z tego samego pliku nie moze sam odblokowac sciezki.
@@ -358,7 +379,9 @@ std::string toJson(const Settings& s)
         binds.push_back({{"action", std::string(an)}, {"source", std::string(kn)}, {"code", b.source.code}});
     }
     root["input"] = {{"bindings", std::move(binds)}, {"repeatDelayMs", s.input.repeatDelayMs}, {"repeatRateMs", s.input.repeatRateMs}};
-    root["library"] = {{"allowNetworkPaths", s.library.allowNetworkPaths}};
+    json recent = json::array();
+    for (const std::string& r : s.library.recentFolders) recent.push_back(r);
+    root["library"] = {{"allowNetworkPaths", s.library.allowNetworkPaths}, {"recentFolders", std::move(recent)}};
     root["session"] = {{"trackPath", s.session.trackPath}, {"positionMs", s.session.positionMs}};
     return root.dump(2, ' ', false, json::error_handler_t::replace) + "\n";
 }

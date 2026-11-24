@@ -95,7 +95,7 @@ void PlayerScreen::applyPlaylist(const NavEvent& ev, const PlayerView& view, Pla
         break;
     case Action::Confirm:
         if (ev.repeat) break;
-        if (n == 0) actions.requestOpenFile();
+        if (n == 0) openPicker(BrowserMode::AddFiles, view, actions, nav_ && nav_->lastInputWasPad());
         else actions.playEntry(sel);
         break;
     case Action::Delete: // klawiatura: od razu (wpis, nie plik); pad (X) pyta o potwierdzenie
@@ -159,14 +159,15 @@ void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, PlayerAct
     flow.dpi = dpi;
     const bool hasLists = pl != nullptr;
     // Przycisk panelu: mysz albo potwierdzenie padem/klawiatura na zaznaczonym elemencie mapy fokusu.
-    auto btn = [&](int r, int c, const std::string& label, bool enabled, bool active = false, const char* tip = nullptr,
-                   bool systemWindow = false) {
+    auto btn = [&](int r, int c, const std::string& label, bool enabled, bool active = false, const char* tip = nullptr) {
         pGrid_.reg(r, c);
         const bool ring = ringAt(pGrid_, focused, r, c);
-        if (ring && systemWindow) focusKbdOnly_ = true;   // otwiera okno systemowe: pad nie da rady
         const bool clicked = flow.button(label, enabled, active, tip, ring);
-        return clicked || (enabled && activatedAt(pGrid_, focused, r, c));
+        const bool act = enabled && activatedAt(pGrid_, focused, r, c);
+        navActivated_ = !clicked && act;   // pad -> wbudowana przegladarka, mysz/klawiatura -> okno systemowe
+        return clicked || act;
     };
+    auto viaPad = [&] { return navActivated_ && nav.lastInputWasPad(); };
     if (btn(0, 0, "<", listCount > 1, false, tr(Str::PlPrevList))) {
         nav.setFocus(Panel::Playlist);
         actions.selectPlaylist((ai + listCount - 1) % listCount);
@@ -207,10 +208,10 @@ void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, PlayerAct
                               : view.repeat == RepeatMode::All ? RepeatMode::One : RepeatMode::Off);
         }
     }
-    if (btn(1, 2, tr(Str::PlAddFiles), hasLists, false, tr(Str::BtnOpen), true)) { nav.setFocus(Panel::Playlist); actions.requestOpenFile(); }
-    if (btn(1, 3, tr(Str::PlAddFolder), hasLists, false, nullptr, true)) { nav.setFocus(Panel::Playlist); actions.requestAddFolder(); }
-    if (btn(1, 4, tr(Str::PlImport), hasLists, false, nullptr, true)) { nav.setFocus(Panel::Playlist); actions.requestImportM3u(); }
-    if (btn(1, 5, tr(Str::PlExport), n > 0, false, nullptr, true)) { nav.setFocus(Panel::Playlist); actions.requestExportM3u(); }
+    if (btn(1, 2, tr(Str::PlAddFiles), hasLists, false, tr(Str::BtnOpen))) { nav.setFocus(Panel::Playlist); openPicker(BrowserMode::AddFiles, view, actions, viaPad()); }
+    if (btn(1, 3, tr(Str::PlAddFolder), hasLists)) { nav.setFocus(Panel::Playlist); openPicker(BrowserMode::AddFolder, view, actions, viaPad()); }
+    if (btn(1, 4, tr(Str::PlImport), hasLists)) { nav.setFocus(Panel::Playlist); openPicker(BrowserMode::ImportM3u, view, actions, viaPad()); }
+    if (btn(1, 5, tr(Str::PlExport), n > 0)) { nav.setFocus(Panel::Playlist); openPicker(BrowserMode::ExportM3u, view, actions, viaPad()); }
     if (view.scan.active) {
         flow.newline();
         char sb[128];
