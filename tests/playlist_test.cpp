@@ -935,8 +935,8 @@ TEST_CASE("playlist plik sec: nazwy zarezerwowane i koncowa kropka w M3U odrzuca
     TempDir td;
     auto r = importM3u(std::string("aux.vgz\ndir ./a.vgz\nCOM3.txt\nok.vgz\nLPT0.vgz\n"), opts(td.path));
     REQUIRE(r.ok());
-    CHECK(r.value().rejected == 3);   // aux, "dir ." , COM3; LPT0 nie jest zarezerwowane
-    CHECK(r.value().entries.size() == 2);
+    CHECK(r.value().rejected == 4);   // aux, "dir ." , COM3, LPT0 (COM0/LPT0 tez sa nazwami urzadzen)
+    CHECK(r.value().entries.size() == 1);
 }
 
 TEST_CASE("playlist plik sec: symlink w miejscu .bak nie przekierowuje kopii")

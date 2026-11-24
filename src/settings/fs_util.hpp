@@ -308,23 +308,12 @@ inline int cleanupOrphanTemps(const std::filesystem::path& file, std::uint64_t m
     return removed;
 }
 
-// Zapisuje `data` do `file` tak, by odczytujacy widzial stara albo nowa tresc (nigdy polowe):
-// plik tymczasowy w TYM SAMYM katalogu (nazwa z 128 bitami losowosci, CREATE_NEW, bez podazania za
-// dowiazaniem, po otwarciu weryfikowany jako zwykly plik) -> FlushFileBuffers -> ReplaceFileW (gdy cel
-// istnieje) albo MoveFileExW. Tworzy brakujace katalogi. Przy bledzie usuwa plik tymczasowy.
-// Na poczatku sprząta osierocone, stare pliki tymczasowe tego samego pliku.
-[[nodiscard]] inline Result<void> atomicWriteFile(const std::filesystem::path& file, std::string_view data)
+// Zapisuje `data` do nowego pliku tymczasowego obok `file` ("<file>.tmp<128 bitow hex>"): CREATE_NEW,
+// bez podazania za dowiazaniem (FILE_FLAG_OPEN_REPARSE_POINT), po otwarciu weryfikowany jako zwykly plik,
+// FlushFileBuffers. Zwraca sciezke w `tmp`; przy bledzie plik tymczasowy jest usuwany.
+[[nodiscard]] inline Result<void> writeTempBeside(const std::filesystem::path& file, std::string_view data, std::filesystem::path& tmp)
 {
-    std::error_code ec;
-    const std::filesystem::path dir = file.parent_path();
-    if (!dir.empty()) {
-        std::filesystem::create_directories(dir, ec);
-        if (ec) return makeError(ErrorCode::Io, "cannot create directory: " + ec.message());
-    }
-    cleanupOrphanTemps(file);
-
     HANDLE h = INVALID_HANDLE_VALUE;
-    std::filesystem::path tmp;
     for (int attempt = 0; attempt < 4 && h == INVALID_HANDLE_VALUE; ++attempt) {
         tmp = file;
         tmp += L".tmp" + randomHex32();
@@ -352,6 +341,29 @@ inline int cleanupOrphanTemps(const std::filesystem::path& file, std::uint64_t m
         ::DeleteFileW(tmp.c_str());
         return winError("write failed", werr);
     }
+    return Result<void>{};
+}
+
+// Zapisuje `data` do `file` tak, by odczytujacy widzial stara albo nowa tresc (nigdy polowe):
+// plik tymczasowy w TYM SAMYM katalogu (nazwa z 128 bitami losowosci, CREATE_NEW, bez podazania za
+// dowiazaniem, po otwarciu weryfikowany jako zwykly plik) -> FlushFileBuffers -> ReplaceFileW (gdy cel
+// istnieje) albo MoveFileExW. Tworzy brakujace katalogi. Przy bledzie usuwa plik tymczasowy.
+// Na poczatku sprząta osierocone, stare pliki tymczasowe tego samego pliku.
+[[nodiscard]] inline Result<void> atomicWriteFile(const std::filesystem::path& file, std::string_view data)
+{
+    std::error_code ec;
+    const std::filesystem::path dir = file.parent_path();
+    if (!dir.empty()) {
+        std::filesystem::create_directories(dir, ec);
+        if (ec) return makeError(ErrorCode::Io, "cannot create directory: " + ec.message());
+    }
+    cleanupOrphanTemps(file);
+
+    std::filesystem::path tmp;
+    {
+        auto w = writeTempBeside(file, data, tmp);
+        if (!w.ok()) return w;
+    }
 
     DWORD err = 0;
     for (int attempt = 0; attempt < 5; ++attempt) {   // antywirus / indeksator moga chwilowo trzymac plik
@@ -371,6 +383,39 @@ inline int cleanupOrphanTemps(const std::filesystem::path& file, std::uint64_t m
     return winError("cannot replace target file", err);
 }
 
+// Tworzy NOWY plik z `data` pod nazwa `wanted`, a gdy zajeta: "<nazwa> (2)<rozszerzenie>", "(3)"... do `maxTries`.
+// Nigdy nie nadpisuje istniejacego pliku (ani dowiazania): tresc trafia najpierw do pliku tymczasowego
+// (patrz writeTempBeside), a potem MoveFileExW BEZ MOVEFILE_REPLACE_EXISTING; ERROR_FILE_EXISTS /
+// ERROR_ALREADY_EXISTS => nastepna nazwa. Nazwa jest wybierana w chwili zapisu (brak wyscigu kontrola-zapis).
+// Zwraca faktycznie utworzona sciezke. NIE tworzy katalogow (katalog docelowy musi istniec). Blokujace - tylko z watku workera.
+[[nodiscard]] inline Result<std::filesystem::path> createFileExclusive(const std::filesystem::path& wanted, std::string_view data,
+                                                                       int maxTries = 999)
+{
+    const std::filesystem::path dir = wanted.parent_path();
+    cleanupOrphanTemps(wanted);
+    std::filesystem::path tmp;
+    {
+        auto w = writeTempBeside(wanted, data, tmp);
+        if (!w.ok()) return w.error();
+    }
+    const std::wstring stem = wanted.stem().wstring();
+    const std::wstring ext = wanted.extension().wstring();
+    DWORD err = ERROR_ALREADY_EXISTS;
+    for (int n = 1; n <= maxTries; ++n) {
+        const std::filesystem::path cand = n == 1 ? wanted : dir / (stem + L" (" + std::to_wstring(n) + L")" + ext);
+        for (int attempt = 0; attempt < 5; ++attempt) {   // antywirus / indeksator moga chwilowo trzymac plik
+            if (::MoveFileExW(tmp.c_str(), cand.c_str(), MOVEFILE_WRITE_THROUGH)) return cand;
+            err = ::GetLastError();
+            if (err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION && err != ERROR_LOCK_VIOLATION) break;
+            ::Sleep(20u << attempt);
+        }
+        if (err != ERROR_FILE_EXISTS && err != ERROR_ALREADY_EXISTS) break;   // inny blad: nie szukamy dalej
+    }
+    ::DeleteFileW(tmp.c_str());
+    if (err == ERROR_FILE_EXISTS || err == ERROR_ALREADY_EXISTS) return makeError(ErrorCode::Io, "no free file name");
+    return winError("cannot create target file", err);
+}
+
 // Kopiuje uszkodzony plik obok oryginalu (file + suffix, np. ".bak"). Poprzednia kopia (takze
 // dowiazanie podstawione w jej miejsce) jest NAJPIERW usuwana, potem CopyFileW(bFailIfExists=TRUE):
 // kopia nigdy nie zapisuje przez dowiazanie. Oryginal zostaje nietkniety. true = kopia powstala.
@@ -388,6 +433,9 @@ inline bool preserveCorruptCopy(const std::filesystem::path& file, const wchar_t
 
 // ---- walidacja nazw i sciezek (wspolna dla M3U, JSON, skanu) ----
 
+// Nazwa urzadzenia DOS (Win32 odczytuje ja tak takze z rozszerzeniem i koncowymi spacjami):
+// CON PRN AUX NUL CONIN$ CONOUT$ oraz COM0-9 / LPT0-9 i COM/LPT z indeksem gornym (U+00B9, U+00B2, U+00B3).
+// Czesc po pierwszej kropce i koncowe spacje przed nia sa ignorowane ("CON .txt", "nul.tar.gz").
 [[nodiscard]] inline bool isReservedDeviceName(std::wstring comp)
 {
     const std::size_t dot = comp.find(L'.');
@@ -396,7 +444,9 @@ inline bool preserveCorruptCopy(const std::filesystem::path& file, const wchar_t
     std::wstring up;
     for (wchar_t ch : comp) up.push_back(static_cast<wchar_t>(std::towupper(ch)));
     if (up == L"CON" || up == L"PRN" || up == L"AUX" || up == L"NUL" || up == L"CONIN$" || up == L"CONOUT$") return true;
-    return up.size() == 4 && (up.compare(0, 3, L"COM") == 0 || up.compare(0, 3, L"LPT") == 0) && up[3] >= L'1' && up[3] <= L'9';
+    if (up.size() != 4 || (up.compare(0, 3, L"COM") != 0 && up.compare(0, 3, L"LPT") != 0)) return false;
+    const wchar_t d = up[3];
+    return (d >= L'0' && d <= L'9') || d == 0x00B9 || d == 0x00B2 || d == 0x00B3;
 }
 
 // Skladnik nazwy, ktorego Win32 nie traktuje dosłownie: nazwa urzadzenia albo koncowa kropka/spacja.

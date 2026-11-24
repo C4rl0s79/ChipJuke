@@ -534,4 +534,161 @@ TEST_SUITE("ui/file_browser")
         CHECK(b.status().truncated);
         CHECK(b.entries().size() == 6);
     }
+
+    TEST_CASE("sec: sanitizeFileName korzysta z fsutil - CONIN$, CONOUT$, COM0/LPT0, indeksy gorne, rozszerzenia i spacje")
+    {
+        CHECK(sanitizeFileName("CONIN$") == "_CONIN$");
+        CHECK(sanitizeFileName("conout$.txt") == "_conout$.txt");
+        CHECK(sanitizeFileName("COM0") == "_COM0");
+        CHECK(sanitizeFileName("lpt0") == "_lpt0");
+        CHECK(sanitizeFileName("COM9") == "_COM9");
+        CHECK(sanitizeFileName("COM\xC2\xB9") == "_COM\xC2\xB9");      // COM + U+00B9
+        CHECK(sanitizeFileName("LPT\xC2\xB2.x") == "_LPT\xC2\xB2.x");  // LPT + U+00B2
+        CHECK(sanitizeFileName("com\xC2\xB3") == "_com\xC2\xB3");      // com + U+00B3
+        CHECK(sanitizeFileName("CON .txt") == "_CON .txt");            // spacja przed kropka nie chroni
+        CHECK(sanitizeFileName("nul.tar.gz") == "_nul.tar.gz");
+        CHECK(sanitizeFileName("nul. . ") == "_nul");                  // koncowe kropki i spacje znikaja, potem nazwa urzadzenia
+        CHECK(sanitizeFileName("AUX  ") == "_AUX");
+        CHECK(sanitizeFileName("com10") == "com10");                   // nie nazwa urzadzenia
+        CHECK(sanitizeFileName("COM") == "COM");
+        CHECK(sanitizeFileName("console") == "console");
+        CHECK(sanitizeFileName("CON\xC2\xB9x") == "CON\xC2\xB9x");
+    }
+
+    TEST_CASE("sec: cele dowiazan (reparse) - UNC, przestrzen urzadzen, rozszerzone sciezki lokalne")
+    {
+        CHECK(isNetworkLinkTarget(L"\\??\\UNC\\srv\\share\\x"));
+        CHECK(isNetworkLinkTarget(L"\\\\?\\UNC\\srv\\share"));
+        CHECK(isNetworkLinkTarget(L"\\\\srv\\share\\x"));
+        CHECK(isNetworkLinkTarget(L"//srv/share/x"));
+        CHECK(isNetworkLinkTarget(L"\\\\.\\pipe\\x"));
+        CHECK_FALSE(isNetworkLinkTarget(L""));
+        CHECK_FALSE(isNetworkLinkTarget(L"..\\x"));
+        CHECK_FALSE(isNetworkLinkTarget(L"sub\\dir"));
+        CHECK_FALSE(isNetworkLinkTarget(L"\\??\\C:\\x"));
+        CHECK_FALSE(isNetworkLinkTarget(L"\\\\?\\C:\\x"));
+        CHECK_FALSE(isNetworkLinkTarget(L"\\\\?\\Volume{01234567-89ab-cdef-0123-456789abcdef}\\x"));
+        TempDir t;
+        t.dir(L"d");
+        t.file(L"f.vgm");
+        CHECK_FALSE(linkPointsToNetwork(t.path / L"d"));       // zwykly katalog
+        CHECK_FALSE(linkPointsToNetwork(t.path / L"f.vgm"));   // zwykly plik
+        CHECK_FALSE(linkPointsToNetwork(t.path / L"nie_ma"));
+    }
+
+    TEST_CASE("sec: dyski sieciowe bez zgody - zablokowane (wyszarzone), z zgoda dostepne; reszta bez zmian")
+    {
+        const auto kind = +[](wchar_t c) { return c == L'Z' ? DriveKind::Network : (c == L'A' ? DriveKind::Removable : DriveKind::Fixed); };
+        const std::uint32_t mask = (1u << 0) | (1u << 2) | (1u << 25);   // A: C: Z:
+        const auto off = driveEntries(mask, false, kind);
+        REQUIRE(off.size() == 3);
+        CHECK_FALSE(off[0].blocked);
+        CHECK_FALSE(off[1].blocked);
+        CHECK(off[2].name == "Z:\\");
+        CHECK(off[2].drive == DriveKind::Network);
+        CHECK(off[2].blocked);
+        const auto on = driveEntries(mask, true, kind);
+        REQUIRE(on.size() == 3);
+        for (const BrowserEntry& e : on) CHECK_FALSE(e.blocked);
+        CHECK(on[2].drive == DriveKind::Network);
+    }
+
+    TEST_CASE("sec: zapowiedz nazwy eksportu liczy watek roboczy (Listing::exportTarget), bez I/O w UI")
+    {
+        TempDir t;
+        ListOptions o;
+        o.mode = BrowserMode::ExportM3u;
+        o.exportStem = "Lista";
+        CHECK(listDirectory(t.path, o).exportTarget == t.path / L"Lista.m3u8");
+        t.file(L"Lista.m3u8");
+        t.file(L"Lista (2).m3u8");
+        CHECK(listDirectory(t.path, o).exportTarget == t.path / L"Lista (3).m3u8");
+        o.exportStem.clear();   // inne tryby: brak zapowiedzi
+        CHECK(listDirectory(t.path, o).exportTarget.empty());
+    }
+
+    TEST_CASE("sec: dowiazanie do UNC bez zgody - wpis zablokowany, wejscie odrzucone (bez kontaktu z siecia)")
+    {
+        TempDir t;
+        t.dir(L"local");
+        std::error_code ec;
+        fs::create_directory_symlink(L"\\\\srv.invalid\\share", t.path / L"netlink", ec);
+        if (ec) {
+            MESSAGE("brak uprawnien do dowiazan symbolicznych (" << ec.message() << ") - test pominiety");
+            return;
+        }
+        fs::create_directory_symlink(t.path / L"local", t.path / L"locallink", ec);
+        ListOptions o;
+        o.allowNetwork = false;
+        const Listing l = listDirectory(t.path, o);
+        REQUIRE(l.error.empty());
+        const BrowserEntry* net = nullptr;
+        const BrowserEntry* loc = nullptr;
+        for (const BrowserEntry& e : l.entries) {
+            if (e.name == "netlink") net = &e;
+            if (e.name == "locallink") loc = &e;
+        }
+        REQUIRE(net);
+        CHECK(net->kind == EntryKind::Dir);
+        CHECK(net->link);
+        CHECK(net->blocked);
+        if (!ec) {   // dowiazanie lokalne: widoczne, oznaczone jako link, niezablokowane
+            REQUIRE(loc);
+            CHECK(loc->link);
+            CHECK_FALSE(loc->blocked);
+        }
+        CHECK(linkPointsToNetwork(t.path / L"netlink"));
+        const Listing inside = listDirectory(t.path / L"netlink", o);   // wejscie bezposrednie tez zablokowane
+        CHECK(inside.blocked);
+
+        FileBrowser b;
+        b.setDriveMaskForTest(0b100);
+        b.open(BrowserMode::AddFolder, {u8(t.path)}, false);
+        REQUIRE(settle(b));
+        b.select(indexOf(b, "netlink"));
+        (void)b.activate();
+        CHECK(b.networkBlocked());
+        CHECK(b.dir() == t.path);   // zostajemy w biezacym katalogu
+    }
+
+    TEST_CASE("sec: DirectoryLister - limit watkow listujacych: nadmiar czeka (queued) i rusza po zwolnieniu miejsca")
+    {
+        struct Restore { ~Restore() { DirectoryLister::setMaxThreadsForTest(-1); } } restore;
+        TempDir t;
+        t.file(L"a.vgm");
+        DirectoryLister::setMaxThreadsForTest(0);   // zadne miejsce
+        DirectoryLister lister;
+        lister.request(t.path, ListOptions{});
+        CHECK(lister.queued());
+        CHECK(lister.busy());
+        CHECK_FALSE(lister.poll());
+        CHECK(lister.queued());
+        lister.cancel();   // anulowanie czekajacego zadania
+        CHECK_FALSE(lister.queued());
+        CHECK_FALSE(lister.busy());
+
+        lister.request(t.path, ListOptions{});
+        DirectoryLister::setMaxThreadsForTest(DirectoryLister::kMaxListerThreads);   // miejsce sie zwolnilo
+        std::optional<Listing> r;
+        for (int i = 0; i < 5000 && !r; ++i) {
+            r = lister.poll();
+            if (!r) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        REQUIRE(r);
+        CHECK_FALSE(lister.queued());
+        CHECK(names(*r) == std::vector<std::string>{"..", "a.vgm"});
+        for (int i = 0; i < 2500 && DirectoryLister::activeThreads() != 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        CHECK(DirectoryLister::activeThreads() == 0);   // miejsce zwolnione po zakonczeniu
+    }
+
+    TEST_CASE("sec: FileBrowser - zapowiedz eksportu z listowania w tle; nic nie jest liczone synchronicznie w tick()")
+    {
+        TempDir t;
+        t.file(L"Plan.m3u8");
+        FileBrowser b;
+        b.open(BrowserMode::ExportM3u, {u8(t.path)}, false, "Plan");
+        CHECK(b.exportTarget().empty());   // przed odebraniem wyniku listowania brak zapowiedzi
+        REQUIRE(settle(b));
+        CHECK(b.exportTarget() == t.path / L"Plan (2).m3u8");
+    }
 }

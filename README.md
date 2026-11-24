@@ -66,6 +66,21 @@ Files and folders are added to the active playlist and played; with no arguments
 
 Developer-only diagnostics (`--fake-channel-scopes`, `--fake-pattern`) also exist.
 
+### Network paths
+
+UNC paths (`\\server\share\...`) are off by default (enable with `--allow-network-paths` or in Settings), because
+opening one can send your Windows credentials to that server. The built-in file browser follows the same rule:
+
+- **Drives mapped to a network share** (`net use Z: \\server\share`) are greyed out in the drive list with the caption
+  "network - enable network paths in Settings" and cannot be entered (also not via "recent folders").
+- **Symbolic links and junctions pointing to a network path** are shown as blocked. The browser does not follow them
+  (it reads the link itself, never its target) and does not enter such a folder; a file link into the network is hidden.
+- Changing the setting takes effect the next time a folder is opened; no restart is needed.
+
+Limitation: stored paths (playlists, session) are validated textually, so a drive letter mapped to a share, or created
+with `subst`, counts as an ordinary local path there. Files given from such a letter (command line, drag and drop) will
+be opened; the block applies to the file browser.
+
 ## Controls
 
 Keyboard (all of these can be remapped in Settings, F10, "Bindings"):

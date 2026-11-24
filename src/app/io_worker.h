@@ -41,8 +41,15 @@ struct ImportDone {
 };
 
 struct ExportDone {
-    std::filesystem::path file;
+    std::filesystem::path file;      // zadana nazwa (propozycja z przegladarki)
+    std::filesystem::path written;   // faktycznie utworzony plik ("nazwa (2).m3u8", gdy zajeta); pusty przy bledzie
     std::optional<Error> error;
+};
+
+// Wynik rozpoznania sciezek (plik / katalog) na watku roboczym - UI nie dotyka dysku.
+struct ClassifiedPath {
+    std::filesystem::path path;
+    bool isDirectory = false;
 };
 
 struct SaveFailure {
@@ -55,10 +62,11 @@ struct IoResults {
     std::vector<MetaResult> meta;
     std::vector<ImportDone> imports;
     std::vector<ExportDone> exports;
+    std::vector<std::vector<ClassifiedPath>> classified;   // jedna paczka na wywolanie classifyPaths()
     std::vector<SaveFailure> saveFailures;
     [[nodiscard]] bool empty() const
     {
-        return !playlists && meta.empty() && imports.empty() && exports.empty() && saveFailures.empty();
+        return !playlists && meta.empty() && imports.empty() && exports.empty() && classified.empty() && saveFailures.empty();
     }
 };
 
@@ -81,7 +89,11 @@ public:
     void queueMeta(std::vector<std::filesystem::path> paths);
     void queueMetaDownload(std::filesystem::path path);   // "pobierz mimo to" (plik w chmurze)
     void importM3u(std::filesystem::path file);
+    // Zapis M3U pod nazwa `file`; gdy zajeta - "nazwa (2).m3u8"... (limit 999), nigdy nie nadpisuje istniejacego
+    // pliku. Faktyczna nazwa wraca w ExportDone::written.
     void exportM3u(std::filesystem::path file, std::string text);
+    // Rozpoznanie plik/katalog dla listy sciezek (dysk tylko na watku workera); wynik: IoResults::classified.
+    void classifyPaths(std::vector<std::filesystem::path> paths);
     [[nodiscard]] IoResults take();
     // [E3-sec] Efektywna zgoda na sciezki UNC (playlisty, cache); watkowo-bezpieczne (atomik), dziala od
     // nastepnej operacji workera, bez restartu. Wywolywane z watku UI po zmianie ustawienia.
@@ -103,6 +115,7 @@ private:
     std::optional<playlist::PlaylistModel> pendingPlaylists_;
     std::deque<std::filesystem::path> importQueue_;
     std::deque<std::pair<std::filesystem::path, std::string>> exportQueue_;
+    std::deque<std::vector<std::filesystem::path>> classifyQueue_;
     std::deque<std::filesystem::path> metaQueue_;
     std::deque<std::filesystem::path> downloadQueue_;
     std::unordered_set<std::wstring> metaQueued_;

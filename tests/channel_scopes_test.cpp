@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <vector>
 
 #include "test_util.hpp"
@@ -516,14 +517,27 @@ struct ScopeRig {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
-    template <class P> bool until(P p, int timeoutMs)
+    // Patrz Rig::until w engine_test.cpp: `nominalMs` nominalny, przerwanie po 30 s bez postepu (nie po stalym czasie).
+    template <class P> bool until(P p, int nominalMs)
     {
-        const auto start = std::chrono::steady_clock::now();
-        while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(timeoutMs)) {
+        using clk = std::chrono::steady_clock;
+        const auto start = clk::now();
+        const auto stall = std::chrono::milliseconds((std::max)(nominalMs, 30000));
+        const auto hard = std::chrono::milliseconds((std::max)(nominalMs * 10, 120000));
+        const auto key = [&] {
+            const TransportSnapshot s = eng->snapshot();
+            return std::make_tuple(s.epoch, s.renderedFrame, s.audibleFrame, static_cast<int>(s.state), recs.size());
+        };
+        auto lastKey = key();
+        auto lastProgress = start;
+        for (;;) {
             run(5);
             if (p()) return true;
+            const auto now = clk::now();
+            const auto k = key();
+            if (k != lastKey) { lastKey = k; lastProgress = now; }
+            if (now - lastProgress > stall || now - start > hard) return false;
         }
-        return false;
     }
 };
 

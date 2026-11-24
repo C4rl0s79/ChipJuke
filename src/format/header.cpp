@@ -176,6 +176,9 @@ struct ChipBudget {
     const std::uint32_t div = kRateDivisor[idx];
     if (div != 0) {
         const std::uint32_t rate = eff / div;
+        // Rdzenie libvgm (RC_SET_RATIO: GB DMG, Mikey, WonderSwan, ...) licza rate = clock / div i dziela przez nie.
+        if (rate == 0)
+            return makeError(ErrorCode::BadHeader, "chip clock too low: native sample rate would be zero", ofs);
         if (rate > lim.maxChipSampleRate)
             return makeError(ErrorCode::LimitExceeded, "chip native sample rate above limit", ofs);
         budget.totalRate += rate;

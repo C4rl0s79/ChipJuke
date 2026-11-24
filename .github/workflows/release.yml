@@ -1,8 +1,13 @@
 name: Release
 
-# Wydanie powstaje po wypchnieciu tagu v* (np. v1.0.0-rc1). Tag musi zgadzac sie z wersja w CMakeLists.txt.
+# Wydanie powstaje po wypchnieciu tagu v* (np. v1.0.0-rc1). Tag musi zgadzac sie z wersja w CMakeLists.txt
+# i wskazywac commit z historii origin/main.
 # Wynik: DRAFT release na GitHubie z plikami vgmplay-<wersja>-win64.zip i SHA256SUMS.txt
 # (publikacje robi czlowiek po sprawdzeniu). Tag z sufiksem pre-release (np. -rc1) jest oznaczany jako pre-release.
+#
+# Dwa joby o rozdzielonych uprawnieniach:
+#   build   - kod z repozytorium, kompilacja i testy, `contents: read`, bez tokenu z prawem zapisu;
+#   release - tylko pobiera artefakty i tworzy draft (`contents: write`), NIE wykonuje kodu z repozytorium.
 on:
   push:
     tags: ['v*']
@@ -11,33 +16,41 @@ permissions:
   contents: read
 
 jobs:
-  windows-release:
+  build:
     runs-on: windows-latest
     permissions:
-      contents: write   # gh release create
+      contents: read
     env:
       # Obraz windows-latest ma vcpkg w C:\vcpkg; wersje pakietow przypina builtin-baseline z vcpkg.json.
       VCPKG_ROOT: C:\vcpkg
       # Binary caching przez pliki + actions/cache (backend x-gha vcpkg zostal wycofany).
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.vcpkg-cache
-      GH_TOKEN: ${{ github.token }}
     steps:
       # Akcje przypiete do pelnych SHA commitow (komentarz = wersja).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           submodules: recursive
-          fetch-depth: 0   # skrot commita i `git describe` w wersji
+          fetch-depth: 0   # skrot commita, `git describe` w wersji i galaz origin/main do sprawdzenia tagu
+          persist-credentials: false   # token nie zostaje w .git/config (kod budowania go nie widzi)
+
+      # Tag musi wskazywac commit z historii main: tag postawiony na obcej galezi / forku nie daje wydania.
+      - name: Tag wskazuje commit z origin/main
+        shell: pwsh
+        run: |
+          git rev-parse --verify --quiet refs/remotes/origin/main | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Brak origin/main w sklonowanym repozytorium (fetch-depth: 0 powinien go pobrac)' }
+          git merge-base --is-ancestor $env:GITHUB_SHA refs/remotes/origin/main
+          if ($LASTEXITCODE -ne 0) { throw "Commit $env:GITHUB_SHA (tag $env:GITHUB_REF_NAME) nie nalezy do historii origin/main" }
 
       - name: Przygotuj katalog cache vcpkg
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
 
+      # Bez restore-keys: wydanie korzysta wylacznie z cache o dokladnie tym samym vcpkg.json (nie z cudzego prefiksu).
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
           key: vcpkg-bin-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
-          restore-keys: |
-            vcpkg-bin-${{ runner.os }}-
 
       # Ninja + cl + dumpbin wymagaja srodowiska Visual Studio (vcvars) w PATH.
       - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
@@ -65,22 +78,9 @@ jobs:
 
       - name: Paczka ZIP + SHA256SUMS
         shell: pwsh
-        run: >
-          tools/package.ps1 -NoBuild
-          -SourceUrl "${{ github.server_url }}/${{ github.repository }}"
-
-      - name: Draft release z plikami
-        shell: pwsh
-        run: |
-          $prerelease = if ($env:GITHUB_REF_NAME -match '-') { '--prerelease' } else { '' }
-          $zip = Get-ChildItem out/dist -Filter 'vgmplay-*-win64.zip' | Select-Object -First 1
-          if (-not $zip) { throw 'Brak ZIP w out/dist' }
-          $ghArgs = @('release', 'create', $env:GITHUB_REF_NAME, $zip.FullName, 'out/dist/SHA256SUMS.txt',
-                    '--draft', '--verify-tag', '--title', "vgmplay $($env:GITHUB_REF_NAME.TrimStart('v'))",
-                    '--notes-file', 'CHANGELOG.md')
-          if ($prerelease) { $ghArgs += $prerelease }
-          gh @ghArgs
-          if ($LASTEXITCODE -ne 0) { throw 'gh release create nie powiodl sie' }
+        env:
+          SOURCE_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: tools/package.ps1 -NoBuild -SourceUrl $env:SOURCE_URL
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -89,3 +89,44 @@ jobs:
             out/dist/*.zip
             out/dist/SHA256SUMS.txt
           if-no-files-found: error
+
+      # Notatki wydania dla jobu `release` (ten job nie wymaga checkoutu kodu).
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-notes
+          path: CHANGELOG.md
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # gh release create
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: vgmplay-win64
+          path: dist
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release-notes
+          path: notes
+
+      - name: Draft release z plikami
+        shell: pwsh
+        env:
+          # Token z prawem zapisu tylko w tym kroku.
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          $prerelease = if ($env:GITHUB_REF_NAME -match '-') { '--prerelease' } else { '' }
+          $zip = Get-ChildItem dist -Filter 'vgmplay-*-win64.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'Brak ZIP w dist' }
+          if (-not (Test-Path dist/SHA256SUMS.txt)) { throw 'Brak SHA256SUMS.txt w dist' }
+          $ghArgs = @('release', 'create', $env:GITHUB_REF_NAME, $zip.FullName, 'dist/SHA256SUMS.txt',
+                    '--draft', '--verify-tag', '--title', "vgmplay $($env:GITHUB_REF_NAME.TrimStart('v'))",
+                    '--notes-file', 'notes/CHANGELOG.md')
+          if ($prerelease) { $ghArgs += $prerelease }
+          gh @ghArgs
+          if ($LASTEXITCODE -ne 0) { throw 'gh release create nie powiodl sie' }

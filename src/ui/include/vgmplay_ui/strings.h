@@ -217,6 +217,7 @@ enum class Str {
     BrwDriveNet,
     BrwDriveRem,
     BrwDriveOpt,
+    BrwNetBlockedTag,
     BrwRecent,
     HkPage,
     HkAddFolder,

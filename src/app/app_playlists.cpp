@@ -412,12 +412,26 @@ void AppController::queueMetaFor(const std::vector<playlist::Entry>& entries)
 void AppController::addPathsNow(const std::vector<fs::path>& paths)
 {
     if (model_.playlistCount() == 0) return;
+    // Rozpoznanie plik/katalog robi IoWorker (dysk poza watkiem UI); wynik wraca przez handleIo() -> addClassifiedNow().
+    if (io_) {
+        io_->classifyPaths(paths);
+        return;
+    }
+    std::vector<ClassifiedPath> flat;   // bez workera: tylko po rozszerzeniu (bez dotykania dysku)
+    flat.reserve(paths.size());
+    for (const fs::path& p : paths) flat.push_back(ClassifiedPath{p, false});
+    addClassifiedNow(flat);
+}
+
+void AppController::addClassifiedNow(const std::vector<ClassifiedPath>& paths)
+{
+    if (model_.playlistCount() == 0) return;
     std::vector<playlist::Entry> entries;
     unsigned skipped = 0;
     bool folders = false;
-    for (const fs::path& p : paths) {
-        std::error_code ec;
-        if (fs::is_directory(p, ec)) {
+    for (const ClassifiedPath& cp : paths) {
+        const fs::path& p = cp.path;
+        if (cp.isDirectory) {
             addFolderNow(p);
             folders = true;
         } else if (isVgmFile(p)) {
@@ -541,9 +555,10 @@ void AppController::handleIo()
         if (model_.updateEntryMeta(ups) > 0) markPlaylistsDirty();   // [E3] tytul i dlugosc ze skanu do wpisow
     }
     for (ImportDone& d : r.imports) importM3uDone(d);
+    for (const auto& batch : r.classified) addClassifiedNow(batch);
     for (ExportDone& d : r.exports) {
         if (d.error) postNotice(ui::tr(ui::Str::NtExportFail), {d.error->message}, true);
-        else postNotice(fmt(ui::tr(ui::Str::NtExportOk), u8(d.file.filename()).c_str()));
+        else postNotice(fmt(ui::tr(ui::Str::NtExportOk), u8(d.written.filename()).c_str()));   // faktyczna nazwa
     }
     for (SaveFailure& f : r.saveFailures)
         postNotice(std::string(ui::tr(ui::Str::NtSaveFail)) + " (" + f.what + ")", {f.error.message}, true);

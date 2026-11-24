@@ -435,6 +435,30 @@ TEST_CASE("settings sec: session.trackPath walidowany jak wpisy playlist")
     CHECK(fromJson(R"({"session":{"trackPath":""}})").value().session.trackPath.empty());
 }
 
+TEST_CASE("settings sec: recentFolders i session.trackPath wymagaja sciezki bezwzglednej")
+{
+    // Wzgledne, zalezne od biezacego katalogu i "C:foo" (katalog biezacy dysku) sa odrzucane z ostrzezeniem.
+    std::vector<Warning> w;
+    auto r = fromJson(
+        R"({"library":{"recentFolders":["muzyka\\gry","..\\x","\\x","C:foo","C:\\ok","D:/ok2","\\\\srv\\share\\x"]},)"
+        R"("session":{"trackPath":"rel\\a.vgm","positionMs":7}})",
+        &w, true);
+    REQUIRE(r.ok());
+    CHECK(r.value().library.recentFolders == std::vector<std::string>{"C:\\ok", "D:/ok2", "\\\\srv\\share\\x"});
+    CHECK(hasWarning(w, "recentFolders"));
+    CHECK(r.value().session.trackPath.empty());
+    CHECK(r.value().session.positionMs == 7);
+    CHECK(hasWarning(w, "session.trackPath"));
+    for (const char* bad : {"C:a.vgm", R"(\\a.vgm)", "a.vgm", "./a.vgm"}) {
+        auto b = fromJson(std::string(R"({"session":{"trackPath":")") + bad + R"("}})", nullptr, true);
+        REQUIRE(b.ok());
+        CHECK(b.value().session.trackPath.empty());
+    }
+    auto ok = fromJson(R"({"session":{"trackPath":"C:\\Muzyka\\a.vgz"}})", nullptr, false);
+    REQUIRE(ok.ok());
+    CHECK(ok.value().session.trackPath == "C:\\Muzyka\\a.vgz");
+}
+
 TEST_CASE("settings sec: appDataDir UNC lub rozszerzony jest odrzucany")
 {
     TempDir td;
