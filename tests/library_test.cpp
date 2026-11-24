@@ -406,3 +406,179 @@ TEST_CASE("library cache: plik - brak = pusty, zapis atomowy, uszkodzony = blad"
     CHECK(MetaCache::fromJson(R"({"schemaVersion":9,"items":[]})").error().code == ErrorCode::UnsupportedSchema);
     CHECK(MetaCache::fromJson(R"({"schemaVersion":1,"items":[{"path":"a"},5,{"path":"b","size":1,"mtime":2}]})").value().size() == 1);
 }
+
+// ===========================================================================
+// E2-sec
+// ===========================================================================
+
+namespace {
+
+// Plik z atrybutem OFFLINE (symulacja zawartosci w chmurze); atrybut mozna ustawic zwyklym SetFileAttributesW.
+bool setOffline(const fs::path& p, bool on)
+{
+    DWORD a = ::GetFileAttributesW(p.c_str());
+    if (a == INVALID_FILE_ATTRIBUTES) return false;
+    a = on ? (a | FILE_ATTRIBUTE_OFFLINE) : (a & ~static_cast<DWORD>(FILE_ATTRIBUTE_OFFLINE));
+    return ::SetFileAttributesW(p.c_str(), a) != 0;
+}
+
+std::wstring extended(const fs::path& p) { return L"\\\\?\\" + p.wstring(); }
+
+} // namespace
+
+TEST_CASE("library sec: predykat isCloudPlaceholder")
+{
+    CHECK_FALSE(isCloudPlaceholder(0));
+    CHECK_FALSE(isCloudPlaceholder(FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_HIDDEN));
+    CHECK(isCloudPlaceholder(FILE_ATTRIBUTE_OFFLINE));
+    CHECK(isCloudPlaceholder(FILE_ATTRIBUTE_RECALL_ON_OPEN));
+    CHECK(isCloudPlaceholder(FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS));
+    CHECK(isCloudPlaceholder(FILE_ATTRIBUTE_ARCHIVE | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS));
+    static_assert(kAttrOffline == FILE_ATTRIBUTE_OFFLINE);
+    static_assert(kAttrRecallOnOpen == FILE_ATTRIBUTE_RECALL_ON_OPEN);
+    static_assert(kAttrRecallOnDataAccess == FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS);
+}
+
+TEST_CASE("library sec: pliki w chmurze - readTrackMeta/getOrRead pomijaja, 'pobierz mimo to' czyta, skan ostrzega")
+{
+    TempDir td;
+    const fs::path f = td.path / "chmura.vgm";
+    fs::copy_file(validDir() / "sn76489_loop_gg_v110_gd3jp.vgm", f);
+    REQUIRE(setOffline(f, true));
+
+    auto skipped = readTrackMeta(f);
+    REQUIRE_FALSE(skipped.ok());
+    CHECK(isCloudPlaceholderError(skipped.error()));
+    CHECK(skipped.error().code == ErrorCode::AccessDenied);
+    CHECK_FALSE(isCloudPlaceholderError(makeError(ErrorCode::AccessDenied, "other")));
+
+    MetaCache c;
+    auto s2 = c.getOrRead(f);
+    REQUIRE_FALSE(s2.ok());
+    CHECK(isCloudPlaceholderError(s2.error()));
+    CHECK(c.size() == 0);
+
+    auto forced = c.getOrRead(f, {}, /*allowCloudDownload=*/true);
+    REQUIRE(forced.ok());
+    CHECK(c.size() == 1);
+    // trafienie w cache nie czyta pliku, wiec dziala takze bez zgody na pobranie
+    CHECK(c.getOrRead(f).ok());
+
+    // skan: plik jest na liscie z atrybutami i z ostrzezeniem
+    const ScanResult r = runScan(td.path);
+    REQUIRE(r.files.size() == 1);
+    CHECK(isCloudPlaceholder(r.files[0].attributes));
+    bool warned = false;
+    for (const auto& w : r.warnings) warned = warned || w.message.find("cloud placeholder") != std::string::npos;
+    CHECK(warned);
+
+    REQUIRE(setOffline(f, false));
+    CHECK(readTrackMeta(f).ok());
+    const ScanResult r2 = runScan(td.path);
+    REQUIRE(r2.files.size() == 1);
+    CHECK_FALSE(isCloudPlaceholder(r2.files[0].attributes));
+    CHECK(r2.files[0].attributes != 0);   // FILE_ATTRIBUTE_ARCHIVE itp.
+}
+
+TEST_CASE("library sec: skan pomija nazwy zarezerwowane i z koncowa kropka/spacja")
+{
+    TempDir td;
+    touch(td.path / "ok.vgm");
+    // takie nazwy da sie utworzyc tylko przez przedrostek \\?\ (Win32 normalnie je zmienia)
+    const fs::path badDir = td.path / "dir.";
+    const fs::path conFile = td.path / "con.vgm";
+    const fs::path inBad = badDir / "inside.vgm";
+    bool created = ::CreateDirectoryW(extended(badDir).c_str(), nullptr) != 0;
+    if (created) {
+        HANDLE h = ::CreateFileW(extended(inBad).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) ::CloseHandle(h);
+        h = ::CreateFileW(extended(conFile).c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h != INVALID_HANDLE_VALUE) ::CloseHandle(h);
+    }
+    struct Cleanup {
+        std::wstring dir, a, b;
+        ~Cleanup()
+        {
+            ::DeleteFileW(a.c_str());
+            ::DeleteFileW(b.c_str());
+            ::RemoveDirectoryW(dir.c_str());
+        }
+    } cleanup{extended(badDir), extended(inBad), extended(conFile)};
+    if (!created) {
+        MESSAGE("system plikow nie pozwala utworzyc nazw z koncowa kropka - test pominiety");
+        return;
+    }
+    const ScanResult r = runScan(td.path);
+    REQUIRE(r.files.size() == 1);
+    CHECK(r.files[0].path.filename() == fs::path("ok.vgm"));
+    CHECK(hasWarning(r, WarningCode::EntrySkipped));
+}
+
+TEST_CASE("library sec: MetaCache - 200000 wpisow wczytuje i zapisuje sie szybko, wynik deterministyczny")
+{
+    MetaCache c;
+    for (int i = 0; i < 200000; ++i) {
+        TrackMeta m;
+        m.path = fs::path(L"D:/Music/pack_" + std::to_wstring(i / 100)) / (L"track_" + std::to_wstring(i) + L".vgz");
+        m.stamp.sizeBytes = 1000 + static_cast<std::uint64_t>(i);
+        m.stamp.mtime = 133000000000000000ull + static_cast<std::uint64_t>(i);
+        m.durationMs = 60000 + static_cast<std::uint64_t>(i % 1000);
+        m.hasGd3 = true;
+        m.trackEn = "Track " + std::to_string(i);
+        m.gameEn = "Game " + std::to_string(i / 100);
+        c.put(m);
+    }
+    REQUIRE(c.size() == 200000);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::string j = c.toJson();
+    const auto t1 = std::chrono::steady_clock::now();
+    auto back = MetaCache::fromJson(j);
+    const auto t2 = std::chrono::steady_clock::now();
+    REQUIRE(back.ok());
+    const double saveS = std::chrono::duration<double>(t1 - t0).count();
+    const double loadS = std::chrono::duration<double>(t2 - t1).count();
+    MESSAGE("MetaCache 200000 wpisow: toJson " << saveS << " s, fromJson " << loadS << " s, " << j.size() / 1024 << " KiB");
+    CHECK(back.value().size() == 200000);
+    CHECK(back.value().toJson() == j);
+#ifdef NDEBUG
+    CHECK(saveS < 1.0);
+    CHECK(loadS < 1.0);
+#else
+    CHECK(saveS < 10.0);
+    CHECK(loadS < 10.0);
+#endif
+}
+
+TEST_CASE("library sec: cache - limity parsera, UNC, tytuly i czasy")
+{
+    CHECK(MetaCache::fromJson(std::string(100000, '[')).error().code == ErrorCode::LimitExceeded);
+    CHECK(MetaCache::fromJson(R"({"schemaVersion":1,"items":)" + std::string(100000, '[')).error().code == ErrorCode::LimitExceeded);
+    CHECK(MetaCache::fromJson(R"({"schemaVersion":1,"items":[],"x":[[[[[[[[1]]]]]]]]})").error().code == ErrorCode::LimitExceeded);
+
+    const std::string doc =
+        R"({"schemaVersion":1,"items":[)"
+        R"({"path":"C:/a.vgm","size":1,"mtime":2,"durationMs":99999999999999,"loopMs":99999999999999,"trackEn":"x\u202Ey\u0007z"},)"
+        R"({"path":"//srv/share/b.vgm","size":1,"mtime":2},)"
+        R"({"path":"\\\\?\\C:\\c.vgm","size":1,"mtime":2},)"
+        R"({"path":"http://x/d.vgm","size":1,"mtime":2}]})";
+    auto r = MetaCache::fromJson(doc);
+    REQUIRE(r.ok());
+    CHECK(r.value().size() == 1);
+    auto hit = r.value().find(fs::path("C:/a.vgm"), FileStamp{1, 2});
+    REQUIRE(hit.has_value());
+    CHECK(hit->durationMs == 24ull * 3600 * 1000);
+    CHECK(hit->loopMs == 24ull * 3600 * 1000);
+    CHECK(hit->trackEn == "xyz");
+    auto net = MetaCache::fromJson(doc, /*allowNetworkPaths=*/true);
+    REQUIRE(net.ok());
+    CHECK(net.value().size() == 2);   // UNC dozwolone, urzadzenia i URL nigdy
+}
+
+TEST_CASE("library sec: plik cache > 64 MiB -> TooLarge")
+{
+    TempDir td;
+    const fs::path f = td.path / "library-cache.json";
+    touch(f, std::string((64u << 20) + 1, ' '));
+    CHECK(loadMetaCacheFile(f).error().code == ErrorCode::TooLarge);
+}

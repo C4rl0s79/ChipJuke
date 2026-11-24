@@ -17,6 +17,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "vgmplay/core.hpp"
@@ -35,7 +36,19 @@ struct ScanOptions {
 struct FoundFile {
     std::filesystem::path path;           // sciezka absolutna
     std::uint64_t sizeBytes = 0;
+    // [dodatek E2-sec] dwFileAttributes z systemu plikow w chwili skanu (0 = nieznane).
+    std::uint32_t attributes = 0;
 };
+
+// [dodatek E2-sec] Atrybuty plikow "w chmurze" (OneDrive / Cloud Files / HSM): odczyt tresci wymusilby
+// pobranie z sieci. Wartosci = FILE_ATTRIBUTE_OFFLINE, ..._RECALL_ON_OPEN, ..._RECALL_ON_DATA_ACCESS.
+inline constexpr std::uint32_t kAttrOffline = 0x00001000;
+inline constexpr std::uint32_t kAttrRecallOnOpen = 0x00040000;
+inline constexpr std::uint32_t kAttrRecallOnDataAccess = 0x00400000;
+[[nodiscard]] constexpr bool isCloudPlaceholder(std::uint32_t attributes) noexcept
+{
+    return (attributes & (kAttrOffline | kAttrRecallOnOpen | kAttrRecallOnDataAccess)) != 0;
+}
 
 struct ScanResult {
     std::vector<FoundFile> files;         // posortowane leksykograficznie (stabilnie)
@@ -98,7 +111,13 @@ struct TrackMeta {
 };
 
 // Czyta plik przez loader. Bledy loadera przekazywane bez zmian (Cancelled przy cancel).
-[[nodiscard]] Result<TrackMeta> readTrackMeta(const std::filesystem::path& path, const CancelToken& cancel = {});
+// Pliki z isCloudPlaceholder(atrybuty) sa POMIJANE (brak pobierania z sieci): wynik to Error
+// ErrorCode::AccessDenied, rozpoznawany przez isCloudPlaceholderError(). `allowCloudDownload=true`
+// ("pobierz mimo to") czyta plik normalnie (system pobierze tresc). Propozycja dla core.hpp:
+// ErrorCode::CloudPlaceholder / WarningCode::CloudPlaceholderSkipped (dzis: AccessDenied + Other).
+[[nodiscard]] Result<TrackMeta> readTrackMeta(const std::filesystem::path& path, const CancelToken& cancel = {},
+                                              bool allowCloudDownload = false);
+[[nodiscard]] bool isCloudPlaceholderError(const Error& e) noexcept;
 
 // Cache metadanych: klucz = sciezka (bez rozrozniania wielkosci liter) + FileStamp. Nie jest
 // watkowo-bezpieczny (uzywaj z jednego workera). Limit 200000 wpisow (nadmiar nie jest dodawany).
@@ -110,15 +129,20 @@ public:
     void put(const TrackMeta& meta);
     [[nodiscard]] std::size_t size() const noexcept { return items_.size(); }
     // Zwraca z cache albo czyta i dopisuje (stat + readTrackMeta).
-    [[nodiscard]] Result<TrackMeta> getOrRead(const std::filesystem::path& path, const CancelToken& cancel = {});
+    // Trafienie w cache nie czyta pliku (nie wymusza pobrania); przy braku wpisu obowiazuje regula chmury
+    // z readTrackMeta.
+    [[nodiscard]] Result<TrackMeta> getOrRead(const std::filesystem::path& path, const CancelToken& cancel = {},
+                                              bool allowCloudDownload = false);
 
     [[nodiscard]] std::string toJson() const;
-    [[nodiscard]] static Result<MetaCache> fromJson(std::string_view json);
+    // Limity parsera: zagniezdzenie <= 8, <= 4 mln wartosci; durationMs/loopMs <= 24 h; tytuly czyszczone
+    // (max 512 B). Sciezki UNC odrzucane, chyba ze allowNetworkPaths (URL/urzadzenia zawsze).
+    [[nodiscard]] static Result<MetaCache> fromJson(std::string_view json, bool allowNetworkPaths = false);
 
 private:
-    std::vector<TrackMeta> items_;   // posortowane po kluczu (do wyszukiwania binarnego)
+    std::unordered_map<std::wstring, TrackMeta> items_;   // klucz = sciezka malymi literami
 };
-[[nodiscard]] Result<MetaCache> loadMetaCacheFile(const std::filesystem::path& file);   // brak pliku = pusty
+[[nodiscard]] Result<MetaCache> loadMetaCacheFile(const std::filesystem::path& file, bool allowNetworkPaths = false);   // brak pliku = pusty
 [[nodiscard]] Result<void> saveMetaCacheFile(const std::filesystem::path& file, const MetaCache& cache);
 
 } // namespace vgmplay::library

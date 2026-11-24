@@ -71,9 +71,18 @@ private:
 // saveJson: UTF-8, deterministyczny. loadJson: ParseError przy zlej skladni,
 // UnsupportedSchema przy nowszej wersji; limity: <= 1000 playlist, <= 100000 wpisow na liste.
 [[nodiscard]] std::string saveJson(const PlaylistModel& model);
-[[nodiscard]] Result<PlaylistModel> loadJson(std::string_view json);
 
-[[nodiscard]] Result<PlaylistModel> loadPlaylistsFile(const std::filesystem::path& file);
+// [dodatek E2-sec] Opcje wczytywania. Wpisy-URL (schemat://), przestrzen urzadzen i potoki sa zawsze
+// pomijane; sciezki UNC (serwer/udzial) - domyslnie tez (allowNetworkPaths=false).
+// Twarde limity parsera: plik <= 64 MiB, zagniezdzenie JSON <= 8, <= 4 mln wartosci (LimitExceeded).
+// Tytuly sa czyszczone (znaki sterujace i kierunkowe, max 512 B), durationMs przycinane do 24 h.
+struct PlaylistLoadOptions {
+    bool allowNetworkPaths = false;
+};
+[[nodiscard]] Result<PlaylistModel> loadJson(std::string_view json, const PlaylistLoadOptions& options = {});
+
+[[nodiscard]] Result<PlaylistModel> loadPlaylistsFile(const std::filesystem::path& file,
+                                                      const PlaylistLoadOptions& options = {});
 [[nodiscard]] Result<void> savePlaylistsFile(const std::filesystem::path& file, const PlaylistModel& model);
 
 // ---- M3U / M3U8 ----
@@ -97,6 +106,8 @@ struct M3uImportResult {
 // Odrzuca: URL (dowolny schemat://), sciezki UNC/urzadzen (\\?\, \\.\), '..' wychodzace poza
 // allowedRoot, nieistniejace pliki NIE (sprawdzanie istnienia nie jest zadaniem importu).
 // Linie #EXTM3U/#EXTINF: tytul/czas trafiaja do Entry; inne komentarze ignorowane.
+// Limity wbudowane [dodatek E2-sec]: wejscie > 16 MiB -> TooLarge; po 1 000 000 linii import sie
+// konczy (Warning LimitReached, wynik czesciowy); tytul czyszczony jak w JSON (max 512 B).
 [[nodiscard]] Result<M3uImportResult> importM3u(std::string_view text, const M3uImportOptions& options);
 
 struct M3uExportOptions {
