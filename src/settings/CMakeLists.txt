@@ -9,4 +9,4 @@ target_include_directories(vgmplay_settings PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/i
 target_include_directories(vgmplay_settings PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(vgmplay_settings
     PUBLIC vgmplay::options vgmplay::format
-    PRIVATE nlohmann_json::nlohmann_json)
+    PRIVATE nlohmann_json::nlohmann_json vgmplay::input)

@@ -104,7 +104,7 @@ struct ActionEvent {
 
 [[nodiscard]] bool isDirectional(Action a) noexcept;   // Up/Down/Left/Right/PageUp/PageDown
 
-// [dodatek E3] Stabilne nazwy do serializacji (JSON: "action": "play_pause", "source": {"kind": "gamepad_button", "code": 0}).
+// [dodatek E3] Stabilne nazwy do serializacji (JSON w settings: "action": "playPause", "source": "padButton", "code": 0).
 // Nazwy sa czescia formatu pliku - nie zmieniac. Nieznana nazwa -> nullopt (wiazanie pomijane z ostrzezeniem).
 // Action::None i Count_ nie maja nazwy (actionName zwraca ""); MuteChannel/SoloChannel sa lokalne i nie
 // podlegaja przypisaniom (actionRebindable() == false).

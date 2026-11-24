@@ -28,12 +28,22 @@ constexpr const char* kSettingsFileName = "settings.json";
 
 // ---- nazwy enumow w pliku (trwale; wartosci liczbowe enumow NIE sa zapisywane) ----
 
-constexpr std::array<const char*, static_cast<std::size_t>(input::Action::Count_)> kActionNames = {
-    "none", "up", "down", "left", "right", "pageUp", "pageDown", "confirm", "back", "menu",
-    "playPause", "stop", "nextTrack", "prevTrack", "seekForward", "seekBack", "volumeUp", "volumeDown",
-    "toggleLoop", "nextTab", "prevTab", "toggleTrackerView", "toggleMute", "toggleSolo", "openFile", "quit"};
+// Nazwy akcji i zrodel pochodza z modulu input (input::actionName/sourceKindName) - jedno zrodlo
+// prawdy; dopisanie akcji w input.hpp nie wymaga zmian tutaj.
 
-constexpr std::array<const char*, 4> kSourceKinds = {"key", "padButton", "padAxisPositive", "padAxisNegative"};
+// Czyta "action" i "source" wiazania po nazwach z modulu input. false = brak/zly typ/nieznana nazwa.
+bool readBindingNames(const json& jb, input::Binding& b)
+{
+    auto ja = jb.find("action");
+    auto js = jb.find("source");
+    if (ja == jb.end() || js == jb.end() || !ja->is_string() || !js->is_string()) return false;
+    const auto a = input::actionFromName(ja->get_ref<const std::string&>());
+    const auto k = input::sourceKindFromName(js->get_ref<const std::string&>());
+    if (!a || !k || *a == input::Action::None) return false;
+    b.action = *a;
+    b.source.kind = *k;
+    return true;
+}
 
 struct Ctx {
     std::vector<Warning>* out;
@@ -278,8 +288,7 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
                         auto code = jb.is_object() ? jb.find("code") : jb.end();
                         if (!jb.is_object() || code == jb.end() || !code->is_number_integer() || code->get<std::int64_t>() < INT32_MIN ||
                             code->get<std::int64_t>() > INT32_MAX ||
-                            !getEnumByName(c, jb, "action", kActionNames, b.action) || b.action == input::Action::None ||
-                            !getEnumByName(c, jb, "source", kSourceKinds, b.source.kind)) {
+                            !readBindingNames(jb, b)) {
                             c.warn("invalid binding skipped");
                             continue;
                         }
@@ -336,10 +345,10 @@ std::string toJson(const Settings& s)
 
     json binds = json::array();
     for (const input::Binding& b : s.input.bindings) {
-        const auto a = static_cast<std::size_t>(b.action);
-        const auto k = static_cast<std::size_t>(b.source.kind);
-        if (a >= kActionNames.size() || k >= kSourceKinds.size()) continue;
-        binds.push_back({{"action", kActionNames[a]}, {"source", kSourceKinds[k]}, {"code", b.source.code}});
+        const std::string_view an = input::actionName(b.action);
+        const std::string_view kn = input::sourceKindName(b.source.kind);
+        if (an.empty() || kn.empty()) continue;
+        binds.push_back({{"action", std::string(an)}, {"source", std::string(kn)}, {"code", b.source.code}});
     }
     root["input"] = {{"bindings", std::move(binds)}, {"repeatDelayMs", s.input.repeatDelayMs}, {"repeatRateMs", s.input.repeatRateMs}};
     root["library"] = {{"allowNetworkPaths", s.library.allowNetworkPaths}};
