@@ -14,6 +14,16 @@
 
 #include "vgmplay/loader.hpp"
 
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
+
 namespace {
 
 using namespace vgmplay;
@@ -332,8 +342,93 @@ TEST_CASE("loader: urzadzenia (NUL, CON) odrzucane - tylko zwykle pliki")
     for (const char* name : {"NUL", "CON"}) {
         auto r = loader::loadTrackFromFile(fs::path(name));
         REQUIRE_FALSE(r.ok());
-        CHECK((r.error().code == ErrorCode::PathRejected || r.error().code == ErrorCode::NotFound ||
-               r.error().code == ErrorCode::AccessDenied));
+        CHECK_MESSAGE((r.error().code == ErrorCode::PathRejected || r.error().code == ErrorCode::NotFound ||
+                       r.error().code == ErrorCode::AccessDenied),
+                      name, ": code ", static_cast<int>(r.error().code), " ", r.error().message);
     }
 }
 #endif
+
+// ---------------------------------------------------------------------------
+// Poprawki z recenzji bezpieczenstwa (ADR 0002 pkt 8.15-8.18)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("loader: eofOfs w kopii bufora wskazuje dokladnie eof uzyty przez parser (libvgm liczy rozmiar z paddingiem)")
+{
+    const Bytes v = makeVgm(kCmds);
+    const std::size_t n = v.size();
+    auto rd32 = [](const Bytes& b, std::size_t o) {
+        return static_cast<std::uint32_t>(b[o]) | (static_cast<std::uint32_t>(b[o + 1]) << 8) |
+               (static_cast<std::uint32_t>(b[o + 2]) << 16) | (static_cast<std::uint32_t>(b[o + 3]) << 24);
+    };
+    // 0 (libvgm: rozmiar Z paddingiem), w padding, na koniec paddingu, poza paddingiem, ogromny
+    for (std::uint32_t rel : {0u, static_cast<std::uint32_t>(n + 8 - 4), static_cast<std::uint32_t>(n + 0x110 - 4),
+                              static_cast<std::uint32_t>(n + 0x400), 0x7FFFFFFFu}) {
+        Bytes f = v;
+        put32(f, 0x04, rel);
+        auto r = loader::loadTrackFromMemory(f);
+        REQUIRE(r.ok());
+        CHECK(hasWarning(r.value().warnings, WarningCode::EofOffsetMismatch));
+        const Bytes& b = *r.value().bytes;
+        REQUIRE(b.size() == n + format::kParserPadding);
+        CHECK(rd32(b, 0x04) == n - 4);                       // libvgm: eofOfs = 4 + rel = rozmiar pliku
+        CHECK(r.value().header.eofOffset == n);
+        CHECK(r.value().header.dataEnd == n);
+        // padding pozostaje zerami
+        CHECK(std::all_of(b.begin() + static_cast<std::ptrdiff_t>(n), b.end(), [](std::uint8_t x) { return x == 0; }));
+    }
+    // poprawny eof (w tym ogon za eof) - zapisywana ta sama wartosc, bez ostrzezenia
+    Bytes tail = v;
+    tail.insert(tail.end(), {0, 0, 0, 0});
+    auto t = loader::loadTrackFromMemory(tail);
+    REQUIRE(t.ok());
+    CHECK_FALSE(hasWarning(t.value().warnings, WarningCode::EofOffsetMismatch));
+    CHECK(rd32(*t.value().bytes, 0x04) == n - 4);
+    CHECK(t.value().header.dataEnd == n);
+}
+
+#if defined(_WIN32)
+TEST_CASE("loader: potok nazwany jest odrzucany bez polaczenia klienta (typ pliku sprawdzany przed otwarciem z GENERIC_READ)")
+{
+    const std::wstring name = L"\\\\.\\pipe\\vgmplay_loader_test_" + std::to_wstring(GetCurrentProcessId());
+    HANDLE srv = CreateNamedPipeW(name.c_str(), PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+                                  PIPE_TYPE_BYTE | PIPE_WAIT, 1, 4096, 4096, 0, nullptr);
+    REQUIRE(srv != INVALID_HANDLE_VALUE);
+    OVERLAPPED ov{};
+    ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    REQUIRE(ov.hEvent != nullptr);
+    const BOOL immediate = ConnectNamedPipe(srv, &ov);
+    REQUIRE((immediate == FALSE && GetLastError() == ERROR_IO_PENDING));
+
+    auto r = loader::loadTrackFromFile(fs::path(name));
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().code == ErrorCode::PathRejected);
+    // serwer nie zobaczyl klienta: otwarcie z prawem odczytu (stary kod) zakonczyloby ConnectNamedPipe
+    CHECK(WaitForSingleObject(ov.hEvent, 0) == WAIT_TIMEOUT);
+
+    CancelIo(srv);
+    CloseHandle(ov.hEvent);
+    CloseHandle(srv);
+}
+#endif
+
+TEST_CASE("loader: reproduktory awarii libvgm z tests/data/fuzz-crashes sa odrzucane")
+{
+    struct Case {
+        const char* file;
+        ErrorCode code;
+    };
+    const Case cases[] = {
+        {"known_c352_divider_zero.vgm", ErrorCode::BadHeader},                    // clock*72/hdr[0xD6], #DE
+        {"known_dac_start_msec_without_freq.vgm", ErrorCode::BadCommandStream},   // 0x93 MSEC, Frequency == 0
+        {"known_dac_start_toend_without_data.vgm", ErrorCode::BadCommandStream},  // 0x93 TOEND, DataStep == 0
+        {"known_pokey_huge_clock.vgm", ErrorCode::LimitExceeded},                 // bufor 1 s przy rate = zegar
+    };
+    for (const Case& c : cases) {
+        const fs::path p = fs::path(VGMPLAY_TEST_DATA_DIR) / "fuzz-crashes" / c.file;
+        REQUIRE_MESSAGE(fs::exists(p), c.file);
+        auto r = loader::loadTrackFromFile(p);
+        REQUIRE_MESSAGE(!r.ok(), c.file, " przeszedl loader");
+        CHECK_MESSAGE(r.error().code == c.code, c.file, ": ", static_cast<int>(r.error().code), " ", r.error().message);
+    }
+}

@@ -1212,3 +1212,388 @@ TEST_CASE("strumien: odporne na losowe bajty komend (bez crasha)")
         (void)s;
     }
 }
+
+// ===========================================================================
+// Poprawki z recenzji bezpieczenstwa (ADR 0002 pkt 8.15-8.18, libvgm-parser-hazards.md H6-H9)
+// ===========================================================================
+
+namespace {
+
+Result<HeaderInfo> hdrWith(const std::vector<std::pair<std::size_t, std::uint32_t>>& clocks,
+                           const std::vector<std::pair<std::size_t, std::uint8_t>>& bytes = {},
+                           const Limits& l = {})
+{
+    Opt o;
+    o.clocks = clocks;
+    Bytes f = makeVgm(kSimple, o);
+    for (auto& [ofs, v] : bytes) f[ofs] = v;
+    return parseVgmHeader(f, l);
+}
+
+} // namespace
+
+TEST_CASE("naglowek: C352 z dzielnikiem 0xD6 == 0 odrzucony (libvgm dzieli przez bajt, #DE)")
+{
+    // C352 (indeks 0x27): zegar w 0xDC, dzielnik w 0xD6.
+    auto bad = hdrWith({{0xDC, 24576000}}, {{0xD6, 0}});
+    REQUIRE_FALSE(bad.ok());
+    CHECK(bad.error().code == ErrorCode::BadHeader);
+    CHECK(bad.error().byteOffset == 0xD6);
+
+    auto ok = hdrWith({{0xDC, 24576000}}, {{0xD6, 72}});
+    REQUIRE(ok.ok());
+    REQUIRE(ok.value().chips.size() == 2);   // SN76496 + C352
+    CHECK(ok.value().chips[1].type == ChipType::C352);
+    // bez zegara C352 bajt 0xD6 nie ma znaczenia
+    CHECK(hdrWith({}, {{0xD6, 0}}).ok());
+}
+
+TEST_CASE("naglowek: zegar po przeliczeniach libvgm (UINT32 z zawinieciem) jest sprawdzany, nie tylko surowy")
+{
+    // C352: clock * 72 / 1 zawija sie do ~2,9e9 (surowe 1e8 < limit 4e8).
+    auto c352 = hdrWith({{0xDC, 100000000}}, {{0xD6, 1}});
+    REQUIRE_FALSE(c352.ok());
+    CHECK(c352.error().code == ErrorCode::LimitExceeded);
+
+    // C352: 2^29 * 72 = 9 * 2^32 -> 0 po zawinieciu -> libvgm dostalby zegar 0.
+    Limits wide;
+    wide.maxChipClockHz = 0xFFFFFFFFu;
+    auto zero = hdrWith({{0xDC, 1u << 29}}, {{0xD6, 72}}, wide);
+    REQUIRE_FALSE(zero.ok());
+    CHECK(zero.error().code == ErrorCode::BadHeader);
+
+    // MultiPCM (0x88): clock * 224 / 180; 2^27 * 224 = 7 * 2^32 -> 0.
+    auto mpcm = hdrWith({{0x88, 1u << 27}});
+    REQUIRE_FALSE(mpcm.ok());
+    CHECK(mpcm.error().code == ErrorCode::BadHeader);
+    CHECK(hdrWith({{0x88, 10000000}}).ok());
+
+    // QSound (0xB4): < 5 MHz to stary zegar 4 MHz (libvgm mnozy x15); 60 MHz bezposrednio tez w limicie.
+    CHECK(hdrWith({{0xB4, 4000000}}).ok());
+    CHECK(hdrWith({{0xB4, 60000000}}).ok());
+}
+
+TEST_CASE("naglowek: limity zegara ukladu (maxChipClockHz) i natywnej czestotliwosci probek")
+{
+    // POKEY (0xB0): rate = zegar.
+    REQUIRE(hdrWith({{0xB0, 1789772}}).ok());
+    CHECK(hdrWith({{0xB0, 20000000}}).ok());                                      // rate == limit
+    auto fast = hdrWith({{0xB0, 20000001}});
+    REQUIRE_FALSE(fast.ok());
+    CHECK(fast.error().code == ErrorCode::LimitExceeded);
+
+    // zegar ponad globalny limit (YMF278B, 0x60: dzielnik 768)
+    auto huge = hdrWith({{0x60, 500000000}});
+    REQUIRE_FALSE(huge.ok());
+    CHECK(huge.error().code == ErrorCode::LimitExceeded);
+    CHECK(huge.error().byteOffset == 0x60);
+    // 400 MHz dokladnie (limit wlacznie) przy duzym dzielniku przechodzi
+    CHECK(hdrWith({{0x60, 400000000}}).ok());
+    // bity 30/31 nie wchodza do zegara
+    CHECK(hdrWith({{0xB0, 1789772 | 0x80000000u}}).ok());
+
+    // limity sa konfigurowalne; suma po instancjach
+    Limits tight;
+    tight.maxTotalChipSampleRate = 4'000'000;
+    CHECK(hdrWith({}, {}, tight).ok());                                            // SN76496: 1,79 MHz
+    auto sum = hdrWith({{0xB0, 3000000}}, {}, tight);                              // + POKEY 3 MHz = 4,79 MHz
+    REQUIRE_FALSE(sum.ok());
+    CHECK(sum.error().code == ErrorCode::LimitExceeded);
+    Limits clk;
+    clk.maxChipClockHz = 1'000'000;
+    CHECK_FALSE(hdrWith({}, {}, clk).ok());                                        // SN76496 3,58 MHz > 1 MHz
+}
+
+TEST_CASE("naglowek: bajty konfiguracji powodujace przesuniecia o >= 32 bity (SN76496, SegaPCM) odrzucone")
+{
+    // SN76496: szerokosc rejestru przesuwnego 0x2A (>32 -> 1 << (width-1) w rdzeniu).
+    CHECK(hdrWith({}, {{0x2A, 32}}).ok());
+    auto sn = hdrWith({}, {{0x2A, 33}});
+    REQUIRE_FALSE(sn.ok());
+    CHECK(sn.error().code == ErrorCode::BadHeader);
+    CHECK(sn.error().byteOffset == 0x2A);
+    // bez ukladu bajt jest nieistotny
+    Opt noSn;
+    noSn.snClock = 0;
+    Bytes f = makeVgm(kSimple, noSn);
+    f[0x2A] = 200;
+    CHECK(parseVgmHeader(f).ok());
+
+    // SegaPCM (zegar 0x38, przesuniecie banku 0x3C)
+    CHECK(hdrWith({{0x38, 4000000}}, {{0x3C, 31}}).ok());
+    auto sp = hdrWith({{0x38, 4000000}}, {{0x3C, 32}});
+    REQUIRE_FALSE(sp.ok());
+    CHECK(sp.error().code == ErrorCode::BadHeader);
+    CHECK(sp.error().byteOffset == 0x3C);
+}
+
+TEST_CASE("naglowek: instancja ukladu z zerowym zegarem (same bity flag) odrzucona - libvgm by ja uruchomil")
+{
+    Opt o;
+    o.snClock = 0x40000000u;   // dual, zegar 0
+    auto r = parseVgmHeader(makeVgm(kSimple, o));
+    REQUIRE_FALSE(r.ok());
+    CHECK(r.error().code == ErrorCode::BadHeader);
+    Opt o2;
+    o2.snClock = 0x80000000u;  // tylko bit 31
+    CHECK_FALSE(parseVgmHeader(makeVgm(kSimple, o2)).ok());
+}
+
+TEST_CASE("naglowek: eofOffset - eof uzyty przez parser (0x04 + rel albo rozmiar pliku)")
+{
+    const Bytes f = makeVgm(kSimple);
+    auto ok = parseVgmHeader(f);
+    REQUIRE(ok.ok());
+    CHECK(ok.value().eofOffset == f.size());
+
+    Bytes zero = f;
+    put32(zero, 0x04, 0);
+    CHECK(parseVgmHeader(zero).value().eofOffset == f.size());
+
+    Bytes pad = f;
+    put32(pad, 0x04, static_cast<std::uint32_t>(f.size() + 8 - 4));   // w padding libvgm
+    auto rp = parseVgmHeader(pad);
+    REQUIRE(rp.ok());
+    CHECK(rp.value().eofOffset == f.size());
+    CHECK(hasWarning(rp.value().warnings, WarningCode::EofOffsetMismatch));
+
+    Bytes shorter = f;
+    put32(shorter, 0x04, static_cast<std::uint32_t>(f.size() - 2 - 4));   // eof w srodku pliku
+    auto rs = parseVgmHeader(shorter);
+    REQUIRE(rs.ok());
+    CHECK(rs.value().eofOffset == f.size() - 2);
+    CHECK(rs.value().dataEnd == f.size() - 2);
+}
+
+TEST_CASE("gzip: domyslny wspolczynnik 2000:1 (deflate daje <= ~1032:1), limit twardy rozmiaru zostaje")
+{
+    CHECK(Limits{}.maxDecompressRatio == 2000);
+    // 3 MiB zer -> wejscie ~20 KB (~160:1): sprawdzamy domyslna wartosc, limit twardy i zaostrzenie wspolczynnika.
+    const Bytes gz = gzipZeros(3u << 20);
+    auto r = decompressIfGzip(gz);
+    REQUIRE(r.ok());
+    CHECK(r.value().bytes.size() == (3u << 20));
+    // twardy limit rozmiaru dalej dziala
+    Limits small;
+    small.maxDecompressedBytes = 1u << 20;
+    auto t = decompressIfGzip(gz, small);
+    REQUIRE_FALSE(t.ok());
+    CHECK(t.error().code == ErrorCode::TooLarge);
+    // wspolczynnik nadal mozna zaostrzyc
+    Limits strict;
+    strict.maxDecompressRatio = 10;
+    auto s = decompressIfGzip(gz, strict);
+    REQUIRE_FALSE(s.ok());
+    CHECK(s.error().code == ErrorCode::TooLarge);
+}
+
+TEST_CASE("GD3: znaki kierunkowe i niewidoczne Unicode sa usuwane (sanitized)")
+{
+    auto field = [](const std::u16string& title, bool& sanitized) {
+        Opt o;
+        o.gd3 = makeGd3({title});
+        const Bytes f = makeVgm(kSimple, o);
+        auto h = parseVgmHeader(f);
+        REQUIRE(h.ok());
+        auto g = parseGd3(f, h.value());
+        REQUIRE(g.ok());
+        sanitized = g.value().sanitized;
+        return g.value().trackEn;
+    };
+    bool san = false;
+    CHECK(field(u"a‮b​c‏d", san) == "abcd");   // RLO, ZWSP, RLM
+    CHECK(san);
+    CHECK(field(u"x⁦y⁩z‪w‬v‎", san) == "xyzwv");   // LRI, PDI, LRE, PDF, LRM
+    CHECK(san);
+    // sasiednie punkty kodowe poza przedzialami pozostaja: U+200A, U+2010, U+2065, U+206A
+    CHECK(field(u" |‐|⁥|⁪", san) == "\xE2\x80\x8A|\xE2\x80\x90|\xE2\x81\xA5|\xE2\x81\xAA");
+    CHECK_FALSE(san);
+    CHECK(field(u"zwykly tytul", san) == "zwykly tytul");
+    CHECK_FALSE(san);
+}
+
+TEST_CASE("strumien: pusty blok PCM w/za loopOfs nie wylacza petli (libvgm przeskakuje sam naglowek)")
+{
+    Opt o;
+    o.loopAt = 1;
+    auto r = scan(makeVgm(cat({Bytes{0x63}, block(0x00, Bytes{}), Bytes{0x63, 0x66}}), o));
+    REQUIRE(r.rep.ok());
+    CHECK_FALSE(r.rep.value().loopDisabled);
+    CHECK_FALSE(hasWarning(r.rep.value().warnings, WarningCode::BlockAfterLoop));
+    // niepusty - jak dotad
+    auto n = scan(makeVgm(cat({Bytes{0x63}, block(0x00, Bytes{1}), Bytes{0x63, 0x66}}), o));
+    REQUIRE(n.rep.ok());
+    CHECK(n.rep.value().loopDisabled);
+}
+
+// --- Strumienie DAC (0x90..0x95): dzielenie przez zero w emu/dac_control.c ---
+
+namespace {
+
+Bytes dacSetup(std::uint8_t sid, std::uint8_t chip, std::uint16_t cmd)
+{
+    return {0x90, sid, chip, static_cast<std::uint8_t>(cmd >> 8), static_cast<std::uint8_t>(cmd & 0xFF)};
+}
+Bytes dacData(std::uint8_t sid, std::uint8_t bank, std::uint8_t step = 1, std::uint8_t base = 0)
+{
+    return {0x91, sid, bank, step, base};
+}
+Bytes dacFreq(std::uint8_t sid, std::uint32_t hz)
+{
+    Bytes b = {0x92, sid};
+    append32(b, hz);
+    return b;
+}
+Bytes dacPlay(std::uint8_t sid, std::uint8_t mode, std::uint32_t len = 100)
+{
+    Bytes b = {0x93, sid, 0, 0, 0, 0, mode};
+    append32(b, len);
+    return b;
+}
+Bytes dacPlayBlk(std::uint8_t sid, std::uint16_t id)
+{
+    return {0x95, sid, static_cast<std::uint8_t>(id & 0xFF), static_cast<std::uint8_t>(id >> 8), 0};
+}
+
+constexpr std::uint8_t kYM2612 = 0x02;
+constexpr std::uint8_t kPWM = 0x11;
+constexpr std::uint8_t kModeCmds = 0x01, kModeMsec = 0x02, kModeToEnd = 0x03, kModeBytes = 0x0F;
+
+Opt dacOpt()
+{
+    Opt o;
+    o.clocks = {{0x2C, 7670454}, {0x70, 23011361}};   // YM2612 + 32X PWM
+    return o;
+}
+
+Scan dacScan(std::initializer_list<Bytes> cmds, const Opt& o = dacOpt())
+{
+    return scan(makeVgm(cat(cmds), o));
+}
+
+} // namespace
+
+TEST_CASE("DAC: 0x93 w trybie MSEC przy czestotliwosci 0 odrzucone (1000 * len / Frequency)")
+{
+    const Bytes end = {0x66};
+    // bez 0x92
+    auto a = dacScan({dacSetup(0, kYM2612, 0x002A), dacData(0, 0), dacPlay(0, kModeMsec), end});
+    REQUIRE_FALSE(a.rep.ok());
+    CHECK(a.rep.error().code == ErrorCode::BadCommandStream);
+    // 0x92 z zerem
+    CHECK_FALSE(dacScan({dacSetup(0, kYM2612, 0x002A), dacFreq(0, 0), dacPlay(0, kModeMsec), end}).rep.ok());
+    // poprawnie
+    CHECK(dacScan({dacSetup(0, kYM2612, 0x002A), dacFreq(0, 8000), dacPlay(0, kModeMsec), end}).rep.ok());
+    // 0x92 PRZED skutecznym 0x90 jest ignorowane przez libvgm (Running & 0x80) - czestotliwosc nadal 0
+    CHECK_FALSE(dacScan({dacFreq(0, 8000), dacSetup(0, kYM2612, 0x002A), dacPlay(0, kModeMsec), end}).rep.ok());
+    // inne tryby nie dziela przez freq
+    CHECK(dacScan({dacSetup(0, kYM2612, 0x002A), dacData(0, 0), dacPlay(0, kModeCmds), end}).rep.ok());
+}
+
+TEST_CASE("DAC: 0x93 TOEND/BYTES i 0x95 przy DataStep == 0 odrzucone")
+{
+    const Bytes end = {0x66};
+    const Bytes pcm = block(0x00, Bytes(16, 0x40));
+    // 0x90 bez 0x91: StepSize = 0 => DataStep = 0
+    for (std::uint8_t mode : {kModeToEnd, kModeBytes}) {
+        auto r = dacScan({dacSetup(0, kYM2612, 0x002A), dacPlay(0, mode), end});
+        REQUIRE_FALSE(r.rep.ok());
+        CHECK(r.rep.error().code == ErrorCode::BadCommandStream);
+        // z 0x91 (StepSize 0 -> 1): bezpieczne
+        CHECK(dacScan({pcm, dacSetup(0, kYM2612, 0x002A), dacData(0, 0), dacPlay(0, mode), end}).rep.ok());
+    }
+    // CmdSize 2 (32X PWM) * StepSize 128 = 256 -> UINT8 DataStep == 0
+    for (std::uint8_t mode : {kModeToEnd, kModeBytes}) {
+        auto r = dacScan({pcm, dacSetup(0, kPWM, 0x0001), dacData(0, 0, 128), dacPlay(0, mode), end});
+        REQUIRE_FALSE(r.rep.ok());
+        CHECK(r.rep.error().code == ErrorCode::BadCommandStream);
+        CHECK(dacScan({pcm, dacSetup(0, kPWM, 0x0001), dacData(0, 0, 127), dacPlay(0, mode), end}).rep.ok());
+        // ten sam StepSize przy CmdSize 1 (YM2612) jest bezpieczny
+        CHECK(dacScan({pcm, dacSetup(0, kYM2612, 0x002A), dacData(0, 0, 128), dacPlay(0, mode), end}).rep.ok());
+    }
+    // 0x95 (tryb BYTES): StepSize 128 na PWM
+    auto b = dacScan({pcm, dacSetup(0, kPWM, 0x0001), dacData(0, 0, 128), dacPlayBlk(0, 0), end});
+    REQUIRE_FALSE(b.rep.ok());
+    CHECK(b.rep.error().code == ErrorCode::BadCommandStream);
+    CHECK(dacScan({pcm, dacSetup(0, kPWM, 0x0001), dacData(0, 0, 2), dacPlayBlk(0, 0), end}).rep.ok());
+    // SN76496 (typ 0): CmdSize zalezy od bitu 4 komendy - glosnosc 1, czestotliwosc 2
+    CHECK_FALSE(dacScan({pcm, dacSetup(0, 0x00, 0x0000), dacData(0, 0, 128), dacPlayBlk(0, 0), end}).rep.ok());
+    CHECK(dacScan({pcm, dacSetup(0, 0x00, 0x0010), dacData(0, 0, 128), dacPlayBlk(0, 0), end}).rep.ok());
+}
+
+TEST_CASE("DAC: komendy ignorowane przez libvgm dostaja ostrzezenie, a nie blad")
+{
+    const Bytes end = {0x66};
+    const Bytes pcm = block(0x00, Bytes(16, 0x40));
+
+    // uklad docelowy bez zegara w naglowku (SegaPCM 0x04): strumien powstaje, ale 0x91-0x93 sa ignorowane
+    auto a = dacScan({dacSetup(0, 0x04, 0x0000), dacFreq(0, 0), dacPlay(0, kModeMsec), dacPlay(0, kModeBytes), end});
+    REQUIRE(a.rep.ok());
+    CHECK(hasWarning(a.rep.value().warnings, WarningCode::Other));
+    // typ >= 48, instancja 1 bez dual-chip
+    CHECK(dacScan({dacSetup(0, 0x30, 0x0000), dacPlay(0, kModeMsec), end}).rep.ok());
+    CHECK(dacScan({dacSetup(0, static_cast<std::uint8_t>(0x80 | kYM2612), 0x002A), dacPlay(0, kModeMsec), end}).rep.ok());
+    // 0x93 / 0x95 / 0x92 bez 0x90 w ogole
+    CHECK(dacScan({dacPlay(3, kModeMsec), dacPlayBlk(3, 0), dacFreq(3, 1), end}).rep.ok());
+    // strumien 0xFF: 0x90 ignorowane
+    CHECK(dacScan({dacSetup(0xFF, kYM2612, 0x002A), dacPlay(0xFF, kModeMsec), end}).rep.ok());
+    // 0x95 bez wybranego banku / z bankiem >= 0x40 / z ID poza bankiem
+    CHECK(dacScan({pcm, dacSetup(0, kPWM, 0x0001), dacPlayBlk(0, 0), end}).rep.ok());
+    CHECK(dacScan({pcm, dacSetup(0, kPWM, 0x0001), dacData(0, 0x40, 128), dacPlayBlk(0, 0), end}).rep.ok());
+    CHECK(dacScan({pcm, dacSetup(0, kPWM, 0x0001), dacData(0, 0, 128), dacPlayBlk(0, 1), end}).rep.ok());
+    // ostrzezenie o ignorowanej komendzie pojawia sie raz na rodzaj komendy
+    auto w = dacScan({dacPlay(1, kModeMsec), dacPlay(1, kModeMsec), dacPlay(1, kModeMsec), end});
+    REQUIRE(w.rep.ok());
+    std::size_t ignored = 0;
+    for (const Warning& x : w.rep.value().warnings)
+        if (x.code == WarningCode::Other) ++ignored;
+    CHECK(ignored == 1);
+}
+
+TEST_CASE("DAC: stan strumieni nie jest resetowany przy skoku petli - petla jest skanowana drugi raz")
+{
+    const Bytes setup = dacSetup(0, kYM2612, 0x002A);
+    const Bytes end = {0x66};
+
+    // Petla zaczyna sie od 0x93 (za 0x92 z 8000): 1. przebieg OK, a 0x92 z zerem na koncu petli
+    // zostawia freq == 0 dla 0x93 w 2. przebiegu.
+    Opt o = dacOpt();
+    o.loopAt = static_cast<std::int64_t>(setup.size() + dacFreq(0, 8000).size());
+    auto bad = dacScan({setup, dacFreq(0, 8000), dacPlay(0, kModeMsec), dacFreq(0, 0), Bytes{0x63}, end}, o);
+    REQUIRE_FALSE(bad.rep.ok());
+    CHECK(bad.rep.error().code == ErrorCode::BadCommandStream);
+    // bez petli ten sam strumien jest bezpieczny
+    CHECK(dacScan({setup, dacFreq(0, 8000), dacPlay(0, kModeMsec), dacFreq(0, 0), Bytes{0x63}, end}).rep.ok());
+    // petla, w ktorej freq pozostaje niezerowe
+    CHECK(dacScan({setup, dacFreq(0, 8000), dacPlay(0, kModeMsec), dacFreq(0, 4000), Bytes{0x63}, end}, o).rep.ok());
+
+    // petla zaczyna sie od 0x92 (8000) - 2. przebieg ustawia freq przed 0x93, wiec jest bezpieczny
+    Opt o2 = dacOpt();
+    o2.loopAt = static_cast<std::int64_t>(setup.size());
+    CHECK(dacScan({setup, dacFreq(0, 8000), dacPlay(0, kModeMsec), dacFreq(0, 0), Bytes{0x63}, end}, o2).rep.ok());
+}
+
+TEST_CASE("DAC: wskaznik na bank trzyma tylko skutecznie ustawiony strumien")
+{
+    const Bytes end = {0x66};
+    const Bytes pcm0 = block(0x00, Bytes(8, 1));
+    const Bytes more0 = block(0x00, Bytes(4, 2));
+    const Bytes setup = dacSetup(0, kYM2612, 0x002A);
+
+    // skuteczny 0x91 -> kolejny blok tego banku (resize) odrzucony
+    auto bad = dacScan({pcm0, setup, dacData(0, 0), more0, end});
+    REQUIRE_FALSE(bad.rep.ok());
+    CHECK(bad.rep.error().code == ErrorCode::BadDataBlock);
+    // strumien bez skutecznego 0x90 (uklad docelowy nie istnieje): 0x91 nie ustawia wskaznika
+    CHECK(dacScan({pcm0, dacSetup(0, 0x04, 0), dacData(0, 0), more0, end}).rep.ok());
+    // strumien przestawiony na inny bank - poprzedni bank nie jest juz trzymany
+    CHECK(dacScan({pcm0, block(0x01, Bytes(8, 3)), setup, dacData(0, 0), dacData(0, 1), more0, end}).rep.ok());
+    // przestawienie na pusty bank zeruje wskaznik
+    CHECK(dacScan({pcm0, setup, dacData(0, 0), dacData(0, 5), more0, end}).rep.ok());
+    // dwa strumienie na tym samym banku: zwolnienie jednego nie zwalnia drugiego
+    auto two = dacScan({pcm0, setup, dacSetup(1, kYM2612, 0x002A), dacData(0, 0), dacData(1, 0), dacData(0, 7), more0, end});
+    REQUIRE_FALSE(two.rep.ok());
+    CHECK(two.rep.error().code == ErrorCode::BadDataBlock);
+    // pusty blok (dataLen 0) nie powoduje resize
+    CHECK(dacScan({pcm0, setup, dacData(0, 0), block(0x00, Bytes{}), end}).rep.ok());
+}

@@ -96,10 +96,9 @@ Result<LoadedTrack> loadImpl(std::span<const std::uint8_t> input, ByteBuffer* ow
 
     // Dopelnienie zerami (pkt 8.7): resize wartosciuje nowe bajty zerami.
     const std::size_t rawSize = dec.bytes.size();
-    // Petla wylaczona przez pre-skan (blok PCM w/za punktem petli): zerujemy loop offset (0x1C)
-    // i loop samples (0x20) we wlasnej kopii, zeby libvgm nie skakal do petli. Naglowek ma >= 0x38 B.
+    // Lacki dla libvgm (eofOfs, petla wylaczona przez pre-skan) - wspolne z VgmDecoder::open.
+    format::applyLibvgmPatches(dec.bytes, track.header, track.stream);
     if (track.stream.loopDisabled) {
-        std::fill_n(dec.bytes.begin() + 0x1C, 8, std::uint8_t{0});
         track.header.loopOffset = 0;
         track.header.loopSamples = 0;
     }
@@ -150,21 +149,67 @@ struct Handle {
     }
 };
 
+// Przestrzen nazw urzadzen Win32 (\.\pipe\..., \.\COM1, \.\PhysicalDrive0), \?\pipe\ i \?\GLOBALROOT:
+// samo OTWARCIE (nawet z dwDesiredAccess = 0) laczy klienta z potokiem nazwanym, wiec odrzucamy je po nazwie,
+// zanim dotkniemy systemu plikow. Zwykle sciezki \?\C:\... pozostaja dozwolone.
+[[nodiscard]] bool isDeviceNamespacePath(const std::filesystem::path& p)
+{
+    std::wstring s = p.native();
+    for (wchar_t& c : s) {
+        if (c == L'/') c = static_cast<wchar_t>(0x5C);   // '\\'
+        else if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+    }
+    auto starts = [&](const wchar_t* pre) { return s.rfind(pre, 0) == 0; };
+    const std::wstring bs(1, static_cast<wchar_t>(0x5C));
+    const std::wstring dev = bs + bs + L"." + bs;                 // prefiks urzadzen Win32
+    const std::wstring ext = bs + bs + L"?" + bs;                 // prefiks "extended-length"
+    return starts(dev.c_str()) || starts((ext + L"pipe" + bs).c_str()) || starts((ext + L"globalroot").c_str()) ||
+           starts((bs + L"??" + bs).c_str());
+}
+
 Result<ByteBuffer> readFile(const std::filesystem::path& path, const format::Limits& limits,
                             const CancelToken& cancel)
 {
-    Handle f;
-    f.h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-    if (f.h == INVALID_HANDLE_VALUE) {
-        const DWORD e = GetLastError();
+    if (isDeviceNamespacePath(path))
+        return makeError(ErrorCode::PathRejected, "device namespace path (pipe, COM, physical drive)");
+    constexpr DWORD kShareAll = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    auto openError = [&](DWORD e) -> Error {
         if (e == ERROR_ACCESS_DENIED) {
             const DWORD attr = GetFileAttributesW(path.c_str());
             if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY))
                 return makeError(ErrorCode::InvalidArgument, "path is a directory");
         }
         return winError(e, "cannot open file");
+    };
+
+    // Krok 1: otwarcie BEZ prawa dostepu (dwDesiredAccess = 0: tylko metadane) i sprawdzenie typu. Wlasciwe
+    // otwarcie z GENERIC_READ moze miec skutki uboczne dla urzadzen (np. polaczenie z potokiem nazwanym,
+    // otwarcie portu/tasmy), wiec zwykly plik na dysku (FILE_TYPE_DISK) musi byc potwierdzony wczesniej.
+    BY_HANDLE_FILE_INFORMATION probeInfo{};
+    {
+        Handle probe;
+        probe.h = CreateFileW(path.c_str(), 0, kShareAll, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (probe.h == INVALID_HANDLE_VALUE) {
+            const DWORD e = GetLastError();
+            // Urzadzenia konsolowe (CON, CONIN$...) nie daja sie otworzyc bez prawa dostepu: ERROR_INVALID_PARAMETER.
+            if (e == ERROR_INVALID_PARAMETER)
+                return makeError(ErrorCode::PathRejected, "not a regular file (device cannot be opened for query)");
+            return openError(e);
+        }
+        if (GetFileType(probe.h) != FILE_TYPE_DISK)
+            return makeError(ErrorCode::PathRejected, "not a regular file (device or pipe)");
+        if (!GetFileInformationByHandle(probe.h, &probeInfo))
+            return winError(GetLastError(), "cannot query file information");
+        if (probeInfo.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            return makeError(ErrorCode::InvalidArgument, "path is a directory");
     }
+
+    // Krok 2: wlasciwe otwarcie. Sciezka mogla sie zmienic miedzy krokami (TOCTOU), wiec typ sprawdzamy
+    // ponownie na nowym uchwycie i porownujemy tozsamosc pliku (wolumin + indeks) z uchwytem z kroku 1.
+    Handle f;
+    f.h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (f.h == INVALID_HANDLE_VALUE) return openError(GetLastError());
     // Tylko zwykly plik na dysku: odrzuca urzadzenia znakowe (CON, NUL, COMx) i potoki.
     if (GetFileType(f.h) != FILE_TYPE_DISK)
         return makeError(ErrorCode::PathRejected, "not a regular file (device or pipe)");
@@ -172,6 +217,9 @@ Result<ByteBuffer> readFile(const std::filesystem::path& path, const format::Lim
     if (!GetFileInformationByHandle(f.h, &info)) return winError(GetLastError(), "cannot query file information");
     if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         return makeError(ErrorCode::InvalidArgument, "path is a directory");
+    if (info.dwVolumeSerialNumber != probeInfo.dwVolumeSerialNumber || info.nFileIndexHigh != probeInfo.nFileIndexHigh ||
+        info.nFileIndexLow != probeInfo.nFileIndexLow)
+        return makeError(ErrorCode::PathRejected, "file changed between the type check and opening");
 
     // Rozmiar z otwartego uchwytu (bez TOCTOU), PRZED alokacja.
     const std::uint64_t size = (static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;

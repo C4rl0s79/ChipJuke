@@ -15,6 +15,9 @@ Odtworzenie (preset `clang-cl-asan-fuzz`, patrz `fuzz/CMakeLists.txt`):
 | known_dac_start_toend_without_data.vgm | dzielenie przez zero: 0x93 tryb TOEND bez skutecznego 0x91 | emu/dac_control.c:534 (daccontrol_start) |
 | known_pokey_huge_clock.vgm | zegar POKEY 0x3FFFFFFF => malloc ~8 GB => abort() w Resmpl_EnsureBuffers | libFuzzer: out-of-memory (malloc 8589934584) |
 
-Uwaga: warianty 0x93 tryb BYTES bez danych i 0x95 bez danych NIE wywalaja sie w tej wersji libvgm (sprawdzone).
+Uwaga: warianty 0x93 tryb BYTES i 0x95 bez skutecznego 0x91 (brak danych/banku) sie nie wywalaja; z ustawionym DataStep == 0
+(np. 32X PWM + StepSize 128) wywalaja sie TAK SAMO (0xC0000094, sprawdzone na buildzie wydaniowym) - pre-skan je odrzuca.
+
+STATUS: wszystkie cztery pliki sa teraz odrzucane przez loader (test w tests/loader_test.cpp).
 Pliki zbudowano skryptem recznie (naglowek 0x100 B + kilka komend), nie wyszly z fuzzera: 60 s na cel
 (patrz docs/testing/e1-test-plan.md) nie trafilo na nie samodzielnie.

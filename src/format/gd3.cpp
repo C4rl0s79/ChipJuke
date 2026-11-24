@@ -63,6 +63,12 @@ Utf8Result utf16leToUtf8(std::span<const std::uint8_t> bytes, std::uint32_t maxB
         } else if (cp >= 0xDC00 && cp <= 0xDFFF) {
             cp = 0xFFFD;
             r.sanitized = true;
+        } else if ((cp >= 0x200B && cp <= 0x200F) || (cp >= 0x202A && cp <= 0x202E) ||
+                   (cp >= 0x2066 && cp <= 0x2069)) {
+            // Znaki niewidoczne i kierunkowe (zero-width, LRM/RLM, LRE..RLO, izolaty): pozwalaja
+            // podszyc/odwrocic wyswietlany tekst (np. nazwe pliku/tytul) - usuwamy.
+            r.sanitized = true;
+            continue;
         } else if (cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp <= 0x9F)) {
             r.sanitized = true;
             if (cp == '\t' || cp == '\n' || cp == '\r') {

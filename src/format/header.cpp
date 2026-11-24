@@ -13,9 +13,17 @@
 //   OKIM6258 : 0x94    K054539: 0x95    C140/C219: 0x96    ES5503: 0xD4    ES5506: 0xD5
 //   C352     : 0xD6 (clock divider)     MSM5205: 0xD7
 //   pozostale: 0
+//
+// Walidacje konfiguracji ukladow (odpowiedniki VGMPlayer::GenerateDeviceConfig; ADR 0002 pkt 8.15-8.16):
+//  * C352 (0xD6 == 0)  -> BadHeader: libvgm liczy clock*72/hdr[0xD6] bez ochrony (#DE, vgmplayer.cpp:1374);
+//  * SN76496 0x2A > 32, SegaPCM 0x3C > 31 -> BadHeader (przesuniecia o >= 32 bity to UB w rdzeniach);
+//  * zegar PO przeliczeniach libvgm (UINT32 z zawinieciem, jak w libvgm) == 0 -> BadHeader;
+//  * zegar / natywny rate: Limits::maxChipClockHz, maxChipSampleRate, maxTotalChipSampleRate -> LimitExceeded
+//    (Resmpl_Init alokuje 1 s probek ukladu, emu/Resampler.c:103, abort() przy OOM).
 #include <algorithm>
 #include <cstring>
 #include <new>
+#include <optional>
 #include <vector>
 
 #include "cmdtable.hpp"
@@ -102,6 +110,81 @@ void fmClockFix(std::span<const std::uint8_t> file, std::uint64_t dataOfs, std::
     return (f & 0x7FFFFFFFu) | (rawClock & 0x80000000u);
 }
 
+// Dzielnik czestotliwosci probek rdzenia wzgledem zegara PO przeliczeniach libvgm (rate = clock / div).
+// Wartosc to NAJMNIEJSZY dzielnik sposrod rdzeni wlaczonych w libvgm (konserwatywnie: najwyzszy mozliwy rate),
+// odczytany z emu/cores/*.c (INIT_DEVINF / device_start_*). 0 = rate niezalezny od zegara albo brak rdzenia
+// (32X PWM: stale 22020 Hz; ES5506: rdzen jest szkieletem bez emulacji - SndEmu_Start2 nie wystartuje).
+constexpr std::uint32_t kRateDivisor[detail::kVgmChipCount] = {
+    /*00 SN76496*/ 2,    /*01 YM2413*/ 72,   /*02 YM2612*/ 144,  /*03 YM2151*/ 64,
+    /*04 SegaPCM*/ 128,  /*05 RF5C68*/ 384,  /*06 YM2203*/ 72,   /*07 YM2608*/ 144,
+    /*08 YM2610*/ 144,   /*09 YM3812*/ 72,   /*0A YM3526*/ 72,   /*0B Y8950*/ 72,
+    /*0C YMF262*/ 288,   /*0D YMF278B*/ 768, /*0E YMF271*/ 384,  /*0F YMZ280B*/ 192,
+    /*10 RF5C164*/ 384,  /*11 32X PWM*/ 0,   /*12 AY8910*/ 8,    /*13 GB DMG*/ 32,
+    /*14 NES APU*/ 4,    /*15 MultiPCM*/ 224, /*16 uPD7759*/ 4,  /*17 OKIM6258*/ 512,
+    /*18 OKIM6295*/ 132, /*19 K051649*/ 16,  /*1A K054539*/ 384, /*1B HuC6280*/ 16,
+    /*1C C140/C219*/ 288, /*1D K053260*/ 64, /*1E Pokey*/ 1,     /*1F QSound*/ 2496,
+    /*20 SCSP*/ 512,     /*21 WSwan*/ 128,   /*22 VSU*/ 120,     /*23 SAA1099*/ 128,
+    /*24 ES5503*/ 16,    /*25 ES5506*/ 0,    /*26 X1-010*/ 512,  /*27 C352*/ 288,
+    /*28 GA20*/ 4,       /*29 Mikey*/ 16,    /*2A K007232*/ 128, /*2B K005289*/ 1,
+    /*2C MSM5205*/ 1,    /*2D MSM5232*/ 16,  /*2E BSMT2000*/ 772, /*2F ICS2115*/ 32,
+};
+
+// Zegar przekazywany przez libvgm do rdzenia (VGMPlayer::GenerateDeviceConfig, c5c03a2). Arytmetyka UINT32
+// Z ZAWINIECIEM - dokladnie jak w libvgm (np. clock * 224 przy MultiPCM). Dla C352 wymaga hdr[0xD6] != 0.
+[[nodiscard]] std::uint32_t libvgmEffectiveClock(std::size_t idx, std::uint32_t clock, const detail::PaddedHeader& h)
+{
+    switch (idx) {
+    case 0x15: return static_cast<std::uint32_t>(clock * 224u) / 180u;          // MultiPCM (YMW258)
+    case 0x1A: return clock < 1000000u ? clock * 384u : clock;                 // K054539
+    case 0x1C:                                                                 // C140 / C219
+        if (h.u8(0x96) == 2) {
+            if (clock == 44100u) return 25056500u;
+            return clock < 1000000u ? clock * 576u : clock;
+        }
+        if (clock == 21390u) return 12288000u;
+        return clock < 1000000u ? clock * 576u : clock;
+    case 0x1F: return clock < 5000000u ? clock * 15u : clock;                  // QSound
+    case 0x20: return clock < 1000000u ? clock * 512u : clock;                 // SCSP
+    case 0x27: return static_cast<std::uint32_t>(clock * 72u) / h.u8(0xD6);    // C352 (0xD6 != 0 sprawdzone wczesniej)
+    default: return clock;
+    }
+}
+
+struct ChipBudget {
+    std::uint64_t totalRate = 0;
+};
+
+// Sprawdza konfiguracje jednej instancji ukladu; zwraca blad albo nic.
+[[nodiscard]] std::optional<Error> checkChipConfig(std::size_t idx, std::uint32_t clock, const detail::PaddedHeader& h,
+                                                   const Limits& lim, ChipBudget& budget)
+{
+    const std::uint64_t ofs = detail::kChipClockOfs[idx];
+    if (idx == 0x00 && h.u8(0x2A) > 32)
+        return makeError(ErrorCode::BadHeader, "SN76496 shift register width above 32 bits", 0x2A);
+    if (idx == 0x04 && h.u8(0x3C) > 31)
+        return makeError(ErrorCode::BadHeader, "SegaPCM bank shift above 31 bits", 0x3C);
+    if (idx == 0x27 && h.u8(0xD6) == 0)
+        return makeError(ErrorCode::BadHeader, "C352 clock divider (0xD6) is zero; libvgm divides by it", 0xD6);
+
+    if (clock > lim.maxChipClockHz)
+        return makeError(ErrorCode::LimitExceeded, "chip clock above limit", ofs);
+    const std::uint32_t eff = libvgmEffectiveClock(idx, clock, h);
+    if (eff == 0)
+        return makeError(ErrorCode::BadHeader, "chip clock converts to zero in libvgm", ofs);
+    if (eff > lim.maxChipClockHz)
+        return makeError(ErrorCode::LimitExceeded, "effective chip clock above limit", ofs);
+    const std::uint32_t div = kRateDivisor[idx];
+    if (div != 0) {
+        const std::uint32_t rate = eff / div;
+        if (rate > lim.maxChipSampleRate)
+            return makeError(ErrorCode::LimitExceeded, "chip native sample rate above limit", ofs);
+        budget.totalRate += rate;
+        if (budget.totalRate > lim.maxTotalChipSampleRate)
+            return makeError(ErrorCode::LimitExceeded, "sum of chip native sample rates above limit", ofs);
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 Result<HeaderInfo> parseVgmHeader(std::span<const std::uint8_t> file, const Limits& limits)
@@ -162,6 +245,7 @@ Result<HeaderInfo> parseVgmHeader(std::span<const std::uint8_t> file, const Limi
             warn(hi.warnings, WarningCode::EofOffsetMismatch, 0x04, "EOF offset invalid; using file size");
             eofAbs = size;
         }
+        hi.eofOffset = eofAbs;
         std::uint64_t dataEnd = eofAbs;
         if (dataEnd <= dataOfs)
             return makeError(ErrorCode::BadHeader, "EOF offset does not leave room for command data", 0x04);
@@ -227,7 +311,7 @@ Result<HeaderInfo> parseVgmHeader(std::span<const std::uint8_t> file, const Limi
             if (abs < dataOfs || abs >= dataEnd) {
                 warn(hi.warnings, WarningCode::Other, 0x1C, "loop offset outside [dataOfs, dataEnd); loop ignored");
             } else if (hi.loopSamples == 0) {
-                warn(hi.warnings, WarningCode::Other, 0x20, "zero-length loop; loop ignored");
+                // libvgm ignoruje petle o zerowej dlugosci po cichu (vgmplayer.cpp:347) - bez ostrzezenia.
             } else {
                 hi.loopOffset = abs;
             }
@@ -238,6 +322,7 @@ Result<HeaderInfo> parseVgmHeader(std::span<const std::uint8_t> file, const Limi
         const bool v101fix = hi.versionBcd < 0x110 && h.u32(0x10) != 0;
         if (v101fix) fmClockFix(file, dataOfs, dataEnd, h.u32(0x10), fm);
 
+        ChipBudget budget;
         for (std::size_t idx = 0; idx < detail::kVgmChipCount; ++idx) {
             std::uint32_t raw = h.u32(detail::kChipClockOfs[idx]);
             if (v101fix && idx >= 1 && idx <= 3) raw = fm[idx - 1];
@@ -262,10 +347,13 @@ Result<HeaderInfo> parseVgmHeader(std::span<const std::uint8_t> file, const Limi
                 e.flags = chipFlags(idx, h, raw);
                 for (const XhVolume& v : xhVols)
                     if (v.type == idx && (v.flags & 1u) == inst) { e.volume = v.value; break; }
-                if (e.clockHz == 0) {
-                    warn(hi.warnings, WarningCode::Other, detail::kChipClockOfs[idx], "chip with zero clock ignored");
-                    continue;
-                }
+                // libvgm tworzy urzadzenie takze przy zegarze 0 po zamaskowaniu bitow 30/31 (GetChipCount liczy
+                // po surowym polu), wiec "pomijanie" takiego ukladu rozjezdzaloby liste ukladow z libvgm
+                // (i stan strumieni DAC w pre-skanie). Plik z takim polem jest niepoprawny.
+                if (e.clockHz == 0)
+                    return makeError(ErrorCode::BadHeader, "chip instance with zero clock (flag bits only)",
+                                     detail::kChipClockOfs[idx]);
+                if (auto err = checkChipConfig(idx, e.clockHz, h, limits, budget)) return *err;
                 hi.chips.push_back(e);
             }
         }
@@ -278,6 +366,22 @@ Result<HeaderInfo> parseVgmHeader(std::span<const std::uint8_t> file, const Limi
     } catch (...) {
         return makeError(ErrorCode::Internal, "unexpected exception in parseVgmHeader");
     }
+}
+
+void applyLibvgmPatches(std::span<std::uint8_t> raw, const HeaderInfo& header, const StreamReport& stream) noexcept
+{
+    if (raw.size() < detail::kMinVgmHeader || raw.size() != header.fileSize) return;
+    // EOF: libvgm porownuje eofOfs z rozmiarem bufora Z paddingiem (DataLoader_GetSize), a parser z rozmiarem bez
+    // paddingu. Pole 0 / wskazujace w padding / za padding dalyby libvgm dataEnd w paddingu (zera = komendy 0x00).
+    // Zapisujemy dokladnie ten eof, ktory uzyl parser.
+    if (header.eofOffset >= 4 && header.eofOffset <= raw.size()) {
+        const std::uint64_t rel = header.eofOffset - 4;
+        for (unsigned i = 0; i < 4; ++i) raw[0x04 + i] = static_cast<std::uint8_t>(rel >> (8 * i));
+    }
+    // Blok PCM w/za punktem petli: libvgm w 2. przejsciu wykonalby jego dane jako komendy - zerujemy loopOfs
+    // (0x1C) i loopSamples (0x20), plik gra raz.
+    if (stream.loopDisabled)
+        for (unsigned i = 0; i < 8; ++i) raw[0x1C + i] = 0;
 }
 
 } // namespace vgmplay::format
