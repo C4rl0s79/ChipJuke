@@ -25,6 +25,11 @@
 
 ---
 
+<p align="center">
+  <img src="docs/images/screenshot-tracker.png" alt="ChipJuke playing Streets of Rage 2 (SN76489 + YM2612): per-channel scopes, pattern with notes, GD3 info" width="100%">
+  <br><sub><i>Streets of Rage 2 — SN76489 and YM2612: a scope per channel, real notes, mute / solo per column.</i></sub>
+</p>
+
 ## Why ChipJuke
 
 Most VGM players show a tag list and a progress bar. ChipJuke shows the music the way a tracker does
@@ -52,7 +57,7 @@ Get **`ChipJuke-<version>-win64.zip`** from the [Releases](https://github.com/C4
 **Requirements:** Windows 10 22H2 or newer (x64), a Direct3D 11 GPU driver and an audio output. Nothing to install —
 no DLLs, no Visual C++ redistributable. To uninstall, delete the folder (and `%APPDATA%\ChipJuke`, if it was created).
 
-The current version is **1.0.0-rc1**, a release candidate. Please report problems in
+The current version is **1.0.0-rc2**, a release candidate. Please report problems in
 [Issues](https://github.com/C4rl0s79/ChipJuke/issues).
 
 ## Features
@@ -65,11 +70,17 @@ The current version is **1.0.0-rc1**, a release candidate. Please report problem
 
 ### Chips with note decoding
 
+<p align="center">
+  <img src="docs/images/screenshot-opna.png" alt="ChipJuke playing Brandish 3 for PC-9801 on a YM2608 (OPNA)" width="100%">
+  <br><sub><i>Brandish 3 (NEC PC-9801) — YM2608 / OPNA, supported since 1.0.0-rc2.</i></sub>
+</p>
+
+
 | Family | Chips |
 |---|---|
 | PSG / square | SN76489, AY8910, NES APU + FDS |
-| Yamaha FM | YM2612 (incl. DAC), YM2151, YM2203, YM2413, YM3812, YM3526, YMF262 |
-| PCM / ADPCM | SegaPCM, OKIM6295, OKIM6258, C140, K054539, K053260, GA20 |
+| Yamaha FM | YM2612 (incl. DAC), YM2151, YM2203, YM2608 (OPNA), YM2610/B (OPNB), YM2413, YM3812, YM3526, YMF262 |
+| PCM / ADPCM | SegaPCM, OKIM6295, OKIM6258, C140, K054539, K053260, GA20, YM2608/YM2610 ADPCM and rhythm |
 
 Every other chip supported by libvgm **plays normally**; its columns show `...` instead of notes.
 For PCM chips a "note" is relative: the same sample at the same rate shows the same note.

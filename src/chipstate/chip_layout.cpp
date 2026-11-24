@@ -63,7 +63,7 @@ std::vector<PatternChannel> one(ChipType type, std::uint8_t instance, std::uint3
         break;
     case ChipType::YM2608:
     case ChipType::YM2610:
-        append(v, type, instance, false,
+        append(v, type, instance, true,
                {{"FM ", 6}, {"ADPCM-A ", 6}, {"ADPCM-B", 0}, {"AY-3-8910 Ch ", 3}});
         break;
     case ChipType::Y8950:

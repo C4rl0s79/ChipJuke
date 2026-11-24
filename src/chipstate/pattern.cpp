@@ -36,6 +36,8 @@ std::unique_ptr<ChipDecoder> makeDecoderFor(Host& h, const format::ChipEntry& e,
     case ChipType::YM2612:  return makeYm2612(h, first, e.clockHz);
     case ChipType::YM2151:  return makeYm2151(h, first, e.clockHz);
     case ChipType::YM2203:  return makeYm2203(h, first, e.clockHz);
+    case ChipType::YM2608:  return makeYm2608(h, first, e.clockHz);
+    case ChipType::YM2610:  return makeYm2610(h, first, e.clockHz, (e.flags & 0x80000000u) != 0);
     case ChipType::YM3812:
     case ChipType::YM3526:  return makeOpl(h, first, e.clockHz, false);
     case ChipType::YMF262:  return makeOpl(h, first, e.clockHz, true);
@@ -152,6 +154,10 @@ private:
         case 0xA4: write(ChipType::YM2151, 1, 0, p[1], p[2]); break;
         case 0x55: write(ChipType::YM2203, 0, 0, p[1], p[2]); break;
         case 0xA5: write(ChipType::YM2203, 1, 0, p[1], p[2]); break;
+        case 0x56: case 0x57: write(ChipType::YM2608, 0, static_cast<std::uint8_t>(op - 0x56), p[1], p[2]); break;
+        case 0xA6: case 0xA7: write(ChipType::YM2608, 1, static_cast<std::uint8_t>(op - 0xA6), p[1], p[2]); break;
+        case 0x58: case 0x59: write(ChipType::YM2610, 0, static_cast<std::uint8_t>(op - 0x58), p[1], p[2]); break;
+        case 0xA8: case 0xA9: write(ChipType::YM2610, 1, static_cast<std::uint8_t>(op - 0xA8), p[1], p[2]); break;
         case 0x5A: write(ChipType::YM3812, 0, 0, p[1], p[2]); break;
         case 0xAA: write(ChipType::YM3812, 1, 0, p[1], p[2]); break;
         case 0x5B: write(ChipType::YM3526, 0, 0, p[1], p[2]); break;

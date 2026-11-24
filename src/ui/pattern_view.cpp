@@ -111,7 +111,8 @@ void formatNote(std::int16_t note, char out[4])
         std::snprintf(out, 4, "???");
     } else {
         const int oct = note / 12 - 1;   // MIDI 60 = C-4
-        if (oct < 0) std::snprintf(out, 4, "%s-", kNames[note % 12]);
+        // Oktawa -1 (MIDI 0..11, np. subbas FM): "_" zamiast cyfry; "-" dawalo "C--"/"C#-" (mylace z "---" i separatorem).
+        if (oct < 0) std::snprintf(out, 4, "%s_", kNames[note % 12]);
         else std::snprintf(out, 4, "%s%d", kNames[note % 12], oct);
     }
 }

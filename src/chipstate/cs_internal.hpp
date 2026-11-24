@@ -158,6 +158,9 @@ protected:
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeAy8910(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2612(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2203(Host& h, std::size_t first, std::uint32_t clockHz);
+// OPNA (YM2608: FM + SSG + rytm + ADPCM-B) i OPNB (YM2610, typeB = YM2610B: FM + SSG + ADPCM-A/B).
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2608(Host& h, std::size_t first, std::uint32_t clockHz);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2610(Host& h, std::size_t first, std::uint32_t clockHz, bool typeB);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2151(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeOkim6295(Host& h, std::size_t first, std::uint32_t clockHz,
                                                         std::uint32_t flags);
