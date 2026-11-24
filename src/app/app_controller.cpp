@@ -1,5 +1,7 @@
 #include "app_controller.h"
 
+#include "vgmplay_ui/strings.h"
+
 #include "vgmplay_ui/format.h"
 #include "vgmplay_ui/pattern_view.h"
 
@@ -82,11 +84,18 @@ bool AppController::start()
 
     audio_out::Config cfg;
     cfg.backend = options_.nullAudio ? audio_out::Config::Backend::Null : audio_out::Config::Backend::Default;
+    cfg.deviceId = settings_.audio.device;   // [E3] puste = domyslne; nieznane id -> domyslne + komunikat
     auto opened = audio_.open(cfg);
     if (!opened.ok() && !options_.nullAudio) {
         audioError_ = opened.error().message;
         cfg.backend = audio_out::Config::Backend::Null; // UI i silnik dzialaja dalej, bez dzwieku
+        cfg.deviceId.clear();
         opened = audio_.open(cfg);
+    }
+    audioCfg_ = cfg;
+    if (opened.ok() && opened.value().fellBackToDefault) {
+        audioFellBack_ = true;
+        postNotice(ui::tr(ui::Str::SetAudioFallback), {settings_.audio.device});
     }
     const std::uint32_t rate = opened.ok() && opened.value().sampleRate ? opened.value().sampleRate : 48000;
 
@@ -113,7 +122,7 @@ bool AppController::start()
         paths.playlists = dir / L"playlists.json";
         paths.cache = dir / L"library-cache.json";
     }
-    paths.allowNetworkPaths = options_.allowNetworkPaths;
+    paths.allowNetworkPaths = options_.allowNetworkPaths || settings_.library.allowNetworkPaths;   // [E3] efektywnie
     io_ = std::make_unique<IoWorker>(paths, [this] { if (wake_) wake_(); });
     if (persist_) io_->loadPlaylists();
     else installDefaultPlaylists();
@@ -286,6 +295,7 @@ void AppController::handleEvent(const engine::EngineEvent& e)
                 d.trackJp = track_->gd3.track(format::Gd3Language::Jp);
                 d.failed = false;
                 metaStore_.put(track_->path, std::move(d));
+                syncEntryMeta(track_->path);   // [E3] tytul GD3 trafia tez do wpisow playlist
             }
         }
         if (restore_ && track_) { // wznowienie sesji: przewin tylko dla tej samej sciezki
@@ -390,7 +400,11 @@ void AppController::pump()
     view_.playlists = &model_;
     view_.meta = &metaStore_;
     view_.settings = &settings_;
-    view_.allowNetworkPaths = options_.allowNetworkPaths;
+    view_.allowNetworkPaths = options_.allowNetworkPaths || settings_.library.allowNetworkPaths;
+    view_.networkForcedByFlag = options_.allowNetworkPaths;
+    view_.audioDevices = audioDevices_;
+    view_.audioDevicesLoaded = audioDevicesLoaded_;
+    view_.audioFellBackToDefault = audioFellBack_;
     view_.repeat = repeat_;
     view_.playlistsLoading = persist_ && !playlistsReady_;
     view_.scan = {};

@@ -133,7 +133,7 @@ TEST_SUITE("ui/playlist_panel")
         Fixture f;
         f.key(Action::Down);
         CHECK(f.screen.playlistSelection() == 1);
-        f.key(Action::Accept);
+        f.key(Action::Confirm);
         CHECK(f.act.log.back() == "play1");
         f.key(Action::Delete);
         CHECK(f.act.log.back() == "remove1");
@@ -160,16 +160,16 @@ TEST_SUITE("ui/playlist_panel")
         CHECK(f.act.log.empty());
 
         f.key(Action::ToggleSolo);
-        f.key(Action::Accept);       // A
+        f.key(Action::Confirm);       // A
         CHECK(f.screen.dialog() == PlayerScreen::DlgKind::None);
         REQUIRE(f.act.log.size() == 1);
         CHECK(f.act.log[0] == "remove0");
 
         f.act.log.clear();
-        f.key(Action::ResetMix);     // Y
+        f.key(Action::Menu);     // Y
         CHECK(f.screen.dialog() == PlayerScreen::DlgKind::EntryMenu);
         f.key(Action::Down);         // "Usun"
-        f.key(Action::Accept);
+        f.key(Action::Confirm);
         CHECK(f.act.log.back() == "remove0");
         CHECK(f.screen.dialog() == PlayerScreen::DlgKind::None);
     }
@@ -177,7 +177,7 @@ TEST_SUITE("ui/playlist_panel")
     TEST_CASE("okno modalne przejmuje nawigacje: panel pod spodem nie dostaje zdarzen")
     {
         Fixture f;
-        f.key(Action::ResetMix);   // menu wpisu
+        f.key(Action::Menu);   // menu wpisu
         f.act.log.clear();
         f.key(Action::Delete);     // w menu nic nie robi
         f.key(Action::Down);
@@ -195,16 +195,16 @@ TEST_SUITE("ui/playlist_panel")
         f.key(Action::Left);
         CHECK(f.act.log.back() == "select1");   // (0 + 2 - 1) % 2: zawija
         f.nav.setFocus(Panel::Transport);
-        f.key(Action::ToggleRepeat);
+        f.key(Action::ToggleLoop);
         CHECK(f.act.log.back() == "repeat2");   // Off -> All
         f.view.repeat = playlist::RepeatMode::All;
-        f.key(Action::ToggleRepeat);
+        f.key(Action::ToggleLoop);
         CHECK(f.act.log.back() == "repeat1");   // All -> One
         f.key(Action::Shuffle);
         CHECK(f.act.log.back() == "shuffle");
-        f.key(Action::Next);
+        f.key(Action::NextTrack);
         CHECK(f.act.log.back() == "next");
-        f.key(Action::Prev);
+        f.key(Action::PrevTrack);
         CHECK(f.act.log.back() == "prev");
     }
 
@@ -214,20 +214,20 @@ TEST_SUITE("ui/playlist_panel")
         f.act.log.clear();
         f.key(Action::NewPlaylist);
         CHECK(f.screen.dialog() == PlayerScreen::DlgKind::NewList);
-        f.key(Action::Accept);
+        f.key(Action::Confirm);
         REQUIRE(f.act.log.size() == 1);
         CHECK(f.act.log[0].rfind("create:", 0) == 0);
         CHECK(f.act.log[0].size() > 7);
         f.key(Action::RenamePlaylist);
         CHECK(f.screen.dialog() == PlayerScreen::DlgKind::RenameList);
-        f.key(Action::Accept);
+        f.key(Action::Confirm);
         CHECK(f.act.log.back() == "rename0:Jeden");
         f.key(Action::DeletePlaylist);
         CHECK(f.screen.dialog() == PlayerScreen::DlgKind::DeleteList);
         f.key(Action::Back);
         CHECK(f.act.log.back() == "rename0:Jeden");   // anulowane: bez usuniecia
         f.key(Action::DeletePlaylist);
-        f.key(Action::Accept);
+        f.key(Action::Confirm);
         CHECK(f.act.log.back() == "delete0");
     }
 
@@ -248,7 +248,7 @@ TEST_SUITE("ui/playlist_panel")
         f.key(Action::Down);
         f.key(Action::Down);
         f.key(Action::Down);    // wiersz 5: jezyk
-        f.key(Action::Accept);
+        f.key(Action::Confirm);
         CHECK(f.act.lastSettings.ui.language != f.settings.ui.language);
         f.key(Action::Down);    // GD3
         f.key(Action::Right);
@@ -264,7 +264,7 @@ TEST_SUITE("ui/playlist_panel")
     {
         Fixture f;
         f.nav.setFocus(Panel::Transport);
-        f.key(Action::ResetMix);
+        f.key(Action::Menu);
         CHECK(f.screen.settingsOpen());
     }
 
@@ -285,7 +285,7 @@ TEST_SUITE("ui/playlist_panel")
         f.view.notice->serial = 2;
         f.run();
         CHECK(f.screen.dialog() == PlayerScreen::DlgKind::Report);
-        f.key(Action::Accept);
+        f.key(Action::Confirm);
         CHECK(f.act.log.back() == "dismiss");
     }
 

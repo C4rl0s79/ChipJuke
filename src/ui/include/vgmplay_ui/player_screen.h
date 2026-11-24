@@ -5,6 +5,7 @@
 // watkow.
 #pragma once
 
+#include "vgmplay/input.hpp"
 #include "vgmplay_ui/channel_scopes.h"
 #include "vgmplay_ui/nav_input.h"
 #include "vgmplay_ui/pattern_view.h"
@@ -12,6 +13,8 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,7 +41,15 @@ public:
     enum class DlgKind { None, NewList, RenameList, DeleteList, DeleteEntry, EntryMenu, Report };
     DlgKind dialog() const { return dlg_.kind; }
     bool settingsOpen() const { return settingsOpen_; }
-    void openSettings() { settingsOpen_ = true; setSel_ = 0; }
+    void openSettings() { settingsOpen_ = true; setSel_ = 0; needDeviceRefresh_ = true; }
+    // [E3] ekran przypisan (z Ustawien) i mapa fokusu (testy)
+    bool bindingsOpen() const { return bindingsOpen_; }
+    const std::vector<input::Binding>& bindingsEdit() const { return bind_; }
+    int settingsSelection() const { return setSel_; }
+    int focusRow(Panel p) const { return grid(p).row; }
+    int focusCol(Panel p) const { return grid(p).col; }
+    // Czy ostatnio zaznaczony element otwiera okno systemowe (pad nie da rady).
+    bool focusNeedsKeyboard() const { return focusKbdOnly_; }
     long long playlistSelection() const { return plSel_; }
     bool modalOpen() const { return dlg_.kind != DlgKind::None || settingsOpen_; }
 
@@ -59,6 +70,62 @@ private:
         strip_ = strip_ == ScopeStrip::Small ? ScopeStrip::Large
                  : strip_ == ScopeStrip::Large ? ScopeStrip::Hidden : ScopeStrip::Small;
     }
+    // [E3] Mapa fokusu panelu: wiersze elementow (liczone w ostatniej klatce) i kursor.
+    struct FocusGrid {
+        int row = 0, col = 0;
+        std::vector<int> sizes;      // rozmiary wierszy z ostatniej klatki
+        std::vector<int> building;   // w trakcie rysowania
+        void begin() { building.clear(); }
+        void reg(int r, int c)
+        {
+            if (static_cast<int>(building.size()) <= r) building.resize(static_cast<std::size_t>(r) + 1, 0);
+            if (building[static_cast<std::size_t>(r)] < c + 1) building[static_cast<std::size_t>(r)] = c + 1;
+        }
+        void end()
+        {
+            sizes = building;
+            const int rows = static_cast<int>(sizes.size());
+            if (rows > 0) {
+                row = std::min(std::max(row, 0), rows - 1);
+                col = std::min(std::max(col, 0), std::max(0, sizes[static_cast<std::size_t>(row)] - 1));
+            }
+        }
+        [[nodiscard]] bool at(int r, int c) const { return row == r && col == c; }
+        void moveRow(int d)
+        {
+            const int rows = std::max(1, static_cast<int>(sizes.size()));
+            row = std::min(std::max(row + d, 0), rows - 1);
+            const int n = row < static_cast<int>(sizes.size()) ? sizes[static_cast<std::size_t>(row)] : 1;
+            col = std::min(col, std::max(0, n - 1));
+        }
+        void moveCol(int d)
+        {
+            const int n = row < static_cast<int>(sizes.size()) ? sizes[static_cast<std::size_t>(row)] : 1;
+            col = std::min(std::max(col + d, 0), std::max(0, n - 1));
+        }
+    };
+    FocusGrid& grid(Panel p) { return p == Panel::Transport ? tGrid_ : p == Panel::Playlist ? pGrid_ : kGrid_; }
+    const FocusGrid& grid(Panel p) const { return p == Panel::Transport ? tGrid_ : p == Panel::Playlist ? pGrid_ : kGrid_; }
+    // Element (row,col) panelu jest zaznaczony padem/klawiatura: true => rysuj pierscien.
+    [[nodiscard]] bool ringAt(const FocusGrid& g, bool panelFocused, int r, int c) const
+    {
+        return panelFocused && !modalOpen() && g.at(r, c);
+    }
+    // Zaznaczony element zostal "kliknięty" klawiszem Confirm w tej klatce.
+    [[nodiscard]] bool activatedAt(const FocusGrid& g, bool panelFocused, int r, int c) const
+    {
+        return activate_ && ringAt(g, panelFocused, r, c);
+    }
+    void drawHints(NavInput& nav, const PlayerView& view, float x, float y, float w, float h);
+    void drawBindings(NavInput& nav, const PlayerView& view, PlayerActions& actions, float W, float H);
+    void applyBindings(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
+    void applyTransport(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
+    void applyToolbar(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
+    void commitBindings(const PlayerView& view, PlayerActions& actions);
+    void pollCapture(NavInput& nav, const PlayerView& view, PlayerActions& actions);
+    void openBindings(const PlayerView& view);
+    void cycleStrip(const PlayerView& view, PlayerActions& actions);   // + zapis ustawienia ui.scopeBar
+
     void apply(const NavEvent& ev, Panel focus, const PlayerView& view, PlayerActions& actions);
     void drawTransport(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
                        float w, float h);
@@ -66,7 +133,7 @@ private:
                       float w, float h);
     void applyPlaylist(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
     void applyModal(const NavEvent& ev, const PlayerView& view, PlayerActions& actions);
-    void drawModal(const PlayerView& view, PlayerActions& actions, float W, float H);
+    void drawModal(NavInput& nav, const PlayerView& view, PlayerActions& actions, float W, float H);
     void drawSettings(const PlayerView& view, PlayerActions& actions, float W, float H);
     void drawDialog(const PlayerView& view, PlayerActions& actions, float W, float H);
     void changeSetting(int row, int dir, const PlayerView& view, PlayerActions& actions);
@@ -79,7 +146,7 @@ private:
     }
     void toggleLanguage(const PlayerView& view, PlayerActions& actions);
     void toggleGd3(const PlayerView& view, PlayerActions& actions);
-    void drawInfo(const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h);
+    void drawInfo(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y, float w, float h);
     void drawTracker(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
                      float w, float h);
     void drawChannelToolbar(NavInput& nav, const PlayerView& view, PlayerActions& actions, float x, float y,
@@ -98,6 +165,23 @@ private:
         int age = 0;
     };
     Dialog dlg_;
+    FocusGrid tGrid_{1, 0, {}, {}}, pGrid_{2, 0, {}, {}}, kGrid_{1, 0, {}, {}};
+    bool activate_ = false;
+    bool focusKbdOnly_ = false;
+    bool needDeviceRefresh_ = false;
+    bool bindingsOpen_ = false;
+    std::vector<input::Binding> bind_;
+    int bindRow_ = 0, bindCol_ = 0, bindScroll_ = 0;
+    bool bindCapturing_ = false;
+    struct PendingBind { input::Action action; input::BindingSource src; input::Action with; };
+    std::optional<PendingBind> bindPending_;
+    std::string bindMsg_;
+    int bindMsgFrames_ = 0;
+    NavInput* nav_ = nullptr;
+    std::vector<input::Binding> effBind_ = input::defaultBindings();   // do podpowiedzi pada
+    std::vector<input::Binding> lastBind_;
+    std::uint32_t lastRepeatDelay_ = 0, lastRepeatRate_ = 0;
+    bool bindSynced_ = false;
     bool settingsOpen_ = false;
     int setSel_ = 0;
     std::uint64_t seenNotice_ = 0;

@@ -80,6 +80,7 @@ void AppController::loadSettingsAtStart()
         if (options_.noAppDataNotice) postNotice(ui::tr(ui::Str::NtNoAppData), {}, true);
     }
     settings_.ui.rowTicks = rowTicks_;
+    repeat_ = static_cast<playlist::RepeatMode>(settings_.playback.repeat);   // [E3] zapamietany tryb powtarzania
     volume_ = std::clamp(settings_.playback.volume, 0.0f, 1.0f);
     view_.patternRowTicks = rowTicks_;
 }
@@ -96,6 +97,7 @@ void AppController::applyRuntimeSettings(const settings::Settings& old, bool ini
         send(engine::cmd::SetVolume{volume_});
     }
     if (!initial && n.ui.rowTicks != old.ui.rowTicks) setPatternRowTicks(n.ui.rowTicks);
+    if (!initial && n.audio.device != old.audio.device) switchAudioDevice();   // [E3] ponowne otwarcie wyjscia
 }
 
 void AppController::applySettings(const settings::Settings& s)
@@ -515,6 +517,7 @@ void AppController::handleIo()
             d.failed = true;   // nie ponawiamy; lista pokaze nazwe pliku
         }
         metaStore_.put(m.path, std::move(d));
+        syncEntryMeta(m.path);   // [E3] tytul i dlugosc ze skanu trafiaja do wpisow (zapis playlisty)
     }
     for (ImportDone& d : r.imports) importM3uDone(d);
     for (ExportDone& d : r.exports) {
@@ -596,7 +599,53 @@ void AppController::shufflePlaylist()
     if (model_.shuffle(model_.activeIndex(), seed).ok()) markPlaylistsDirty();
 }
 
-void AppController::setRepeat(playlist::RepeatMode mode) { repeat_ = mode; }
+void AppController::setRepeat(playlist::RepeatMode mode)
+{
+    repeat_ = mode;
+    const auto r = static_cast<settings::Repeat>(mode);   // wartosci jak playlist::RepeatMode
+    if (settings_.playback.repeat != r) {
+        settings_.playback.repeat = r;   // [E3] zapamietany tryb powtarzania
+        markSettingsDirty();
+    }
+}
+
+void AppController::syncEntryMeta(const std::filesystem::path& path)
+{
+    const ui::TrackDisplay* d = metaStore_.find(path);
+    if (!d || d->failed) return;
+    const std::string& title = !d->trackEn.empty() ? d->trackEn : d->trackJp;
+    if (title.empty() && d->durationMs == 0) return;
+    if (model_.updateEntryMeta(path, title, d->durationMs) > 0) markPlaylistsDirty();
+}
+
+void AppController::refreshAudioDevices()
+{
+    audioDevices_.clear();
+    const auto r = audio_out::listDevices(audioCfg_.backend);
+    if (r.ok())
+        for (const audio_out::DeviceEntry& e : r.value()) audioDevices_.push_back({e.id, e.name, e.isDefault});
+    audioDevicesLoaded_ = true;
+}
+
+void AppController::switchAudioDevice()
+{
+    audio_.stop();
+    audioCfg_.deviceId = settings_.audio.device;
+    audioCfg_.sampleRate = view_.sampleRate;   // silnik renderuje w stalej czestotliwosci; konwersje robi WASAPI
+    auto r = audio_.open(audioCfg_);
+    if (!r.ok() && !audioCfg_.deviceId.empty()) {   // wybrane urzadzenie niedostepne: wracamy do domyslnego
+        audioCfg_.deviceId.clear();
+        r = audio_.open(audioCfg_);
+        audioFellBack_ = true;
+    } else {
+        audioFellBack_ = r.ok() && r.value().fellBackToDefault;
+    }
+    if (!r.ok()) { audioError_ = r.error().message; return; }
+    audioError_.clear();
+    if (audioFellBack_) postNotice(ui::tr(ui::Str::SetAudioFallback), {settings_.audio.device});
+    const auto s = audio_.start();
+    if (!s.ok()) audioError_ = s.error().message;
+}
 
 void AppController::selectPlaylist(std::size_t index)
 {

@@ -113,7 +113,7 @@ struct CommandLine {
     bool diag = false;
     bool fakeChannelScopes = false;
     bool fakePattern = false;
-    int scopeStrip = 0;              // 0 = maly, 1 = duzy, 2 = ukryty
+    int scopeStrip = -1;             // -1 = z ustawien (ui.scopeBar), 0 = maly, 1 = duzy, 2 = ukryty
     std::optional<unsigned> rowTicks;
     std::optional<std::filesystem::path> settingsDir;   // --settings-dir=<katalog>: settings.json, playlists.json, cache
 };
@@ -267,8 +267,9 @@ int main()
     vgmplay::ui::NavInput nav;
     vgmplay::ui::PlayerScreen screen;
     screen.setDiagnosticsVisible(cl.diag);
-    screen.setScopeStrip(cl.scopeStrip == 1 ? vgmplay::ui::ScopeStrip::Large
-                         : cl.scopeStrip == 2 ? vgmplay::ui::ScopeStrip::Hidden
+    const int stripChoice = cl.scopeStrip >= 0 ? cl.scopeStrip : static_cast<int>(controller->settings().ui.scopeBar);
+    screen.setScopeStrip(stripChoice == 1 ? vgmplay::ui::ScopeStrip::Large
+                         : stripChoice == 2 ? vgmplay::ui::ScopeStrip::Hidden
                                               : vgmplay::ui::ScopeStrip::Small);
 
     bool running = true;

@@ -55,15 +55,33 @@ const playlist::Playlist* activeList(const PlayerView& v, std::size_t* index = n
 
 void PlayerScreen::applyPlaylist(const NavEvent& ev, const PlayerView& view, PlayerActions& actions)
 {
+    // Wiersze 0 i 1 mapy fokusu: przyciski (lista playlist / sterowanie); wiersz 2: lista wpisow.
+    if (pGrid_.row < 2) {
+        switch (ev.action) {
+        case Action::Left: pGrid_.moveCol(-1); break;
+        case Action::Right: pGrid_.moveCol(1); break;
+        case Action::Up: pGrid_.moveRow(-1); break;
+        case Action::Down: pGrid_.moveRow(1); break;
+        case Action::Confirm: if (!ev.repeat) activate_ = true; break;
+        default: break;
+        }
+        return;
+    }
     std::size_t ai = 0;
     const playlist::Playlist* pl = activeList(view, &ai);
-    if (!pl) return;
+    if (!pl) {
+        if (ev.action == Action::Up && !ev.repeat) pGrid_.moveRow(-1);
+        return;
+    }
     const long long n = static_cast<long long>(pl->entries.size());
     plSel_ = std::clamp<long long>(plSel_, 0, std::max<long long>(0, n - 1));
     const std::size_t sel = static_cast<std::size_t>(plSel_);
     const int page = std::max(1, plVisible_ - 1);
     switch (ev.action) {
-    case Action::Up: plSel_ = std::max<long long>(0, plSel_ - 1); break;
+    case Action::Up:
+        if (plSel_ == 0 && !ev.repeat) pGrid_.moveRow(-1);   // z gory listy do przyciskow
+        plSel_ = std::max<long long>(0, plSel_ - 1);
+        break;
     case Action::Down: plSel_ = std::min<long long>(std::max<long long>(0, n - 1), plSel_ + 1); break;
     case Action::PageUp: plSel_ = std::max<long long>(0, plSel_ - page); break;
     case Action::PageDown: plSel_ = std::min<long long>(std::max<long long>(0, n - 1), plSel_ + page); break;
@@ -75,7 +93,7 @@ void PlayerScreen::applyPlaylist(const NavEvent& ev, const PlayerView& view, Pla
         if (view.playlists->playlistCount() > 1 && !ev.repeat)
             actions.selectPlaylist((ai + 1) % view.playlists->playlistCount());
         break;
-    case Action::Accept:
+    case Action::Confirm:
         if (ev.repeat) break;
         if (n == 0) actions.requestOpenFile();
         else actions.playEntry(sel);
@@ -86,7 +104,7 @@ void PlayerScreen::applyPlaylist(const NavEvent& ev, const PlayerView& view, Pla
     case Action::ToggleSolo: // pad X
         if (n > 0 && !ev.repeat) openDialog(DlgKind::DeleteEntry, sel);
         break;
-    case Action::ResetMix: // pad Y
+    case Action::Menu: // pad Y
         if (n > 0 && !ev.repeat) openDialog(DlgKind::EntryMenu, sel);
         break;
     case Action::MoveUp:
@@ -105,6 +123,7 @@ void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, PlayerAct
     const Palette& p = palette();
     if (!beginPanel("##playlist", x, y, w, h)) { ImGui::End(); return; }
     if (clickedInside()) nav.setFocus(Panel::Playlist);
+    pGrid_.begin();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     const bool focused = nav.focus() == Panel::Playlist;
     const ImGuiIO& io = ImGui::GetIO();
@@ -139,7 +158,16 @@ void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, PlayerAct
     flow.h = btnH;
     flow.dpi = dpi;
     const bool hasLists = pl != nullptr;
-    if (flow.button("<", listCount > 1, false, tr(Str::PlPrevList))) {
+    // Przycisk panelu: mysz albo potwierdzenie padem/klawiatura na zaznaczonym elemencie mapy fokusu.
+    auto btn = [&](int r, int c, const std::string& label, bool enabled, bool active = false, const char* tip = nullptr,
+                   bool systemWindow = false) {
+        pGrid_.reg(r, c);
+        const bool ring = ringAt(pGrid_, focused, r, c);
+        if (ring && systemWindow) focusKbdOnly_ = true;   // otwiera okno systemowe: pad nie da rady
+        const bool clicked = flow.button(label, enabled, active, tip, ring);
+        return clicked || (enabled && activatedAt(pGrid_, focused, r, c));
+    };
+    if (btn(0, 0, "<", listCount > 1, false, tr(Str::PlPrevList))) {
         nav.setFocus(Panel::Playlist);
         actions.selectPlaylist((ai + listCount - 1) % listCount);
     }
@@ -149,48 +177,50 @@ void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, PlayerAct
         std::snprintf(pos, sizeof pos, "%zu/%zu ", hasLists ? ai + 1 : 0, listCount);
         flow.text(std::string(pos) + nm, w * 0.42f, col32(p.accent));
     }
-    if (flow.button(">", listCount > 1, false, tr(Str::PlNextList))) {
+    if (btn(0, 1, ">", listCount > 1, false, tr(Str::PlNextList))) {
         nav.setFocus(Panel::Playlist);
         actions.selectPlaylist((ai + 1) % listCount);
     }
-    if (flow.button("+", hasLists, false, tr(Str::PlNew))) {
+    if (btn(0, 2, "+", hasLists, false, tr(Str::PlNew))) {
         nav.setFocus(Panel::Playlist);
         char nm[96];
         std::snprintf(nm, sizeof nm, "%s %zu", tr(Str::DefaultListName), listCount + 1);
         openDialog(DlgKind::NewList, 0, nm);
     }
-    if (flow.button(tr(Str::PlRename), hasLists)) {
+    if (btn(0, 3, tr(Str::PlRename), hasLists)) {
         nav.setFocus(Panel::Playlist);
         openDialog(DlgKind::RenameList, ai, pl->name);
     }
-    if (flow.button(tr(Str::PlDelete), listCount > 1)) {
+    if (btn(0, 4, tr(Str::PlDelete), listCount > 1)) {
         nav.setFocus(Panel::Playlist);
         openDialog(DlgKind::DeleteList, ai);
     }
     flow.newline();
-    if (flow.button(tr(Str::PlShuffle), n > 1)) { nav.setFocus(Panel::Playlist); actions.shufflePlaylist(); }
+    if (btn(1, 0, tr(Str::PlShuffle), n > 1)) { nav.setFocus(Panel::Playlist); actions.shufflePlaylist(); }
     {
         using playlist::RepeatMode;
         const Str rs = view.repeat == RepeatMode::Off ? Str::PlRepeatOff
                        : view.repeat == RepeatMode::One ? Str::PlRepeatOne : Str::PlRepeatAll;
-        if (flow.button(tr(rs), true, view.repeat != RepeatMode::Off, tr(Str::PlRepeatTip))) {
+        if (btn(1, 1, tr(rs), true, view.repeat != RepeatMode::Off, tr(Str::PlRepeatTip))) {
             nav.setFocus(Panel::Playlist);
             actions.setRepeat(view.repeat == RepeatMode::Off ? RepeatMode::All
                               : view.repeat == RepeatMode::All ? RepeatMode::One : RepeatMode::Off);
         }
     }
-    if (flow.button(tr(Str::PlAddFiles), hasLists, false, tr(Str::BtnOpen))) { nav.setFocus(Panel::Playlist); actions.requestOpenFile(); }
-    if (flow.button(tr(Str::PlAddFolder), hasLists)) { nav.setFocus(Panel::Playlist); actions.requestAddFolder(); }
-    if (flow.button(tr(Str::PlImport), hasLists)) { nav.setFocus(Panel::Playlist); actions.requestImportM3u(); }
-    if (flow.button(tr(Str::PlExport), n > 0)) { nav.setFocus(Panel::Playlist); actions.requestExportM3u(); }
+    if (btn(1, 2, tr(Str::PlAddFiles), hasLists, false, tr(Str::BtnOpen), true)) { nav.setFocus(Panel::Playlist); actions.requestOpenFile(); }
+    if (btn(1, 3, tr(Str::PlAddFolder), hasLists, false, nullptr, true)) { nav.setFocus(Panel::Playlist); actions.requestAddFolder(); }
+    if (btn(1, 4, tr(Str::PlImport), hasLists, false, nullptr, true)) { nav.setFocus(Panel::Playlist); actions.requestImportM3u(); }
+    if (btn(1, 5, tr(Str::PlExport), n > 0, false, nullptr, true)) { nav.setFocus(Panel::Playlist); actions.requestExportM3u(); }
     if (view.scan.active) {
         flow.newline();
         char sb[128];
         std::snprintf(sb, sizeof sb, tr(Str::PlScanning), static_cast<unsigned long long>(view.scan.files),
                       static_cast<unsigned long long>(view.scan.dirs));
         flow.text(sb, w * 0.7f, col32(p.notice));
-        if (flow.button(tr(Str::PlCancel), true)) actions.cancelScan();
+        if (btn(1, 6, tr(Str::PlCancel), true)) actions.cancelScan();
     }
+    pGrid_.reg(2, 0);
+    const bool listActive = focused && pGrid_.row == 2;
 
     // ---- lista ----
     const float listTop = flow.bottom() + 4.0f * dpi;
@@ -203,6 +233,7 @@ void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, PlayerAct
         const char* msg = view.playlistsLoading ? tr(Str::PlLoadingLists) : tr(Str::PlEmpty);
         clippedText(dl, wp.x + 6.0f * dpi, wp.x + w - 4.0f * dpi, listTop + dpi, col32(p.textDim), msg);
         if (!pl) { plSel_ = 0; }
+        pGrid_.end();
         ImGui::End();
         return;
     }
@@ -233,9 +264,9 @@ void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, PlayerAct
         if (hover) hoverRow = static_cast<int>(i);
         const bool isSel = i == plSel_;
         const bool isCur = i == pl->cursor;
-        if (isSel) dl->AddRectFilled(a, b, col32(focused ? p.cursorCell : p.gridBar));
+        if (isSel) dl->AddRectFilled(a, b, col32(listActive ? p.cursorCell : p.gridBar));
         else if (hover) dl->AddRectFilled(a, b, col32(p.gridBeat));
-        const ImU32 tc = col32(isSel && focused ? p.cursorText : (isCur ? p.playing : p.text));
+        const ImU32 tc = col32(isSel && listActive ? p.cursorText : (isCur ? p.playing : p.text));
         const playlist::Entry& e = pl->entries[static_cast<std::size_t>(i)];
         char num[16];
         std::snprintf(num, sizeof num, "%c%lld", isCur ? '>' : ' ', i + 1);
@@ -295,6 +326,7 @@ void PlayerScreen::drawPlaylist(NavInput& nav, const PlayerView& view, PlayerAct
             }
         }
     }
+    pGrid_.end();
     ImGui::End();
 }
 

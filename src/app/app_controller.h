@@ -141,6 +141,7 @@ public:
     void applySettings(const settings::Settings& s) override;
     void downloadEntry(std::size_t index) override;
     void dismissNotice() override;
+    void refreshAudioDevices() override;   // [E3] lista urzadzen odtwarzania (blokuje do ~100 ms)
 
     // Prev w pierwszych kPrevRestartSeconds sekundach -> poprzedni wpis; pozniej poczatek utworu.
     static constexpr double kPrevRestartSeconds = 3.0;
@@ -203,6 +204,8 @@ private:
     void markSettingsDirty();
     void markPlaylistsDirty();
     void applyRuntimeSettings(const settings::Settings& old, bool initial);
+    void switchAudioDevice();                                  // [E3] ponowne otwarcie wyjscia dla settings_.audio.device
+    void syncEntryMeta(const std::filesystem::path& path);     // [E3] tytul/dlugosc do wpisow playlist (updateEntryMeta)
     void loadCursor(bool autoplay);
     void onTrackEnded();
     std::size_t addEntries(std::size_t list, std::vector<playlist::Entry> entries, bool playIfIdle,
@@ -235,6 +238,10 @@ private:
 
     // Kolejnosc deklaracji = odwrotna kolejnosc niszczenia: Engine przed AudioOut przed PcmRing.
     PcmRing pcm_;
+    audio_out::Config audioCfg_;                       // [E3] ostatnia konfiguracja otwarcia
+    std::vector<ui::AudioDeviceItem> audioDevices_;
+    bool audioDevicesLoaded_ = false;
+    bool audioFellBack_ = false;
     audio_out::AudioOut audio_{pcm_};
     std::unique_ptr<engine::Engine> engine_;
     std::thread engineThread_;

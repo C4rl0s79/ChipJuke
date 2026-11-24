@@ -276,8 +276,10 @@ void NavInput::update(std::uint64_t now)
 {
     lastNow_ = now;
     if (capState_ == CaptureState::Waiting) {
-        if (capBHeldSince_ != 0 && now - capBHeldSince_ >= kCaptureCancelHoldMs) finishCapture(CaptureState::Cancelled);
-        else if (now - capStart_ >= kCaptureTimeoutMs) finishCapture(CaptureState::TimedOut);
+        const std::uint64_t held = capBHeldSince_ != 0 && now > capBHeldSince_ ? now - capBHeldSince_ : 0;
+        const std::uint64_t used = now > capStart_ ? now - capStart_ : 0;
+        if (held >= kCaptureCancelHoldMs) finishCapture(CaptureState::Cancelled);
+        else if (used >= kCaptureTimeoutMs) finishCapture(CaptureState::TimedOut);
     }
     if (!windowFocused_) return;
     scratch_.clear();

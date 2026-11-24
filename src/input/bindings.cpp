@@ -10,24 +10,23 @@ namespace {
 // Kolejnosc = kolejnosc enum Action (static_assert pilnuje dlugosci). Nazwy sa czescia formatu pliku.
 constexpr std::array<std::string_view, static_cast<std::size_t>(Action::Count_)> kActionNames = {
     "",                  // None
-    "up", "down", "left", "right", "page_up", "page_down",
+    "up", "down", "left", "right", "pageUp", "pageDown",
     "confirm", "back", "menu",
-    "play_pause", "stop", "next_track", "prev_track", "seek_forward", "seek_back",
-    "volume_up", "volume_down", "toggle_loop",
-    "next_tab", "prev_tab", "toggle_tracker_view",
-    "toggle_mute", "toggle_solo",
-    "open_file", "quit",
-    "toggle_lang", "toggle_gd3_lang", "toggle_diag",
-    "unmute_all", "clear_solo", "reset_mix",
-    "pattern_faster", "pattern_slower",
-    "delete", "move_up", "move_down",
-    "shuffle", "toggle_settings",
-    "new_playlist", "rename_playlist", "delete_playlist",
-    "mute_channel", "solo_channel",
+    "playPause", "stop", "nextTrack", "prevTrack", "seekForward", "seekBack",
+    "volumeUp", "volumeDown", "toggleLoop",
+    "nextTab", "prevTab", "toggleTrackerView",
+    "toggleMute", "toggleSolo",
+    "openFile", "quit",
+    "toggleLang", "toggleGd3Lang", "toggleDiag",
+    "unmuteAll", "clearSolo", "resetMix",
+    "patternFaster", "patternSlower",
+    "delete", "moveUp", "moveDown",
+    "shuffle", "toggleSettings",
+    "newPlaylist", "renamePlaylist", "deletePlaylist",
+    "muteChannel", "soloChannel",
 };
 
-constexpr std::array<std::string_view, 4> kKindNames = {
-    "keyboard", "gamepad_button", "gamepad_axis_positive", "gamepad_axis_negative"};
+constexpr std::array<std::string_view, 4> kKindNames = {"key", "padButton", "padAxisPositive", "padAxisNegative"};
 
 // SDL3: SDL_Scancode (kody USB HID), SDL_GamepadButton, SDL_GamepadAxis. Zgodnosc sprawdza test (input_test).
 namespace key {
