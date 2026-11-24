@@ -8,12 +8,18 @@
 //  * blok skompresowany z nieznanym typem / za krotki / bez zgodnej tabeli (niezainicjowane dane),
 //  * zapis ROM/RAM krotszy niz naglowek (libvgm wraca bez przeskoczenia payloadu),
 //  * komenda "invalid" (libvgm konczy na niej odtwarzanie), uciety operand, loopOfs nie na granicy komendy.
+//  * DAC Stream Control (0x90..0x95): symulacja stanu strumieni wg Cmd_DACCtrl_* i emu/dac_control.c; odrzucane
+//    sa komendy, ktore w libvgm dziela przez zero (0x93 MSEC przy freq == 0, 0x93 TOEND/BYTES i 0x95 przy
+//    DataStep == 0). Komendy, ktore libvgm bezpiecznie ignoruje (strumien/uklad nieistniejacy, brak skutecznego
+//    0x90), daja ostrzezenie. Stan strumieni NIE jest resetowany przy skoku petli, wiec petla jest symulowana
+//    drugi raz (stan z konca 1. przebiegu).
 // Blok 0x00..0x7F w/za loopOfs NIE jest odrzucany: ostrzezenie BlockAfterLoop + loopDisabled
 // (libvgm w 2. petli pomija go bez przeskoczenia payloadu, wiec plik gra raz, bez petli).
 #include <algorithm>
 #include <array>
 #include <bitset>
 #include <new>
+#include <string>
 
 #include "cmdtable.hpp"
 #include "internal.hpp"
@@ -41,6 +47,19 @@ struct ComprTable {
     return cmd == 0x30 || cmd == 0x3F || (cmd >= 0xA1 && cmd <= 0xAF);
 }
 
+// Stan strumienia DAC (dac_control + DACSTRM_DEV w libvgm).
+struct DacStream {
+    bool created = false;               // 0x90 z id != 0xFF byl wykonany (wpis w _dacStrmMap)
+    bool active = false;                // skuteczne 0x90 (Running != 0xFF); do tego czasu 0x91-0x93 sa ignorowane
+    std::uint8_t cmdSize = 0;           // CmdSize z daccontrol_setup_chip
+    std::uint8_t stepSize = 0;          // StepSize z 0x91 (0 = jeszcze nie ustawiono)
+    std::uint8_t ptrBank = 0xFF;        // bank, na ktory wskazuje Data strumienia (0xFF = NULL)
+    std::uint8_t bankId = 0xFF;         // DACSTRM_DEV::bankID (ustawiane przez 0x91 takze gdy ignorowane)
+    std::uint32_t freq = 0;             // Frequency z 0x92
+    // UINT8 DataStep = CmdSize * StepSize - obciecie do 8 bitow jak w libvgm (2 * 128 == 0).
+    [[nodiscard]] std::uint8_t dataStep() const noexcept { return static_cast<std::uint8_t>(cmdSize * stepSize); }
+};
+
 class Scanner {
 public:
     Scanner(std::span<const std::uint8_t> file, const HeaderInfo& h, const Limits& l) : f_(file), h_(h), lim_(l) {}
@@ -60,6 +79,10 @@ private:
                                            std::uint64_t dblkLen, std::uint64_t& decmpLen);
     void checkChip(std::uint8_t cmd, std::uint64_t pos);
     [[nodiscard]] Result<void> addPcm(std::uint64_t pos, std::size_t bank, std::uint64_t dataLen);
+    [[nodiscard]] Result<void> dacCommand(std::uint8_t cmd, std::uint64_t pos);
+    void dacIgnored(std::uint8_t cmd, std::uint64_t pos, const char* why);
+    [[nodiscard]] bool dacTargetExists(unsigned type, unsigned inst) const noexcept;
+    [[nodiscard]] Result<void> loopPass();
 
     std::span<const std::uint8_t> f_;
     const HeaderInfo& h_;
@@ -71,8 +94,10 @@ private:
     std::bitset<48 * 2> chipWarned_;
     std::bitset<256> cmdWarned_;
     std::array<std::uint64_t, kBankCount> bankBytes_{};
-    std::bitset<kBankCount> bankPinned_;
-    std::bitset<256> streamSetup_;
+    std::array<std::uint32_t, kBankCount> bankBlocks_{};    // PCM_BANK::bankOfs.size() (takze bloki puste)
+    std::array<std::uint16_t, kBankCount> bankRefs_{};      // ile strumieni DAC trzyma wskaznik na dane banku
+    std::array<DacStream, 256> dac_{};
+    std::bitset<6> dacWarned_;
     ComprTable table_;
     std::array<std::array<std::uint64_t, 2>, kBankCount> romSize_{};
     std::uint64_t ticks_ = 0;
@@ -82,9 +107,10 @@ Result<void> Scanner::addPcm(std::uint64_t pos, std::size_t bank, std::uint64_t 
 {
     if (dataLen > lim_.maxSingleBlockBytes)
         return makeError(ErrorCode::LimitExceeded, "data block larger than per-block limit", pos);
-    if (bankPinned_.test(bank) && dataLen != 0)
+    if (bankRefs_[bank] != 0 && dataLen != 0)
         return makeError(ErrorCode::BadDataBlock,
                          "data block appended to a bank already referenced by a DAC stream (0x91)", pos);
+    ++bankBlocks_[bank];
     bankBytes_[bank] += dataLen;
     rep_.pcmBytes += dataLen;
     if (bankBytes_[bank] > 0xFFFFFFFFull || rep_.pcmBytes + rep_.romWriteBytes > lim_.maxPcmBudgetBytes)
@@ -146,7 +172,9 @@ Result<void> Scanner::dataBlock(std::uint64_t pos)
     switch (type & 0xC0) {
     case 0x00:
     case 0x40: {
-        if (h_.hasLoop() && pos >= h_.loopOffset && !rep_.loopDisabled) {
+        // Pusty blok (dblkLen == 0) nie ma payloadu do wykonania - libvgm przeskakuje sam 7-bajtowy naglowek
+        // (_filePos += 7 przed `return`), wiec nie wylacza petli.
+        if (h_.hasLoop() && pos >= h_.loopOffset && !rep_.loopDisabled && dblkLen > 0) {
             // libvgm w 2. przejsciu petli pomija taki blok bez przeskoczenia payloadu. Nie odrzucamy
             // pliku: gra raz, bez petli (loader zeruje pola petli w swojej kopii bufora).
             rep_.loopDisabled = true;
@@ -219,6 +247,107 @@ void Scanner::checkChip(std::uint8_t cmd, std::uint64_t pos)
     warn(WarningCode::ChipNotInHeader, pos, "command addresses a chip with no clock in the header (ignored by libvgm)");
 }
 
+// Czy VGMPlayer::GetDevicePtr(type, inst) zwroci urzadzenie. Uklad musi miec zegar w naglowku (instancja 1:
+// bit 30), a jego rdzen musi wystartowac; ES5506 (indeks 0x25) ma w libvgm tylko szkielet bez rdzenia.
+bool Scanner::dacTargetExists(unsigned type, unsigned inst) const noexcept
+{
+    if (type >= chipInstances_.size() || inst > 1 || type == 0x25) return false;
+    return chipInstances_[type] > inst;
+}
+
+void Scanner::dacIgnored(std::uint8_t cmd, std::uint64_t pos, const char* why)
+{
+    const std::size_t k = cmd - 0x90u;
+    if (dacWarned_.test(k)) return;
+    dacWarned_.set(k);
+    warn(WarningCode::Other, pos, std::string("DAC stream command ignored by libvgm: ") + why);
+}
+
+// Odpowiedniki Cmd_DACCtrl_* (vgmplayer_cmdhandler.cpp:871-1009) i daccontrol_* (emu/dac_control.c:405-515).
+Result<void> Scanner::dacCommand(std::uint8_t cmd, std::uint64_t pos)
+{
+    const std::uint8_t sid = *at(pos + 1);
+    DacStream& s = dac_[sid];
+
+    if (cmd == 0x90) {
+        if (sid == 0xFF) { dacIgnored(cmd, pos, "stream id 0xFF"); return {}; }
+        s.created = true;   // strumien powstaje takze wtedy, gdy ukladu docelowego nie ma
+        const std::uint8_t dest = *at(pos + 2);
+        const unsigned type = dest & 0x7Fu;
+        if (!dacTargetExists(type, dest >> 7)) {
+            dacIgnored(cmd, pos, "destination chip does not exist");
+            return {};
+        }
+        s.active = true;
+        switch (type) {
+        case 0x00: s.cmdSize = (*at(pos + 4) & 0x10u) ? 1 : 2; break;   // SN76496: bit 4 komendy (BE16: bajt 4) = glosnosc
+        case 0x11: case 0x1F: case 0x2B: case 0x2E: s.cmdSize = 2; break;   // PWM, QSound, K005289, BSMT2000
+        default: s.cmdSize = 1; break;
+        }
+        return {};
+    }
+    if (!s.created) { dacIgnored(cmd, pos, "stream was never set up"); return {}; }
+
+    switch (cmd) {
+    case 0x91: {
+        const std::uint8_t bank = *at(pos + 2);
+        s.bankId = bank;                       // libvgm zapisuje bankID zanim sprawdzi zakres
+        if (bank >= kBankCount) { dacIgnored(cmd, pos, "bank id out of range"); return {}; }
+        if (!s.active) { dacIgnored(cmd, pos, "stream not set up (daccontrol_set_data skipped)"); return {}; }
+        // Wskaznik na dane banku (NULL przy pustym banku). Pozniejszy blok PCM w tym banku zrobilby resize.
+        if (s.ptrBank != 0xFF) --bankRefs_[s.ptrBank];
+        s.ptrBank = bankBytes_[bank] != 0 ? static_cast<std::uint8_t>(bank) : std::uint8_t{0xFF};
+        if (s.ptrBank != 0xFF) ++bankRefs_[bank];
+        s.stepSize = *at(pos + 3) ? *at(pos + 3) : std::uint8_t{1};
+        return {};
+    }
+    case 0x92:
+        if (!s.active) { dacIgnored(cmd, pos, "stream not set up"); return {}; }
+        s.freq = rd32(at(pos + 2));
+        return {};
+    case 0x93: {
+        if (!s.active) { dacIgnored(cmd, pos, "stream not set up"); return {}; }
+        const std::uint8_t mode = *at(pos + 6) & 0x0Fu;
+        if (mode == 0x02 && s.freq == 0)       // DCTRL_LMODE_MSEC: 1000 * Length / Frequency
+            return makeError(ErrorCode::BadCommandStream, "DAC stream play by time (0x93) with zero frequency", pos);
+        if ((mode == 0x03 || mode == 0x0F) && s.dataStep() == 0)   // TOEND / BYTES: ... / DataStep
+            return makeError(ErrorCode::BadCommandStream, "DAC stream play (0x93) with zero data step", pos);
+        return {};
+    }
+    case 0x95: {
+        if (s.bankId >= kBankCount) { dacIgnored(cmd, pos, "no data bank selected"); return {}; }
+        if (rd16(at(pos + 2)) >= bankBlocks_[s.bankId]) { dacIgnored(cmd, pos, "sound id beyond the bank"); return {}; }
+        if (!s.active) { dacIgnored(cmd, pos, "stream not set up"); return {}; }
+        if (s.dataStep() == 0)                 // tryb BYTES: Length / DataStep
+            return makeError(ErrorCode::BadCommandStream, "DAC stream play block (0x95) with zero data step", pos);
+        return {};
+    }
+    default:   // 0x94 (stop) - bez skutkow dla pre-skanu
+        return {};
+    }
+}
+
+// Drugi przebieg petli: libvgm nie resetuje strumieni DAC przy skoku do loopOfs (Cmd_EndOfData zmienia tylko
+// _filePos), wiec komendy petli widza stan z konca poprzedniego przebiegu. Stan jest monotoniczny (skuteczne
+// 0x90 sie nie cofa, pozostale pola to stale z komend), wiec 2. przebieg rowna sie kolejnym.
+// Bloki 0x67 sa pomijane (libvgm ignoruje je w _curLoop > 0; blok w petli wylaczylby petle).
+Result<void> Scanner::loopPass()
+{
+    std::uint64_t pos = h_.loopOffset;
+    while (pos < end_) {
+        const std::uint8_t cmd = *at(pos);
+        const detail::CmdInfo& ci = kCmdTable[cmd];
+        if (ci.kind == 'E') break;
+        if (ci.kind == 'B') { pos += 7 + (rd32(at(pos + 3)) & 0x7FFFFFFFu); continue; }
+        if (ci.kind == 'I') break;   // nieosiagalne: 1. przebieg juz odrzucil
+        if (cmd >= 0x90 && cmd <= 0x95) {
+            if (auto r = dacCommand(cmd, pos); !r) return r;
+        }
+        pos += ci.len;
+    }
+    return {};
+}
+
 Result<StreamReport> Scanner::run()
 {
     if (f_.size() != h_.fileSize)
@@ -279,13 +408,8 @@ Result<StreamReport> Scanner::run()
         else if (cmd == 0x63) delay = 882;
         else if (cmd >= 0x70 && cmd <= 0x7F) delay = (cmd & 0x0Fu) + 1u;
         else if (cmd >= 0x80 && cmd <= 0x8F) delay = cmd & 0x0Fu;
-        else if (cmd == 0x90) {
-            if (*at(pos + 1) != 0xFF) streamSetup_.set(*at(pos + 1));
-        } else if (cmd == 0x91) {
-            const std::uint8_t stream = *at(pos + 1);
-            const std::uint8_t bank = *at(pos + 2);
-            // libvgm: tylko zainicjowany strumien i bank < 0x40; wskaznik NULL przy pustym banku jest bezpieczny.
-            if (streamSetup_.test(stream) && bank < kBankCount && bankBytes_[bank] != 0) bankPinned_.set(bank);
+        else if (cmd >= 0x90 && cmd <= 0x95) {
+            if (auto r = dacCommand(cmd, pos); !r) return r.error();
         }
         ticks_ += delay;
         if (ticks_ > lim_.maxTotalSamples)
@@ -296,6 +420,9 @@ Result<StreamReport> Scanner::run()
 
     if (loopPending)
         return makeError(ErrorCode::BadHeader, "loop offset lies beyond the end-of-data command", h_.loopOffset);
+    if (h_.hasLoop() && !rep_.loopDisabled && rep_.hasEndCommand) {
+        if (auto r = loopPass(); !r) return r.error();
+    }
 
     rep_.totalSamples = ticks_;
     if (!rep_.hasEndCommand)

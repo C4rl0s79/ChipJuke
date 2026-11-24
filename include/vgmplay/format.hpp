@@ -34,7 +34,15 @@ struct Limits {
     std::uint32_t maxTagFieldBytes     = 4096;         // pole GD3 (UTF-8, po konwersji)
     std::uint8_t  maxInstancesPerChip  = 2;            // libvgm: max 2 instancje typu
     std::uint64_t maxTotalSamples      = 44100ull * 60 * 60 * 24; // sanity: 24 h (ticki 44100)
-    std::uint32_t maxDecompressRatio   = 512;          // gzip: wyjscie/wejscie (stosowane powyzej 1 MiB wyjscia)
+    std::uint32_t maxDecompressRatio   = 2000;         // gzip: wyjscie/wejscie (stosowane powyzej 1 MiB wyjscia);
+                                                       // deflate daje teoretycznie maks. ~1032:1 (bloki zer), wiec
+                                                       // 2000 nie odrzuca zadnego poprawnego pliku; realna ochrone
+                                                       // przed bomba daje twardy limit maxDecompressedBytes
+    // Zegary ukladow (pkt 8 ADR, H6/H7): libvgm tworzy bufor probek o dlugosci 1 s przy natywnej
+    // czestotliwosci ukladu (emu/Resampler.c:103) i abort()-uje przy braku pamieci.
+    std::uint32_t maxChipClockHz       = 400'000'000;  // zegar po przeliczeniach libvgm (np. C352 x72/div); wiekszy = odrzucenie
+    std::uint32_t maxChipSampleRate    = 20'000'000;   // natywna czestotliwosc probek jednego ukladu (zegar / dzielnik rdzenia)
+    std::uint64_t maxTotalChipSampleRate = 64'000'000; // suma po wszystkich instancjach (8 B/probke => <= ~512 MiB)
 };
 
 // Wpis ukladu z naglowka VGM.
@@ -59,6 +67,9 @@ struct HeaderInfo {
     std::vector<ChipEntry> chips;
     std::uint64_t dataOffset = 0;       // poczatek strumienia komend
     std::uint64_t dataEnd = 0;          // koniec strumienia (po korekcie eof i GD3), <= fileSize
+    std::uint64_t eofOffset = 0;        // BEZWZGLEDNY eof uzyty przez parser (0x04 + rel, albo fileSize gdy pole
+                                        // bylo nieprawidlowe); <= fileSize. Loader ustawia 0x04 w swojej kopii
+                                        // tak, by libvgm (liczacy rozmiar Z paddingiem) widzial ten sam eof.
     std::uint64_t gd3Offset = 0;        // 0 = brak
     std::uint64_t fileSize = 0;         // rozmiar surowych bajtow (bez paddingu)
     std::int8_t  volumeModifier = 0;    // surowy bajt 0x7C

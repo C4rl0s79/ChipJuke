@@ -103,6 +103,14 @@ Result<LoadedTrack> loadImpl(std::span<const std::uint8_t> input, ByteBuffer* ow
         track.header.loopOffset = 0;
         track.header.loopSamples = 0;
     }
+    // EOF dla libvgm: libvgm porownuje eofOfs z rozmiarem BUFORA Z PADDINGIEM (DataLoader_GetSize), a nasz parser
+    // z rozmiarem bez paddingu. Gdy pole 0x04 jest zerem albo wskazuje w padding (rawSize, rawSize+0x110], libvgm
+    // przyjalby dataEnd w paddingu (zera = komendy 0x00 "unknown") i jego loopOfs/GD3 rozjechalyby sie z naszym
+    // pre-skanem. Zapisujemy w kopii dokladnie ten eof, ktory uzyl parser (HeaderInfo::eofOffset).
+    if (track.header.eofOffset >= 4 && track.header.eofOffset <= rawSize) {
+        const std::uint64_t rel = track.header.eofOffset - 4;
+        for (int i = 0; i < 4; ++i) dec.bytes[0x04 + i] = static_cast<std::uint8_t>(rel >> (8 * i));
+    }
     dec.bytes.resize(rawSize + format::kParserPadding);
     track.bytes = std::make_shared<const ByteBuffer>(std::move(dec.bytes));
     track.path = path;
@@ -153,18 +161,44 @@ struct Handle {
 Result<ByteBuffer> readFile(const std::filesystem::path& path, const format::Limits& limits,
                             const CancelToken& cancel)
 {
-    Handle f;
-    f.h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
-                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-    if (f.h == INVALID_HANDLE_VALUE) {
-        const DWORD e = GetLastError();
+    constexpr DWORD kShareAll = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    auto openError = [&](DWORD e) -> Error {
         if (e == ERROR_ACCESS_DENIED) {
             const DWORD attr = GetFileAttributesW(path.c_str());
             if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY))
                 return makeError(ErrorCode::InvalidArgument, "path is a directory");
         }
         return winError(e, "cannot open file");
+    };
+
+    // Krok 1: otwarcie BEZ prawa dostepu (dwDesiredAccess = 0: tylko metadane) i sprawdzenie typu. Wlasciwe
+    // otwarcie z GENERIC_READ moze miec skutki uboczne dla urzadzen (np. polaczenie z potokiem nazwanym,
+    // otwarcie portu/tasmy), wiec zwykly plik na dysku (FILE_TYPE_DISK) musi byc potwierdzony wczesniej.
+    BY_HANDLE_FILE_INFORMATION probeInfo{};
+    {
+        Handle probe;
+        probe.h = CreateFileW(path.c_str(), 0, kShareAll, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (probe.h == INVALID_HANDLE_VALUE) {
+            const DWORD e = GetLastError();
+            // Urzadzenia konsolowe (CON, CONIN$...) nie daja sie otworzyc bez prawa dostepu: ERROR_INVALID_PARAMETER.
+            if (e == ERROR_INVALID_PARAMETER)
+                return makeError(ErrorCode::PathRejected, "not a regular file (device cannot be opened for query)");
+            return openError(e);
+        }
+        if (GetFileType(probe.h) != FILE_TYPE_DISK)
+            return makeError(ErrorCode::PathRejected, "not a regular file (device or pipe)");
+        if (!GetFileInformationByHandle(probe.h, &probeInfo))
+            return winError(GetLastError(), "cannot query file information");
+        if (probeInfo.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            return makeError(ErrorCode::InvalidArgument, "path is a directory");
     }
+
+    // Krok 2: wlasciwe otwarcie. Sciezka mogla sie zmienic miedzy krokami (TOCTOU), wiec typ sprawdzamy
+    // ponownie na nowym uchwycie i porownujemy tozsamosc pliku (wolumin + indeks) z uchwytem z kroku 1.
+    Handle f;
+    f.h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                      FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (f.h == INVALID_HANDLE_VALUE) return openError(GetLastError());
     // Tylko zwykly plik na dysku: odrzuca urzadzenia znakowe (CON, NUL, COMx) i potoki.
     if (GetFileType(f.h) != FILE_TYPE_DISK)
         return makeError(ErrorCode::PathRejected, "not a regular file (device or pipe)");
@@ -172,6 +206,9 @@ Result<ByteBuffer> readFile(const std::filesystem::path& path, const format::Lim
     if (!GetFileInformationByHandle(f.h, &info)) return winError(GetLastError(), "cannot query file information");
     if (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
         return makeError(ErrorCode::InvalidArgument, "path is a directory");
+    if (info.dwVolumeSerialNumber != probeInfo.dwVolumeSerialNumber || info.nFileIndexHigh != probeInfo.nFileIndexHigh ||
+        info.nFileIndexLow != probeInfo.nFileIndexLow)
+        return makeError(ErrorCode::PathRejected, "file changed between the type check and opening");
 
     // Rozmiar z otwartego uchwytu (bez TOCTOU), PRZED alokacja.
     const std::uint64_t size = (static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
