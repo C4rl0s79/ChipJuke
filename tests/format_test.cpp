@@ -1401,12 +1401,12 @@ TEST_CASE("GD3: znaki kierunkowe i niewidoczne Unicode sa usuwane (sanitized)")
         return g.value().trackEn;
     };
     bool san = false;
-    CHECK(field(u"a‮b​c‏d", san) == "abcd");   // RLO, ZWSP, RLM
+    CHECK(field(u"a\u202Eb\u200Bc\u200Fd", san) == "abcd");   // RLO, ZWSP, RLM
     CHECK(san);
-    CHECK(field(u"x⁦y⁩z‪w‬v‎", san) == "xyzwv");   // LRI, PDI, LRE, PDF, LRM
+    CHECK(field(u"x\u2066y\u2069z\u202Aw\u202Cv\u200E", san) == "xyzwv");   // LRI, PDI, LRE, PDF, LRM
     CHECK(san);
     // sasiednie punkty kodowe poza przedzialami pozostaja: U+200A, U+2010, U+2065, U+206A
-    CHECK(field(u" |‐|⁥|⁪", san) == "\xE2\x80\x8A|\xE2\x80\x90|\xE2\x81\xA5|\xE2\x81\xAA");
+    CHECK(field(u"\u200A|\u2010|\u2065|\u206A", san) == "\xE2\x80\x8A|\xE2\x80\x90|\xE2\x81\xA5|\xE2\x81\xAA");
     CHECK_FALSE(san);
     CHECK(field(u"zwykly tytul", san) == "zwykly tytul");
     CHECK_FALSE(san);
