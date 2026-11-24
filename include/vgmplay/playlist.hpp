@@ -55,6 +55,12 @@ public:
     [[nodiscard]] Result<void> move(std::size_t list, std::size_t first, std::size_t count, std::size_t to);
     // Deterministyczne tasowanie (std::mt19937_64 z seed); kursor podaza za biezacym wpisem.
     [[nodiscard]] Result<void> shuffle(std::size_t list, std::uint64_t seed);
+    // [dodatek E3] Aktualizuje pamiec podreczna tytulu i dlugosci WSZYSTKICH wpisow o tej sciezce
+    // (we wszystkich playlistach; porownanie sciezek jak przy deduplikacji skanu). Tytul czyszczony
+    // jak w loadJson (sterujace/kierunkowe, max 512 B), durationMs przycinane do 24 h. Zwraca liczbe
+    // zmienionych wpisow (0 = brak zmian). Nie rusza kursorow ani kolejnosci.
+    std::size_t updateEntryMeta(const std::filesystem::path& path, std::string_view title,
+                                std::uint64_t durationMs);
 
     // --- kursor ---
     [[nodiscard]] Result<void> setCursor(std::size_t list, std::int64_t index);   // -1 dozwolone

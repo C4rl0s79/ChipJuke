@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "vgmplay/core.hpp"
 #include "vgmplay/pcm_ring.hpp"
@@ -24,7 +25,22 @@ struct Config {
     std::uint32_t sampleRate = 0;
     std::uint32_t periodMs = 10;     // cel dla okresu urzadzenia
     std::uint32_t periods = 3;
+    // [dodatek E3] Urzadzenie wyjsciowe: DeviceEntry::id z listDevices(); pusty = domyslne systemowe
+    // (i podazanie za zmiana domyslnego). Nieznane id -> open() otwiera domyslne i ustawia
+    // DeviceInfo::fellBackToDefault = true (nie blad).
+    std::string deviceId;
 };
+
+// [dodatek E3] Urzadzenie odtwarzania widziane przez backend (WASAPI shared).
+struct DeviceEntry {
+    std::string id;          // stabilny miedzy uruchomieniami identyfikator (UTF-8, z ma_device_id)
+    std::string name;        // nazwa do wyswietlenia (UTF-8, oczyszczona ze znakow sterujacych)
+    bool isDefault = false;  // obecne domyslne systemowe
+};
+
+// [dodatek E3] Lista urzadzen odtwarzania. Watek: UI/app (moze trwac do ~100 ms - nie co klatke).
+// Backend Null: jedna pozycja {id "null", name "Null", isDefault true}.
+[[nodiscard]] Result<std::vector<DeviceEntry>> listDevices(Config::Backend backend = Config::Backend::Default);
 
 struct DeviceInfo {
     std::string name;
@@ -36,6 +52,8 @@ struct DeviceInfo {
     // Bufor po stronie urzadzenia (okres x liczba okresow) w ms; opoznienie calkowite =
     // to + zawartosc PcmRing (queuedFrames / sampleRate).
     double bufferMs = 0.0;
+    std::string deviceId;            // [dodatek E3] id otwartego urzadzenia (pusty = domyslne)
+    bool fellBackToDefault = false;  // [dodatek E3] zadanego deviceId nie znaleziono
 };
 
 // Zdarzenia urzadzenia zgloszone przez notyfikacje miniaudio (odczyt kasuje flagi).

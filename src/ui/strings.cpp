@@ -191,6 +191,7 @@ const char* errorCodeName(ErrorCode c)
     case ErrorCode::UnsupportedSchema: return "UnsupportedSchema";
     case ErrorCode::DecoderFailure: return "DecoderFailure";
     case ErrorCode::Internal: return "Internal";
+    case ErrorCode::CloudPlaceholder: return "CloudPlaceholder";
     }
     return "Unknown";
 }
@@ -244,6 +245,7 @@ const char* trError(ErrorCode c)
     case ErrorCode::UnsupportedSchema: return pick("Unsupported data version.", "Nieobsługiwana wersja danych.");
     case ErrorCode::DecoderFailure: return pick("The sound emulator failed.", "Emulator dźwięku zgłosił błąd.");
     case ErrorCode::Internal: return pick("Internal error.", "Błąd wewnętrzny.");
+    case ErrorCode::CloudPlaceholder: return pick("The file is in the cloud and not downloaded.", "Plik jest w chmurze i nie jest pobrany.");
     }
     return pick("Unknown error.", "Nieznany błąd.");
 }

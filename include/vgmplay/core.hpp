@@ -53,6 +53,7 @@ enum class ErrorCode : std::uint16_t {
     UnsupportedSchema,      // schemaVersion nowszy niz znany
     DecoderFailure,         // blad dekodera/emulatora (silnik)
     Internal,               // naruszenie niezmiennika; blad w kodzie
+    CloudPlaceholder,       // [dodatek E3] plik w chmurze (OneDrive itp.) bez lokalnej tresci; nie pobieramy bez zgody
 };
 
 inline constexpr std::uint64_t kNoOffset = (std::numeric_limits<std::uint64_t>::max)();

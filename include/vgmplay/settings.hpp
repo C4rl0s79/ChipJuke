@@ -31,9 +31,16 @@ inline constexpr std::uint32_t kSettingsSchemaVersion = 1;
 enum class Theme : std::uint8_t { Dark = 0, Light = 1 };
 enum class ScopeMode : std::uint8_t { Master = 0, PerDevice = 1, PerChannel = 2 };  // pierwsze wydanie: tylko Master
 enum class TrackerView : std::uint8_t { Notes = 0, Scopes = 1 };
+// [dodatek E3] Wysokosc paska oscyloskopow kanalow (F4 / pad Select). JSON: "small"|"large"|"hidden".
+enum class ScopeBar : std::uint8_t { Small = 0, Large = 1, Hidden = 2 };
+// [dodatek E3] Tryb powtarzania playlisty; wartosci jak playlist::RepeatMode (Off=0, One=1, All=2).
+// JSON: "off"|"one"|"all".
+enum class Repeat : std::uint8_t { Off = 0, One = 1, All = 2 };
 
 struct AudioSettings {
-    std::string device;                 // identyfikator urzadzenia; pusty = domyslne systemowe
+    // Identyfikator urzadzenia (audio_out::DeviceEntry::id, UTF-8); pusty = domyslne systemowe.
+    // [E3] Brak urzadzenia o tym id przy starcie -> domyslne + komunikat (ustawienie zostaje).
+    std::string device;
     std::uint32_t bufferMs = 50;        // [robocze]
     std::uint32_t sampleRate = 48000;   // 0 = czestotliwosc urzadzenia
 };
@@ -45,6 +52,7 @@ struct PlaybackSettings {
     // Decyzja uzytkownika 2026-11-23: utwory bez petli koncza sie bez wyciszania (Stop).
     NonLoopEnd nonLoopEnd = NonLoopEnd::Stop;
     std::vector<CoreChoice> cores;      // wybor rdzeni; brak = domyslne
+    Repeat repeat = Repeat::Off;        // [dodatek E3] zapamietany tryb powtarzania (F6)
 };
 
 struct UiSettings {
@@ -57,6 +65,17 @@ struct UiSettings {
     // Dlugosc wiersza wzorca w tickach VGM (44100 Hz); 2205 = 1/20 s (decyzja uzytkownika 2026-11-24).
     // Zakres po walidacji: 64 .. 44100.  [dodatek E2]
     std::uint32_t rowTicks = 2205;
+    ScopeBar scopeBar = ScopeBar::Small;   // [dodatek E3]
+    bool showButtonHints = true;           // [dodatek E3] pasek podpowiedzi przyciskow pada
+};
+
+// [dodatek E3] Biblioteka / dostep do plikow.
+struct LibrarySettings {
+    // Zapamietana zgoda na sciezki UNC (serwer/udzial) w playlistach, M3U i sesji.
+    // Efektywna wartosc = to || flaga --allow-network-paths. fromJson czyta ja PRZED walidacja
+    // session.trackPath (efektywnie: allowNetworkPaths(param) || library.allowNetworkPaths).
+    // URL i przestrzen urzadzen zawsze odrzucane.
+    bool allowNetworkPaths = false;
 };
 
 struct InputSettings {
@@ -81,6 +100,7 @@ struct Settings {
     UiSettings ui;
     InputSettings input;
     SessionSettings session;            // [dodatek E2]
+    LibrarySettings library;            // [dodatek E3]
 };
 
 // Zwraca ustawienia zwalidowane (clamp zakresow: fontScale, volume, bufferMs, repeat*).
