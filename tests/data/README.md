@@ -30,7 +30,7 @@ Dlatego testy NIE powinny porownywac hashy plikow `.vgz` - manifest zawiera `raw
 - `valid/` - 18 poprawnych plikow (wersje 1.00 .. 1.71, petla/bez, GD3/bez, pola JP, .vgz,
   dual-chip, bloki PCM zwykle i skompresowane, DAC stream 0x90-0x95, naglowek rozszerzony).
   Tag `golden` w manifescie = plik nadaje sie do testow golden audio.
-- `malformed/` - pliki uszkodzone lub graniczne, po jednym zagrozeniu na plik (H1-H6 z
+- `malformed/` (65 plikow) - pliki uszkodzone lub graniczne, po jednym zagrozeniu na plik (H1-H6 z
   `docs/research/libvgm-parser-hazards.md`, lista kontroli z ADR 0002 pkt 8). Czesc z nich to
   poprawne pliki z OSTRZEZENIEM (`expect.result == "ok"`).
 - `manifest.json` - oczekiwania (nizej).
@@ -80,3 +80,7 @@ ktorych nie da sie wywolac malym plikiem w repo (np. 64 MiB).
   nuty. Testy golden maja traktowac wynik jako regresje, nie jako wzorzec poprawnosci.
 - `stream_unknown_cmd_unskippable.vgm` uzywa komendy 0x69 przy zalozeniu, ze nie ma ona
   zdefiniowanej dlugosci.
+
+## fuzz-crashes/
+
+Reproduktory znanych awarii libvgm (poza manifestem i testami) - patrz `fuzz-crashes/README.md`.

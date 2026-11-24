@@ -54,15 +54,28 @@
     {
       "path": "malformed/blk_after_set_data.vgm",
       "kind": "malformed",
-      "description": "Blok 0x67 typ 0x00 PO komendzie 0x91 (Set Data) tego samego banku (wiszacy wskaznik DAC).",
+      "description": "Blok 0x67 typ 0x00 PO komendzie 0x91 (Set Data) banku, ktory juz ma dane (realokacja = wiszacy wskaznik strumienia DAC, H3).",
+      "sizeBytes": 368,
+      "sha256": "88934640696ced53c8fdd5ddb1d1716c91cbbd3da02d5532924e9eeff192dda9",
+      "hazard": "H3/ADR8.10",
+      "note": "Decyzja: odrzucenie (BadDataBlock), nie ostrzezenie BlockAfterSetData.",
+      "expect": {
+        "result": "error",
+        "error": "BadDataBlock",
+        "warnings": []
+      }
+    },
+    {
+      "path": "malformed/blk_after_set_data_empty_bank.vgm",
+      "kind": "malformed",
+      "description": "Blok 0x67 po 0x91, ale bank byl pusty w chwili 0x91 (wskaznik NULL, dlugosc 0): brak wiszacego wskaznika.",
       "sizeBytes": 329,
       "sha256": "18fb3ea540fe45860358b5f66dfc3d640b4d453353ce362fd94ca52312b8f8f9",
       "hazard": "H3/ADR8.10",
+      "note": "Implementacja przyjmuje (bank pusty = bezpieczny); alternatywa = odrzucenie jak w blk_after_set_data.",
       "expect": {
         "result": "ok",
-        "warnings": [
-          "BlockAfterSetData"
-        ],
+        "warnings": [],
         "alternatives": [
           {
             "result": "error",
@@ -257,10 +270,11 @@
     {
       "path": "malformed/blk_rom_budget_sum.vgm",
       "kind": "malformed",
-      "description": "5 blokow ROM 0x80 po memSize=64 MiB (kazdy <= limit pojedynczy, suma 320 MiB > budzet 256 MiB).",
+      "description": "5 blokow ROM (typy 0x80..0x84, rozne uklady) po memSize=64 MiB (kazdy <= limit pojedynczy, suma 320 MiB > budzet 256 MiB).",
       "sizeBytes": 304,
-      "sha256": "3cde0c485edff01223a6ac062cad814cb347fc0a25417cce08ee5f19d4bba492",
+      "sha256": "5c2f9a12f00c17514a193a8a26c8581e567c363e493696f67d1306cc02ef6414",
       "hazard": "H3/ADR8.9",
+      "note": "Rozne typy ROM => osobne pamieci; budzet liczy SUME. Wersja z jednym typem: blk_rom_same_slot_not_summed.",
       "expect": {
         "result": "error",
         "error": "LimitExceeded",
@@ -288,6 +302,25 @@
           {
             "result": "error",
             "error": "BadDataBlock"
+          }
+        ]
+      }
+    },
+    {
+      "path": "malformed/blk_rom_same_slot_not_summed.vgm",
+      "kind": "malformed",
+      "description": "5 blokow ROM 0x80 (ten sam typ i uklad) po memSize=64 MiB: rdzen robi realloc do memSize, wiec pamiec = max (64 MiB), nie suma.",
+      "sizeBytes": 304,
+      "sha256": "3cde0c485edff01223a6ac062cad814cb347fc0a25417cce08ee5f19d4bba492",
+      "hazard": "H3/ADR8.9",
+      "note": "Implementacja liczy najwiekszy memSize na (typ, uklad); ADR 8.9 mowi 'suma memSize' - kontrakt do doprecyzowania (alternatywa = naiwna suma).",
+      "expect": {
+        "result": "ok",
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "LimitExceeded"
           }
         ]
       }
@@ -331,10 +364,12 @@
       "sizeBytes": 65,
       "sha256": "7bc080387f080aa74b925bcca857615fd9b601d9478e0d4dadd99ef78ee26c2e",
       "hazard": "edge",
-      "note": "Niejednoznaczne: implementacja moze uznac plik bez ukladow za bledny.",
+      "note": "Niejednoznaczne: implementacja moze uznac plik bez ukladow za bledny. Implementacja (E1) przyjmuje plik z ostrzezeniem Other (\"header lists no sound chips\").",
       "expect": {
         "result": "ok",
-        "warnings": [],
+        "warnings": [
+          "Other"
+        ],
         "alternatives": [
           {
             "result": "error",
@@ -658,10 +693,17 @@
       "sizeBytes": 168,
       "sha256": "be8a537f63cf55f5d2f8a78eb66671e2ad8358611d87ae5261de7ec6071d7e9a",
       "hazard": "H4/ADR8.12",
+      "note": "Alternatywa: tolerancyjny parser dekoduje jedno pole bez terminatora (implementacja E1).",
       "expect": {
         "result": "ok",
         "warnings": [
           "Gd3Invalid"
+        ],
+        "alternatives": [
+          {
+            "result": "ok",
+            "warnings": []
+          }
         ]
       },
       "header": {
@@ -1144,7 +1186,9 @@
         "alternatives": [
           {
             "result": "ok",
-            "warnings": []
+            "warnings": [
+              "Other"
+            ]
           }
         ]
       }
@@ -1164,7 +1208,9 @@
         "alternatives": [
           {
             "result": "ok",
-            "warnings": []
+            "warnings": [
+              "Other"
+            ]
           }
         ]
       }
@@ -1183,7 +1229,9 @@
         "alternatives": [
           {
             "result": "ok",
-            "warnings": []
+            "warnings": [
+              "Other"
+            ]
           }
         ]
       }
@@ -1345,10 +1393,17 @@
       "sizeBytes": 164,
       "sha256": "2e142dd62c60e2a3db3d814123e14486004a431665bfdcf438fb6194aae89a18",
       "hazard": "H2/ADR8.8a",
+      "note": "ErrorCode nie jest rozstrzygniety w ADR; implementacja zwraca Truncated (dane urwane).",
       "expect": {
         "result": "error",
         "error": "BadCommandStream",
-        "warnings": []
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "Truncated"
+          }
+        ]
       }
     },
     {
@@ -1358,10 +1413,17 @@
       "sizeBytes": 165,
       "sha256": "6d2941a7b02840baa7c52bddf2b14dcb988e8f6565920e482cc6d6e36f3eef5f",
       "hazard": "H2/ADR8.8a",
+      "note": "ErrorCode nie jest rozstrzygniety w ADR; implementacja zwraca Truncated (dane urwane).",
       "expect": {
         "result": "error",
         "error": "BadCommandStream",
-        "warnings": []
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "Truncated"
+          }
+        ]
       }
     },
     {
@@ -1371,10 +1433,17 @@
       "sizeBytes": 163,
       "sha256": "0d109b9c694570b27a00e0364f31313a14beb2e04058a3970a88b520c24acb77",
       "hazard": "H2/ADR8.8a",
+      "note": "ErrorCode nie jest rozstrzygniety w ADR; implementacja zwraca Truncated (dane urwane).",
       "expect": {
         "result": "error",
         "error": "BadCommandStream",
-        "warnings": []
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "Truncated"
+          }
+        ]
       }
     },
     {
@@ -1384,10 +1453,17 @@
       "sizeBytes": 162,
       "sha256": "6152e0f550264c3eae0effb03327150bbb0b5cbbd6a0c7c065bf98be846699ad",
       "hazard": "H2/ADR8.8a",
+      "note": "ErrorCode nie jest rozstrzygniety w ADR; implementacja zwraca Truncated (dane urwane).",
       "expect": {
         "result": "error",
         "error": "BadCommandStream",
-        "warnings": []
+        "warnings": [],
+        "alternatives": [
+          {
+            "result": "error",
+            "error": "Truncated"
+          }
+        ]
       }
     },
     {

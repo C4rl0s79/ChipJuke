@@ -46,11 +46,10 @@
         "CMAKE_BUILD_TYPE": "RelWithDebInfo",
         "CMAKE_C_COMPILER": "clang-cl",
         "CMAKE_CXX_COMPILER": "clang-cl",
-        "CMAKE_C_FLAGS": "-fsanitize=address",
-        "CMAKE_CXX_FLAGS": "-fsanitize=address",
-        "VCPKG_TARGET_TRIPLET": "x64-windows-static-md",
-        "VCPKG_HOST_TRIPLET": "x64-windows-static-md",
-        "VGMPLAY_STATIC_CRT": "OFF",
+        "CMAKE_C_FLAGS": "/DWIN32 /D_WINDOWS -fsanitize=address",
+        "CMAKE_CXX_FLAGS": "/DWIN32 /D_WINDOWS /EHsc /D_DISABLE_STRING_ANNOTATION /D_DISABLE_VECTOR_ANNOTATION -fsanitize=address",
+        "CMAKE_TRY_COMPILE_CONFIGURATION": "Release",
+        "CMAKE_EXE_LINKER_FLAGS": "/libpath:\"$env{VGMPLAY_CLANG_RT_DIR}\" clang_rt.asan_dynamic-x86_64.lib /wholearchive:clang_rt.asan_static_runtime_thunk-x86_64.lib",
         "VGMPLAY_BUILD_FUZZ": "ON"
       }
     }
