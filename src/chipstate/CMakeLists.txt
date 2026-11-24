@@ -3,8 +3,10 @@
 add_library(vgmplay_chipstate STATIC
     chip_layout.cpp
     dec_fm.cpp
+    dec_nes.cpp
     dec_oki.cpp
     dec_opl.cpp
+    dec_pcm.cpp
     dec_psg.cpp
     pattern.cpp
 )
