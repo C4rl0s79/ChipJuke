@@ -3,6 +3,7 @@
 #include "vgmplay/engine.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <new>
 #include <string>
@@ -10,6 +11,7 @@
 
 #include <windows.h>
 
+#include "vgmplay/channel_scopes.hpp"
 #include "vgmplay/pcm_ring.hpp"
 #include "vgmplay/timeline.hpp"
 #include "vgmplay/vgm_decoder.hpp"
@@ -21,6 +23,12 @@ constexpr std::uint32_t kFadeMs = 5;            // mikro-fade po Load/Seek/Play 
 constexpr std::uint32_t kTargetBufferMs = 60;   // ile audio trzymamy w PcmRing
 constexpr std::uint32_t kMaxBlocksPerPass = 8;  // tyle blokow renderu miedzy sprawdzeniami komend
 constexpr std::uint32_t kLoopWaitMs = 2;
+// Budzet czasu na synchronizacje kopii kanalowych w jednej iteracji petli (tworzenie/przewiniecie).
+constexpr std::chrono::microseconds kScopeSyncBudget{3000};
+// Po Load/Seek/Stop/reconfigure kopie synchronizujemy od razu (zanim ruszy audio / zanim pompa wyrenderuje
+// pierwszy blok), zeby byly w fazie z masterem (ta sama sciezka "seek" w glownym dekoderze i kopiach).
+// Gdy nie zmiesci sie w tym budzecie, reszta dochodzi stopniowo w petli.
+constexpr std::chrono::microseconds kScopeSyncNowBudget{100000};
 
 template <class... Fs> struct Overloaded : Fs... { using Fs::operator()...; };
 template <class... Fs> Overloaded(Fs...) -> Overloaded<Fs...>;
@@ -92,6 +100,8 @@ struct Engine::Impl {
     std::uint32_t fadeInLeft = 0;
     std::uint32_t lastUnderruns = 0;
     std::vector<MuteMask> userMute, solo, applied;
+    ChannelScopeBank scopes;        // E1.5: kopie kanalowe (puste, gdy wylaczone)
+    bool scopesEnabled = false;
 
     // ---------------------------------------------------------------- zdarzenia / stan
     void postEvent(EngineEvent&& e) { (void)events.tryPush(std::move(e)); }
@@ -131,6 +141,7 @@ struct Engine::Impl {
 
     void closeTrack()
     {
+        scopes.reset();
         if (dec) dec->close();
         dec.reset();
         info.reset();
@@ -193,12 +204,14 @@ struct Engine::Impl {
             renderPos = dec->positionFrames();
         }
         publishPosition();
+        if (scopesEnabled) scopes.bind(track, cfg.decoder, *info, *dec);
         if (announce) postEvent(evt::TrackLoaded{info});
         return true;
     }
 
     void fail(const Error& e)
     {
+        scopes.reset();
         pcm.setActive(false);
         setState(TransportState::Failed);
         postEvent(evt::Error{e});
@@ -225,6 +238,7 @@ struct Engine::Impl {
         track = c.track;
         renderPos = 0;
         if (!openTrack(0, true)) return;
+        syncScopesNow();
         setState(c.autoplay ? TransportState::Playing : TransportState::Stopped);
         pcm.setActive(c.autoplay);
     }
@@ -263,6 +277,8 @@ struct Engine::Impl {
         auto s = dec->seek(0);
         if (!s.ok()) { fail(s.error()); return; }
         renderPos = dec->positionFrames();
+        scopes.invalidate();
+        syncScopesNow();
         publishPosition();
         setState(TransportState::Stopped);
     }
@@ -274,6 +290,8 @@ struct Engine::Impl {
         auto s = dec->seek(target);
         if (!s.ok()) { fail(s.error()); return false; }
         renderPos = dec->positionFrames();
+        scopes.invalidate();
+        syncScopesNow();
         tr.audibleFrame.store(renderPos, std::memory_order_relaxed);
         publishPosition();
         updateLoopStatus(renderPos);
@@ -300,10 +318,25 @@ struct Engine::Impl {
         dec.reset();
         if (!openTrack(pos, false)) return;
         applyAllMasks();
+        syncScopesNow();
         // Po skroceniu os czasu pozycja moze byc poza koncem - clampSeek obcial ja w openTrack.
         setState(keep == TransportState::Ended ? TransportState::Paused : keep);
         pcm.setActive(state == TransportState::Playing);
         updateLoopStatus(renderPos);
+    }
+
+    // Synchronizuje kopie kanalowe z glownym dekoderem teraz (stan po seeku jest wtedy identyczny).
+    void syncScopesNow()
+    {
+        if (dec && scopes.needsSync()) scopes.syncStep(renderPos, kScopeSyncNowBudget);
+    }
+
+    void onSetChannelScopes(bool enabled)
+    {
+        if (enabled == scopesEnabled) return;
+        scopesEnabled = enabled;
+        if (!enabled) { scopes.reset(); return; }
+        if (dec && info && track) scopes.bind(track, cfg.decoder, *info, *dec);
     }
 
     void onSetMute(const cmd::SetMute& c)
@@ -417,6 +450,8 @@ struct Engine::Impl {
             blk.epoch = epoch;
             blk.startFrame = start;
             blk.frames = n;
+            // Kopie kanalowe ZAWSZE w kroku z glownym dekoderem (takze ogon po Pause bez scope).
+            if (scopes.active()) scopes.render(n, start, sb);
             if (sb) {
                 sb->epoch = epoch;
                 sb->startFrame = start;
@@ -482,7 +517,7 @@ struct Engine::Impl {
             [&](cmd::SetEndBehavior& v) {
                 if (cfg.decoder.nonLoopEnd != v.value) { cfg.decoder.nonLoopEnd = v.value; reconfigure(); }
             },
-            [&](cmd::SetChannelScopes&) { /* E1.5: implementacja w toku (audio-specialist) */ },
+            [&](cmd::SetChannelScopes& v) { onSetChannelScopes(v.enabled); },
         }, c);
     }
 
@@ -504,6 +539,8 @@ struct Engine::Impl {
         while (!stopFlag.load(std::memory_order_acquire)) {
             while (cmds.tryPop(c)) guarded(c);
             try {
+                if (dec && scopes.needsSync() && state != TransportState::Loading && state != TransportState::Failed)
+                    scopes.syncStep(renderPos, kScopeSyncBudget);
                 pump();
             } catch (const std::bad_alloc&) {
                 fail(makeError(ErrorCode::OutOfMemory, "out of memory in render loop"));

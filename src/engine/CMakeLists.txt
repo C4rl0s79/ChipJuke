@@ -1,6 +1,7 @@
 # Modul: engine (dekoder VGM na libvgm + petla watku silnika)
 # Dopisuj zrodla i zaleznosci tylko w tym pliku.
 add_library(vgmplay_engine STATIC
+    channel_scopes.cpp
     chip_map.cpp
     engine.cpp
     vgm_decoder.cpp

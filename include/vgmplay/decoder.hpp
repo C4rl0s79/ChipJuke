@@ -89,6 +89,17 @@ public:
     virtual void fadeOut() = 0;
     // chnMute (nie 'disable' libvgm - patrz ADR pkt 4).
     virtual void setMute(DeviceId device, MuteMask mask) = 0;
+    // E1.5 (kopie emulacji dla oscyloskopow kanalow): czy maska MUTE rdzenia faktycznie rozdziela
+    // ten kanal (rdzen ma SetMuteMask, kanal < 32). Wazne dopiero po start(); false = nie wiadomo/nie.
+    [[nodiscard]] virtual bool channelIsolatable(DeviceId /*device*/, std::uint16_t /*channel*/) const
+    {
+        return false;
+    }
+    // E1.5: "zamrozenie" urzadzenia - Render go nie emuluje (zapisy rejestrow nadal przyjmuje), wiec
+    // jego wyjscie jest zerem i nie kosztuje CPU. Tylko dla kopii kanalowych (maska zamrozenia nie
+    // jest czescia MuteMask, bo zamrozony chip traci stan - nie uzywac na glownym dekoderze).
+    // start() zeruje zamrozenia razem z maskami.
+    virtual void setDeviceFrozen(DeviceId /*device*/, bool /*frozen*/) {}
     // Pozycja RENDEROWANA (nie slyszana).
     [[nodiscard]] virtual SampleTime positionFrames() const = 0;
     [[nodiscard]] virtual const ChipStateSnapshot* chipState() const = 0;  // nullptr = brak

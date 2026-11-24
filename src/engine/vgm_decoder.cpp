@@ -60,6 +60,8 @@ struct DevRef {
     std::uint8_t instance = 0;
     std::uint16_t mainChannels = 0;
     std::uint16_t linkedChannels = 0;
+    MuteMask mask{};            // ostatnio ustawiona maska (do ponownego zastosowania po zmianie zamrozenia)
+    bool frozen = false;        // E1.5: Render pomija emulacje (muteOpts.disable) - tylko kopie kanalowe
 };
 
 class VgmDecoder final : public IDecoder {
@@ -95,7 +97,7 @@ public:
                                  "some chip cores failed to start: " + log_.tail());
             }
             // Maski mute zawsze od zera (opcje urzadzen libvgm zyja dluzej niz utwor).
-            for (std::size_t i = 0; i < devs_.size(); ++i) applyMute(i, MuteMask{});
+            for (std::size_t i = 0; i < devs_.size(); ++i) { devs_[i].frozen = false; applyMute(i, MuteMask{}); }
             // Dummy-render: poczatkowe bloki danych (0x67) ladowane tu, nie w czasie rzeczywistym.
             (void)pa_->Render(0, nullptr);
             pos_ = pa_->GetCurPos(PLAYPOS_SAMPLE);
@@ -188,6 +190,25 @@ public:
         applyMute(device, mask);
     }
 
+    bool channelIsolatable(DeviceId device, std::uint16_t channel) const override
+    {
+        if (!started_ || !tap_ || device >= devs_.size() || channel >= 32) return false;
+        const DevRef& r = devs_[device];
+        const unsigned sup = tap_->muteSupport(r.devId, r.instance);
+        if (channel < r.mainChannels) return (sup & 1u) != 0;
+        if (channel < r.mainChannels + r.linkedChannels) {
+            return (sup & 2u) != 0 && channel - r.mainChannels < 32;
+        }
+        return false;
+    }
+
+    void setDeviceFrozen(DeviceId device, bool frozen) override
+    {
+        if (!pa_ || device >= devs_.size()) return;
+        devs_[device].frozen = frozen;
+        applyMute(device, devs_[device].mask);
+    }
+
     SampleTime positionFrames() const override { return pos_; }
     const ChipStateSnapshot* chipState() const override { return nullptr; }
 
@@ -239,8 +260,11 @@ private:
 
     void applyMute(std::size_t idx, const MuteMask& m)
     {
+        devs_[idx].mask = m;
         PLR_MUTE_OPTS mo{};
-        mo.disable = 0;                    // chnMute, nie "disable" (zamrazanie emulacji) - ADR pkt 4a
+        // chnMute, nie "disable" (zamrazanie emulacji) - ADR pkt 4a; "disable" (bity 0/1 = glowny/polaczony)
+        // tylko na zadanie dla kopii kanalowych (setDeviceFrozen, E1.5).
+        mo.disable = devs_[idx].frozen ? 0x03 : 0x00;
         mo.chnMute[0] = m.main;
         mo.chnMute[1] = m.linked;
         (void)tap_->SetDeviceMuting(PLR_DEV_ID(devs_[idx].devId, devs_[idx].instance), mo);
