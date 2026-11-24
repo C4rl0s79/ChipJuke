@@ -30,7 +30,7 @@ struct ScanOptions {
     std::uint32_t maxDepth = 32;          // 0 = tylko root
     std::uint32_t maxFiles = 100000;      // limit wynikow
     // Rozszerzenia (male litery, z kropka); porownanie bez rozrozniania wielkosci.
-    std::vector<std::string> extensions{".vgm", ".vgz"};
+    std::vector<std::string> extensions{".vgm", ".vgz", ".vgm.gz"};
 };
 
 struct FoundFile {

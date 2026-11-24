@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
 #include <cwctype>
 #include <string_view>
 #include <system_error>
@@ -15,6 +17,9 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <winioctl.h>
+
+#include "fs_util.hpp"   // wewnetrzny naglowek modulu settings: isReservedDeviceName, finalPathOf
 #endif
 
 namespace vgmplay::ui {
@@ -223,13 +228,10 @@ std::string sanitizeFileName(const std::string& name)
     };
     trim();
     if (out.empty()) return "playlist";
-    const std::string stem = lowerAscii(out.substr(0, out.find('.')));
-    static const char* const kReserved[] = {"con", "prn", "aux", "nul"};
-    bool reserved = false;
-    for (const char* r : kReserved) reserved = reserved || stem == r;
-    if (stem.size() == 4 && (stem.compare(0, 3, "com") == 0 || stem.compare(0, 3, "lpt") == 0) && stem[3] >= '0' && stem[3] <= '9')
-        reserved = true;
-    if (reserved) out.insert(0, "_");
+    // Nazwy urzadzen (CON, NUL, COM0-9, LPT0-9, COM/LPT z indeksem gornym, CONIN$, CONOUT$; takze z rozszerzeniem
+    // i spacjami przed kropka) - jedna wspolna definicja z fsutil.
+    const auto wide = fsutil::utf8ToWide(out, false);
+    if (wide && fsutil::isReservedDeviceName(*wide)) out.insert(0, "_");
     return out;
 }
 
@@ -255,7 +257,128 @@ std::uint32_t logicalDriveMask()
 #endif
 }
 
-std::vector<BrowserEntry> driveEntries(std::uint32_t mask)
+namespace {
+
+DriveKind systemDriveKind(wchar_t letter)
+{
+#ifdef _WIN32
+    const wchar_t root[4] = {letter, L':', L'\\', L'\0'};
+    switch (GetDriveTypeW(root)) {
+    case DRIVE_FIXED: return DriveKind::Fixed;
+    case DRIVE_REMOVABLE: return DriveKind::Removable;
+    case DRIVE_REMOTE: return DriveKind::Network;
+    case DRIVE_CDROM: return DriveKind::Optical;
+    default: break;
+    }
+#else
+    (void)letter;
+#endif
+    return DriveKind::Unknown;
+}
+
+bool isRemoteDriveLetter(wchar_t letter) { return systemDriveKind(letter) == DriveKind::Network; }
+
+bool hasDriveLetter(const std::wstring& w) { return w.size() >= 2 && w[1] == L':' && std::iswalpha(w[0]); }
+
+bool startsWithNoCase(const std::wstring& s, const wchar_t* prefix)
+{
+    const std::wstring pre = prefix;
+    if (s.size() < pre.size()) return false;
+    for (std::size_t i = 0; i < pre.size(); ++i)
+        if (std::towlower(s[i]) != std::towlower(pre[i])) return false;
+    return true;
+}
+
+} // namespace
+
+bool isNetworkLinkTarget(const std::wstring& target)
+{
+    std::wstring t = target;
+    for (wchar_t& c : t)
+        if (c == L'/') c = L'\\';
+    if (startsWithNoCase(t, LR"(\??\UNC\)") || startsWithNoCase(t, LR"(\\?\UNC\)")) return true;
+    if (startsWithNoCase(t, LR"(\\.\)")) return true;   // przestrzen urzadzen: traktujemy jak zablokowana
+    if (startsWithNoCase(t, LR"(\??\)") || startsWithNoCase(t, LR"(\\?\)")) t.erase(0, 4);
+    else if (t.size() >= 2 && t[0] == L'\\' && t[1] == L'\\') return true;   // \\serwer\udzial
+    return hasDriveLetter(t) && isRemoteDriveLetter(static_cast<wchar_t>(std::towupper(t[0])));
+}
+
+#ifdef _WIN32
+namespace {
+
+// Czyta SUROWY cel dowiazania symbolicznego / junction (nazwa zastepcza z reparse point), BEZ podazania za nim
+// (FILE_FLAG_OPEN_REPARSE_POINT otwiera sam znacznik, nie cel; nie ma kontaktu z siecia). std::filesystem::read_symlink
+// obcina "\??\" i dla UNC zostawialoby "UNC\srv\sh", dlatego parsujemy bufor sami.
+bool readReparseTarget(const fs::path& link, std::wstring& target)
+{
+    HANDLE h = CreateFileW(link.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                           OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    alignas(8) unsigned char buf[16 * 1024];
+    DWORD got = 0;
+    const BOOL ok = DeviceIoControl(h, FSCTL_GET_REPARSE_POINT, nullptr, 0, buf, sizeof buf, &got, nullptr);
+    CloseHandle(h);
+    if (!ok || got < 8) return false;
+    std::uint32_t tag = 0;
+    std::memcpy(&tag, buf, 4);
+    std::uint16_t dataLen = 0;
+    std::memcpy(&dataLen, buf + 4, 2);
+    if (8u + dataLen > got) return false;
+    const unsigned char* d = buf + 8;   // za naglowkiem (tag, dlugosc, zarezerwowane)
+    std::size_t pathOff = 0;
+    if (tag == IO_REPARSE_TAG_SYMLINK) pathOff = 12;           // 4 x USHORT + ULONG Flags
+    else if (tag == IO_REPARSE_TAG_MOUNT_POINT) pathOff = 8;   // 4 x USHORT
+    else return false;
+    if (dataLen < pathOff) return false;
+    std::uint16_t subOff = 0, subLen = 0;
+    std::memcpy(&subOff, d, 2);
+    std::memcpy(&subLen, d + 2, 2);
+    if (pathOff + static_cast<std::size_t>(subOff) + subLen > dataLen || (subLen & 1u) != 0) return false;
+    target.assign(reinterpret_cast<const wchar_t*>(d + pathOff + subOff), subLen / 2u);
+    return true;
+}
+
+} // namespace
+#endif
+
+bool linkPointsToNetwork(const fs::path& p)
+{
+#ifdef _WIN32
+    fs::path cur = p;
+    for (int hop = 0; hop < 8; ++hop) {
+        const DWORD a = GetFileAttributesW(cur.c_str());   // bez podazania za ostatnim skladnikiem
+        if (a == INVALID_FILE_ATTRIBUTES || (a & FILE_ATTRIBUTE_REPARSE_POINT) == 0) return false;
+        std::wstring w;
+        if (!readReparseTarget(cur, w) || w.empty()) return false;
+        if (isNetworkLinkTarget(w)) return true;
+        if (startsWithNoCase(w, LR"(\??\)") || startsWithNoCase(w, LR"(\\?\)")) w.erase(0, 4);
+        fs::path next(w);
+        if (next.is_relative()) next = cur.parent_path() / next;
+        cur = next.lexically_normal();
+    }
+#else
+    (void)p;
+#endif
+    return false;
+}
+
+bool isNetworkRedirected(const fs::path& dir)
+{
+#ifdef _WIN32
+    const std::wstring w = dir.wstring();
+    if (hasDriveLetter(w) && isRemoteDriveLetter(static_cast<wchar_t>(std::towupper(w[0])))) return true;
+    if (linkPointsToNetwork(dir)) return true;
+    // Dowiazanie w srodku sciezki (C:\a\link\b): rozwiazanie przez uchwyt lokalnego katalogu.
+    fs::path fin;
+    DWORD err = 0;
+    if (fsutil::finalPathOf(dir, fin, err) && isNetworkLinkTarget(fin.wstring())) return true;
+#else
+    (void)dir;
+#endif
+    return false;
+}
+
+std::vector<BrowserEntry> driveEntries(std::uint32_t mask, bool allowNetwork, DriveKind (*kindOf)(wchar_t))
 {
     std::vector<BrowserEntry> out;
     for (int i = 0; i < 26; ++i) {
@@ -265,15 +388,9 @@ std::vector<BrowserEntry> driveEntries(std::uint32_t mask)
         const char letter = static_cast<char>('A' + i);
         e.name = std::string(1, letter) + ":\\";
         e.path = fs::path(std::wstring(1, static_cast<wchar_t>(letter)) + L":\\");
-#ifdef _WIN32
-        switch (GetDriveTypeW(e.path.c_str())) {
-        case DRIVE_FIXED: e.drive = DriveKind::Fixed; break;
-        case DRIVE_REMOVABLE: e.drive = DriveKind::Removable; break;
-        case DRIVE_REMOTE: e.drive = DriveKind::Network; break;
-        case DRIVE_CDROM: e.drive = DriveKind::Optical; break;
-        default: break;
-        }
-#endif
+        e.drive = (kindOf ? kindOf : systemDriveKind)(static_cast<wchar_t>(letter));
+        // Dysk zmapowany na udzial sieciowy (net use) omija klasyfikacje UNC po tekscie sciezki: blokujemy go jak UNC.
+        e.blocked = !allowNetwork && e.drive == DriveKind::Network;
         out.push_back(std::move(e));
     }
     return out;
@@ -292,7 +409,7 @@ std::vector<BrowserEntry> rootEntries(const std::vector<std::string>& recent, bo
         out.push_back(std::move(e));
         if (out.size() >= kMaxRecentFolders) break;
     }
-    std::vector<BrowserEntry> drives = driveEntries(driveMask);
+    std::vector<BrowserEntry> drives = driveEntries(driveMask, allowNetwork);
     out.insert(out.end(), std::make_move_iterator(drives.begin()), std::make_move_iterator(drives.end()));
     return out;
 }
@@ -307,16 +424,27 @@ Listing listDirectory(const fs::path& dir, const ListOptions& opt, const std::at
         out.error = "path not allowed";
         return out;
     }
+    // Dysk zmapowany na siec albo dowiazanie do UNC: bez zgody nie wchodzimy (nie dotykamy serwera).
+    if (!opt.allowNetwork && isNetworkRedirected(dir)) {
+        out.blocked = true;
+        out.error = "path not allowed";
+        return out;
+    }
     BrowserEntry parent;
     parent.kind = EntryKind::Parent;
     parent.name = "..";
     parent.path = parentOf(dir);
     out.entries.push_back(std::move(parent));
 
+    // Zapowiedz nazwy eksportu: wolna nazwa wybierana tu (watek roboczy), nie w UI.
+    const auto previewExport = [&] {
+        if (!opt.exportStem.empty()) out.exportTarget = uniqueFilePath(dir, opt.exportStem, ".m3u8");
+    };
     std::error_code ec;
     fs::directory_iterator it(dir, fs::directory_options::skip_permission_denied, ec);
     if (ec) {
         out.error = ec.message();
+        previewExport();
         return out;
     }
     const auto t0 = Clock::now();
@@ -339,15 +467,28 @@ Listing listDirectory(const fs::path& dir, const ListOptions& opt, const std::at
         const fs::directory_entry& de = *it;
         std::error_code e2;
         const fs::path name = de.path().filename();
-        const bool isDir = de.is_directory(e2);
-        const bool dirOk = !e2;
+        const fs::file_type lt = de.symlink_status(e2).type();
+        const bool isLink = !e2 && (lt == fs::file_type::symlink || lt == fs::file_type::junction);
         e2.clear();
+        bool isDir = false, dirOk = true, netLink = false;
+        if (isLink && !opt.allowNetwork) {
+            // Bez zgody na siec NIE podazamy za dowiazaniem (is_directory by otworzylo cel, czyli polaczylo z serwerem):
+            // typ z atrybutow samego dowiazania, a cel UNC/mapowany oznaczamy jako zablokowany.
+            netLink = linkPointsToNetwork(de.path());
+            const std::uint32_t a = fileAttributes(de.path());
+            isDir = (a & 0x10u) != 0;   // FILE_ATTRIBUTE_DIRECTORY
+            dirOk = a != 0;
+        } else {
+            isDir = de.is_directory(e2);
+            dirOk = !e2;
+            e2.clear();
+        }
         if (dirOk && isDir) {
             BrowserEntry e;
             e.name = toUtf8(name);
             if (!skippedSystemName(e.name)) {
-                const fs::file_type t = de.symlink_status(e2).type();
-                e.link = !e2 && (t == fs::file_type::symlink || t == fs::file_type::junction);
+                e.link = isLink;
+                e.blocked = netLink;
                 e.kind = EntryKind::Dir;
                 e.path = de.path();
                 if (dirs.size() + files.size() >= opt.maxEntries) {
@@ -356,6 +497,8 @@ Listing listDirectory(const fs::path& dir, const ListOptions& opt, const std::at
                 }
                 dirs.push_back(std::move(e));
             }
+        } else if (netLink) {
+            // plik-dowiazanie do zasobu sieciowego bez zgody: pomijamy (nie otwieramy celu)
         } else if (listsFiles(opt.mode) && matchesMode(name, opt.mode)) {
             const bool regular = de.is_regular_file(e2);
             if (!e2 && regular) {
@@ -387,24 +530,70 @@ Listing listDirectory(const fs::path& dir, const ListOptions& opt, const std::at
     std::sort(files.begin(), files.end(), byName);
     out.entries.insert(out.entries.end(), std::make_move_iterator(dirs.begin()), std::make_move_iterator(dirs.end()));
     out.entries.insert(out.entries.end(), std::make_move_iterator(files.begin()), std::make_move_iterator(files.end()));
+    previewExport();
     return out;
 }
 
 // ---------------------------------------------------------------- DirectoryLister
 
-void DirectoryLister::request(const fs::path& dir, const ListOptions& options)
+namespace {
+
+std::atomic<int> g_activeListers{0};
+std::atomic<int> g_maxListers{DirectoryLister::kMaxListerThreads};
+
+bool tryAcquireListerSlot()
 {
-    cancel();
-    auto s = std::make_shared<Shared>();
-    cur_ = s;
+    int cur = g_activeListers.load();
+    while (cur < g_maxListers.load()) {
+        if (g_activeListers.compare_exchange_weak(cur, cur + 1)) return true;
+    }
+    return false;
+}
+
+void releaseListerSlot() { g_activeListers.fetch_sub(1); }
+
+} // namespace
+
+DirectoryLister::Shared::~Shared()
+{
+#ifdef _WIN32
+    if (thread) CloseHandle(static_cast<HANDLE>(thread));
+#endif
+}
+
+void DirectoryLister::setMaxThreadsForTest(int n) { g_maxListers.store(n < 0 ? kMaxListerThreads : n); }
+int DirectoryLister::activeThreads() { return g_activeListers.load(); }
+
+void DirectoryLister::launch(const std::shared_ptr<Shared>& s, const fs::path& dir, const ListOptions& options)
+{
+    // Wywolanie ma juz zajete miejsce (tryAcquireListerSlot); watek je zwalnia po zakonczeniu listowania.
     try {
         std::thread([s, dir, options] {
-            Listing l = listDirectory(dir, options, &s->cancel);
+#ifdef _WIN32
+            {   // uchwyt tego watku dla CancelSynchronousIo z cancel()
+                HANDLE h = nullptr;
+                if (DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &h, 0, FALSE,
+                                    DUPLICATE_SAME_ACCESS)) {
+                    std::lock_guard lock(s->mutex);
+                    s->thread = h;
+                }
+            }
+#endif
+            Listing l;
+            try {
+                l = listDirectory(dir, options, &s->cancel);
+            } catch (...) {
+                l = Listing{};
+                l.dir = dir;
+                l.error = "listing failed";
+            }
+            releaseListerSlot();
             std::lock_guard lock(s->mutex);
             s->result = std::move(l);
             s->done = true;
         }).detach();
     } catch (const std::system_error&) {
+        releaseListerSlot();
         Listing l;
         l.dir = dir;
         l.error = "cannot start listing thread";
@@ -414,10 +603,27 @@ void DirectoryLister::request(const fs::path& dir, const ListOptions& options)
     }
 }
 
+void DirectoryLister::request(const fs::path& dir, const ListOptions& options)
+{
+    cancel();
+    auto s = std::make_shared<Shared>();
+    cur_ = s;
+    if (tryAcquireListerSlot()) launch(s, dir, options);
+    else pending_ = Pending{dir, options};   // "zajety": ruszy w poll(), gdy zwolni sie miejsce
+}
+
 void DirectoryLister::cancel()
 {
-    if (cur_) cur_->cancel.store(true);
+    if (cur_) {
+        cur_->cancel.store(true);
+#ifdef _WIN32
+        // Zawieszone I/O (martwy dysk, wolny udzial) konczy sie bledem zamiast blokowac watek i jego miejsce w limicie.
+        std::lock_guard lock(cur_->mutex);
+        if (cur_->thread && !cur_->done) CancelSynchronousIo(static_cast<HANDLE>(cur_->thread));
+#endif
+    }
     cur_.reset();
+    pending_.reset();
 }
 
 bool DirectoryLister::busy() const
@@ -430,6 +636,12 @@ bool DirectoryLister::busy() const
 std::optional<Listing> DirectoryLister::poll()
 {
     if (!cur_) return std::nullopt;
+    if (pending_) {
+        if (!tryAcquireListerSlot()) return std::nullopt;
+        const Pending p = std::move(*pending_);
+        pending_.reset();
+        launch(cur_, p.dir, p.options);
+    }
     std::lock_guard lock(cur_->mutex);
     if (!cur_->done || !cur_->result) return std::nullopt;
     std::optional<Listing> r = std::move(cur_->result);
@@ -514,6 +726,7 @@ void FileBrowser::navigate(const fs::path& dir)
     o.allowNetwork = allowNetwork_;
     o.maxEntries = maxEntries_;
     o.timeLimit = timeLimit_;
+    if (mode_ == BrowserMode::ExportM3u) o.exportStem = sanitizeFileName(exportName_);   // zapowiedz liczy worker
     lister_.request(dir, o);
 }
 
@@ -536,6 +749,7 @@ void FileBrowser::tick()
             return;
         }
     }
+    netBlocked_ = r->blocked;   // dysk zmapowany / dowiazanie do UNC bez zgody: ten sam komunikat co dla UNC
     entries_ = std::move(r->entries);
     status_ = std::move(*r);
     status_.entries.clear();
@@ -547,8 +761,7 @@ void FileBrowser::tick()
             if (entries_[i].kind != EntryKind::Parent && samePath(entries_[i].path, reselect_)) { sel_ = static_cast<int>(i); break; }
         reselect_.clear();
     }
-    if (mode_ == BrowserMode::ExportM3u)
-        exportTarget_ = uniqueFilePath(dir_, sanitizeFileName(exportName_), ".m3u8");
+    if (mode_ == BrowserMode::ExportM3u) exportTarget_ = status_.exportTarget;   // z watku roboczego; bez I/O w UI
     ensureVisible();
 }
 
@@ -612,6 +825,7 @@ BrowserOutcome FileBrowser::enterSelected()
     clampSelection();
     const BrowserEntry& e = entries_[static_cast<std::size_t>(sel_)];
     if (e.kind == EntryKind::Recent || e.kind == EntryKind::Drive || e.kind == EntryKind::Dir) {
+        if (e.blocked) { netBlocked_ = true; return {}; }   // dysk/dowiazanie sieciowe bez zgody
         reselect_.clear();
         navigate(e.path);
     }
@@ -627,6 +841,7 @@ BrowserOutcome FileBrowser::activate()
     case EntryKind::Recent:
     case EntryKind::Drive:
     case EntryKind::Dir:
+        if (e.blocked) { netBlocked_ = true; return {}; }   // dysk/dowiazanie sieciowe bez zgody
         reselect_.clear();
         navigate(e.path);
         return {};

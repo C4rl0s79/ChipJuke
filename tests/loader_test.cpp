@@ -423,6 +423,9 @@ TEST_CASE("loader: reproduktory awarii libvgm z tests/data/fuzz-crashes sa odrzu
         {"known_dac_start_msec_without_freq.vgm", ErrorCode::BadCommandStream},   // 0x93 MSEC, Frequency == 0
         {"known_dac_start_toend_without_data.vgm", ErrorCode::BadCommandStream},  // 0x93 TOEND, DataStep == 0
         {"known_pokey_huge_clock.vgm", ErrorCode::LimitExceeded},                 // bufor 1 s przy rate = zegar
+        {"decode_gb_dmg_clock_1_div0.vgm", ErrorCode::BadHeader},                 // zegar 1 / 32 = 0 (sameboy_apu.c:2324)
+        {"decode_mikey_clock_1_div0.vgm", ErrorCode::BadHeader},                  // mikey.c:973
+        {"decode_wswan_clock_14_div0.vgm", ErrorCode::BadHeader},                 // 14 / 128 = 0 (ws_audio.c:189)
     };
     for (const Case& c : cases) {
         const fs::path p = fs::path(VGMPLAY_TEST_DATA_DIR) / "fuzz-crashes" / c.file;

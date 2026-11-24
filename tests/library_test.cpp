@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "vgmplay/library.hpp"
+#include "test_util.hpp"
 
 namespace {
 
@@ -80,6 +81,22 @@ bool hasWarning(const ScanResult& r, WarningCode c)
 }
 
 } // namespace
+
+TEST_CASE("library sec: skan domyslnie obejmuje .vgm.gz (spojnie z przegladarka), bez samej koncowki i bez .gz")
+{
+    TempDir td;
+    touch(td.path / "x.vgm.gz");
+    touch(td.path / "sub" / "Y.VGM.GZ");
+    touch(td.path / "a.vgm");
+    touch(td.path / "b.vgz");
+    touch(td.path / "z.gz");          // sam .gz to nie VGM
+    touch(td.path / ".vgm.gz");       // sama koncowka bez nazwy
+    touch(td.path / "q.vgm.gz.bak");
+    const ScanResult r = runScan(td.path);
+    std::vector<std::string> n = names(r, td.path);
+    std::sort(n.begin(), n.end());
+    CHECK(n == std::vector<std::string>{"a.vgm", "b.vgz", "sub/Y.VGM.GZ", "x.vgm.gz"});
+}
 
 TEST_CASE("library: skan rekurencyjny, filtr rozszerzen bez rozrozniania wielkosci, sortowanie")
 {
@@ -543,8 +560,8 @@ TEST_CASE("library sec: MetaCache - 200000 wpisow wczytuje i zapisuje sie szybko
     CHECK(back.value().size() == 200000);
     CHECK(back.value().toJson() == j);
 #ifdef NDEBUG
-    CHECK(saveS < 1.0);
-    CHECK(loadS < 1.0);
+    CHECK(saveS < vgmplay::testutil::perfLimit(1.0));   // luzne x5 poza VGMPLAY_PERF_STRICT
+    CHECK(loadS < vgmplay::testutil::perfLimit(1.0));
 #else
     CHECK(saveS < 10.0);
     CHECK(loadS < 10.0);

@@ -43,6 +43,7 @@ struct BrowserEntry {
     std::filesystem::path path;      // pelna sciezka; Parent: katalog nadrzedny (pusta = lista dyskow)
     bool cloud = false;              // placeholder chmury: nie czytamy tresci
     bool link = false;               // dowiazanie / junction (nie podazamy za nim rekurencyjnie)
+    bool blocked = false;            // zablokowany: dysk zmapowany na siec albo dowiazanie do UNC, a sciezki sieciowe wylaczone
     DriveKind drive = DriveKind::Unknown;
     std::uint64_t size = 0;
 };
@@ -56,6 +57,7 @@ struct ListOptions {
     std::size_t maxEntries = kBrowserMaxEntries;
     std::size_t maxVisited = 400000;                       // ile pozycji katalogu przegladamy (takze pominiete)
     std::chrono::milliseconds timeLimit{4000};
+    std::string exportStem;                                // tryb ExportM3u: nazwa bazowa (UTF-8) do zapowiedzi wolnej nazwy
 };
 
 struct Listing {
@@ -64,7 +66,8 @@ struct Listing {
     bool truncated = false;              // osiagnieto limit wpisow lub przegladanych pozycji
     bool timedOut = false;               // przekroczono limit czasu (wynik czesciowy)
     bool cancelled = false;
-    bool blocked = false;                // sciezka sieciowa/urzadzenia bez zgody
+    bool blocked = false;                // sciezka sieciowa/urzadzenia bez zgody (takze dysk zmapowany / dowiazanie do UNC)
+    std::filesystem::path exportTarget;  // ExportM3u: zapowiedz nazwy pliku (wybrana na watku roboczym); faktyczna - IoWorker
     std::string error;                   // pusty = ok (komunikat systemowy, po angielsku)
 };
 
@@ -98,7 +101,16 @@ enum class PathClass : std::uint8_t { Local, Network, Rejected };
                                                    const std::string& extUtf8);
 
 [[nodiscard]] std::uint32_t logicalDriveMask();   // GetLogicalDrives (0 poza Windows)
-[[nodiscard]] std::vector<BrowserEntry> driveEntries(std::uint32_t mask);
+// `allowNetwork` = false: dyski sieciowe (DRIVE_REMOTE, mapowane litery) dostaja `blocked` i nie da sie do nich wejsc.
+// `kindOf` (testy): podmienia GetDriveTypeW dla litery.
+[[nodiscard]] std::vector<BrowserEntry> driveEntries(std::uint32_t mask, bool allowNetwork = true,
+                                                     DriveKind (*kindOf)(wchar_t letter) = nullptr);
+// Czy tekst celu dowiazania ("\??\UNC\srv\sh", "\\srv\sh", "Z:\x" z litera zmapowana na siec) wskazuje na siec.
+[[nodiscard]] bool isNetworkLinkTarget(const std::wstring& target);
+// Czy sam wpis jest dowiazaniem (lancuch do 8 skokow, BEZ podazania za nim) prowadzacym do sieci. Dla zwyklego pliku/katalogu false.
+[[nodiscard]] bool linkPointsToNetwork(const std::filesystem::path& p);
+// Czy katalog lezy na dysku zmapowanym na siec albo jest/zawiera dowiazanie rozwiazujace sie do UNC (watek roboczy).
+[[nodiscard]] bool isNetworkRedirected(const std::filesystem::path& dir);
 // Widok "Ten komputer": ostatnie foldery (bez UNC bez zgody) + dyski.
 [[nodiscard]] std::vector<BrowserEntry> rootEntries(const std::vector<std::string>& recent, bool allowNetwork,
                                                     std::uint32_t driveMask);
@@ -115,10 +127,18 @@ public:
     DirectoryLister(const DirectoryLister&) = delete;
     DirectoryLister& operator=(const DirectoryLister&) = delete;
 
+    // Limit rownoczesnych watkow listujacych (domyslnie kMaxListerThreads): powyzej zadanie czeka w kolejce
+    // ("zajety", queued()) i rusza w poll(), gdy zwolni sie miejsce. cancel() przerywa tez zawieszone I/O
+    // (CancelSynchronousIo), wiec zawieszony dysk/udzial nie zajmuje miejsca w nieskonczonosc.
     void request(const std::filesystem::path& dir, const ListOptions& options);
     void cancel();
-    [[nodiscard]] bool busy() const;
+    [[nodiscard]] bool busy() const;                 // trwa lub czeka na wolne miejsce
+    [[nodiscard]] bool queued() const { return pending_.has_value(); }   // czeka na wolny watek
     [[nodiscard]] std::optional<Listing> poll();   // gotowy wynik ostatniego zadania (raz)
+
+    static constexpr int kMaxListerThreads = 4;
+    static void setMaxThreadsForTest(int n);         // n < 0: przywraca domyslny
+    [[nodiscard]] static int activeThreads();        // biezaco dzialajace watki listujace (caly proces)
 
 private:
     struct Shared {
@@ -126,8 +146,19 @@ private:
         std::mutex mutex;
         std::optional<Listing> result;
         bool done = false;
+        void* thread = nullptr;   // HANDLE (duplikat) watku roboczego do CancelSynchronousIo; zamykany w ~Shared
+        Shared() = default;
+        ~Shared();
+        Shared(const Shared&) = delete;
+        Shared& operator=(const Shared&) = delete;
     };
+    struct Pending {
+        std::filesystem::path dir;
+        ListOptions options;
+    };
+    static void launch(const std::shared_ptr<Shared>& s, const std::filesystem::path& dir, const ListOptions& options);
     std::shared_ptr<Shared> cur_;
+    std::optional<Pending> pending_;
 };
 
 // ---- maszyna stanow przegladarki ----

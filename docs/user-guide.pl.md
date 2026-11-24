@@ -120,6 +120,24 @@ podpowiedzi przycisków oraz **Przypisania...** (zmiana klawiszy i przycisków p
 przycisk” przez 6 s, Esc lub przytrzymane B przez 1 s anuluje, konflikt → ostrzeżenie i zamiana, X/Del czyści,
 „Przywróć domyślne”). Ustawienia zapamiętują się między uruchomieniami.
 
+## Ścieżki sieciowe
+
+Domyślnie ścieżki sieciowe (`\\serwer\udział\...`) są wyłączone (opcja `--allow-network-paths` albo przełącznik
+w Ustawieniach). Dostęp do serwera może wysłać do niego dane logowania Windows, dlatego program nie łączy się z siecią
+bez zgody. Dotyczy to też wbudowanej przeglądarki plików:
+
+- **dyski zmapowane na udział sieciowy** (`net use Z: \\serwer\udział`) są na liście dysków wyszarzone z podpisem
+  „sieciowy - włącz ścieżki sieciowe w Ustawieniach” i nie da się do nich wejść (ani przez „ostatnie foldery”);
+- **dowiązania symboliczne i junctions**, których cel to ścieżka sieciowa, są pokazane jako zablokowane; program nie
+  otwiera ich celu (nie podąża za dowiązaniem) i nie wchodzi do takiego folderu. Wejście w dowiązanie rozwiązuje cel
+  bez kontaktu z siecią; dowiązanie do pliku w sieci jest pomijane na liście;
+- zmiana ustawienia działa od następnego otwarcia folderu, bez restartu.
+
+Ograniczenie: zapisane ścieżki (playlisty, sesja) są sprawdzane tekstowo, więc litera dysku zmapowana na sieć albo
+utworzona przez `subst` jest dla nich zwykłą ścieżką lokalną. Pliki podane z takiej litery (wiersz poleceń, przeciągnięcie
+na okno) zostaną otwarte; blokada obejmuje przeglądarkę plików. Aby całkiem wyłączyć sieć, nie mapuj udziałów
+na litery dysków używane z programem.
+
 ## Znane ograniczenia
 
 - Układy bez dekodera nut pokazują kolumnę n/a (dźwięk nie jest dotknięty).

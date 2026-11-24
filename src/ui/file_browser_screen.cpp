@@ -234,8 +234,9 @@ void PlayerScreen::drawBrowser(NavInput& nav, const PlayerView& view, PlayerActi
         const bool isSel = i == browser_.selection();
         if (isSel) dl->AddRectFilled(a, b, col32(p.cursorCell));
         else if (hover) dl->AddRectFilled(a, b, col32(p.gridBeat));
-        const ImU32 tc = col32(isSel ? p.cursorText : (e.kind == EntryKind::File ? p.text : p.accent));
         const ImU32 dim = col32(isSel ? p.cursorText : p.textDim);
+        // Zablokowany wpis (dysk/dowiazanie sieciowe bez zgody): wyszarzony.
+        const ImU32 tc = e.blocked ? dim : col32(isSel ? p.cursorText : (e.kind == EntryKind::File ? p.text : p.accent));
 
         float cx = a.x + 6.0f * dpi;
         const float cy = ry + rowH * 0.5f;
@@ -288,10 +289,11 @@ void PlayerScreen::drawBrowser(NavInput& nav, const PlayerView& view, PlayerActi
             dl->AddRectFilled(ImVec2(rx + cs0 * 0.8f, cy), ImVec2(rx + cs0 * 2.6f, cy + cs0), cc);
             rx -= 4.0f * dpi;
         }
+        if (e.blocked) tag(tr(Str::BrwNetBlockedTag), dim);
         if (e.link) tag(tr(Str::BrwLink), dim);
         if (e.kind == EntryKind::Recent) tag(tr(Str::BrwRecent), dim);
         if (e.kind == EntryKind::Drive) {
-            if (e.drive == DriveKind::Network) tag(tr(Str::BrwDriveNet), dim);
+            if (e.drive == DriveKind::Network && !e.blocked) tag(tr(Str::BrwDriveNet), dim);
             else if (e.drive == DriveKind::Removable) tag(tr(Str::BrwDriveRem), dim);
             else if (e.drive == DriveKind::Optical) tag(tr(Str::BrwDriveOpt), dim);
         }

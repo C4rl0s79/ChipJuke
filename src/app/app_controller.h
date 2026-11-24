@@ -216,7 +216,8 @@ private:
                            std::size_t* firstIndex = nullptr);
     std::optional<std::size_t> findList(const std::string& name) const;
     void addAndPlay(const std::filesystem::path& path);
-    void addPathsNow(const std::vector<std::filesystem::path>& paths);
+    void addPathsNow(const std::vector<std::filesystem::path>& paths);   // zleca rozpoznanie plik/katalog workerowi
+    void addClassifiedNow(const std::vector<ClassifiedPath>& paths);      // po rozpoznaniu (watek UI, bez dysku)
     void addFolderNow(const std::filesystem::path& folder);
     void importM3uDone(ImportDone& d);
     void queueMetaFor(const std::vector<playlist::Entry>& entries);

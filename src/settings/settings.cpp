@@ -26,6 +26,13 @@ constexpr std::size_t kMaxStringBytes = 4096;
 constexpr std::size_t kMaxDeviceIdBytes = 512;
 constexpr const char* kSettingsFileName = "settings.json";
 
+// Sciezka zapisana w pliku (ostatnie foldery, session.trackPath) musi byc bezwzgledna: "C:\x", "\\srv\sh\x".
+// Odrzuca wzgledne ("a\b", "..\x"), zalezne od biezacego katalogu ("\x") i od biezacego katalogu dysku ("C:x").
+bool isAbsoluteStoredPath(const std::string& utf8)
+{
+    return fsutil::pathFromUtf8(utf8).is_absolute();
+}
+
 // ---- nazwy enumow w pliku (trwale; wartosci liczbowe enumow NIE sa zapisywane) ----
 
 // Nazwy akcji i zrodel pochodza z modulu input (input::actionName/sourceKindName) - jedno zrodlo
@@ -221,8 +228,8 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
                         }
                         if (!item.is_string()) { c.warn("library.recentFolders entry is not a string"); continue; }
                         std::string rp = item.get<std::string>();
-                        if (rp.size() > kMaxStringBytes || fsutil::isUnsafeStoredPath(rp, allowNetworkPaths)) {
-                            c.warn("library.recentFolders entry rejected (URL, network or device path)");
+                        if (rp.size() > kMaxStringBytes || fsutil::isUnsafeStoredPath(rp, allowNetworkPaths) || !isAbsoluteStoredPath(rp)) {
+                            c.warn("library.recentFolders entry rejected (relative, URL, network or device path)");
                             continue;
                         }
                         if (std::find(s.library.recentFolders.begin(), s.library.recentFolders.end(), rp) == s.library.recentFolders.end())
@@ -331,8 +338,8 @@ Result<Settings> fromJson(std::string_view text, std::vector<Warning>* warnings,
 
         if (const json* se = getObject(c, root, "session")) {
             if (getString(c, *se, "trackPath", str)) {
-                if (str.empty() || !fsutil::isUnsafeStoredPath(str, effectiveAllowNetwork)) s.session.trackPath = str;
-                else c.warn("session.trackPath rejected (URL, network or device path)");
+                if (str.empty() || (!fsutil::isUnsafeStoredPath(str, effectiveAllowNetwork) && isAbsoluteStoredPath(str))) s.session.trackPath = str;
+                else c.warn("session.trackPath rejected (relative, URL, network or device path)");
             }
             if (getUint(c, *se, "positionMs", u)) s.session.positionMs = (std::min<std::uint64_t>)(u, 24ull * 3600 * 1000);
         }

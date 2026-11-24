@@ -7,6 +7,8 @@ add_library(vgmplay_app STATIC
 )
 add_library(vgmplay::app ALIAS vgmplay_app)
 target_include_directories(vgmplay_app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+# fs_util.hpp (zapis bez nadpisywania, UTF-8) to wewnetrzny naglowek modulu settings.
+target_include_directories(vgmplay_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../settings)
 target_link_libraries(vgmplay_app PUBLIC
     vgmplay::options
     vgmplay::ui

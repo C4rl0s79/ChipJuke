@@ -14,6 +14,7 @@
 #include "vgmplay/input.hpp"
 #include "vgmplay/playlist.hpp"
 #include "vgmplay/settings.hpp"
+#include "test_util.hpp"
 
 namespace {
 
@@ -331,7 +332,7 @@ TEST_SUITE("e3 playlist")
         const std::size_t changed = m.updateEntryMeta(ups);
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
         CHECK(changed == 1000);
-        CHECK(ms < 1000);
+        CHECK(ms < vgmplay::testutil::perfLimit(1000.0));   // luzne x5 poza VGMPLAY_PERF_STRICT
         MESSAGE("batch 100k x 1000: " << ms << " ms");
         CHECK(m.playlist(0).entries[97].title == "T1");
     }

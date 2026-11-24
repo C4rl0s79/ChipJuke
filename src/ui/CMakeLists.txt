@@ -21,3 +21,5 @@ add_library(vgmplay_ui STATIC
 add_library(vgmplay::ui ALIAS vgmplay_ui)
 target_include_directories(vgmplay_ui PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(vgmplay_ui PUBLIC vgmplay::options vgmplay::playlist vgmplay::input imgui::imgui SDL3::SDL3)
+# fs_util.hpp (isReservedDeviceName, finalPathOf) to wewnetrzny naglowek modulu settings; header-only.
+target_include_directories(vgmplay_ui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../settings)
