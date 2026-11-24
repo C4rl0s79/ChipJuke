@@ -305,8 +305,9 @@ private:
             padded.reserve(raw.size() + format::kParserPadding);
             padded.assign(raw.begin(), raw.end());
             padded.resize(raw.size() + format::kParserPadding, 0);
-            // Blok PCM w/za punktem petli: plik gra raz, bez petli (jak w loaderze; decyzja 2026-11-23).
-            if (scan.loopDisabled) std::fill_n(padded.begin() + 0x1C, 8, std::uint8_t{0});
+            // Lacki wspolne z loaderem: eofOfs widziany przez libvgm == eof parsera; blok PCM w/za punktem petli
+            // wylacza petle (plik gra raz; decyzja 2026-11-23).
+            format::applyLibvgmPatches(std::span<std::uint8_t>(padded.data(), raw.size()), vhdr, scan);
             dl_ = MemoryLoader_Init(padded.data(), static_cast<UINT32>(padded.size()));
             if (!dl_) return makeError(ErrorCode::OutOfMemory, "MemoryLoader_Init failed");
             if (DataLoader_Load(dl_) != 0)

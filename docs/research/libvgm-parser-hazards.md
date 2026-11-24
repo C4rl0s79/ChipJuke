@@ -97,3 +97,55 @@ lektury, nie zostalo odtworzone. Sciezki wzgledem `external/libvgm/`. Wnioski sl
   (`:1508-1515`), QSound=CTR (`:1575`), polaczone AY8910=EMU2149 i YMF262=AdLibEmu (`:1766-1769`). Wylaczenie
   rdzenia w CMake (Gens/ctr/adlibemu) BEZ nadpisania `emuCore` w opcjach urzadzenia oznacza `EERR_NOT_FOUND`
   (`emu/SoundEmu.c:383`, `:392`) i brak dzwieku danego ukladu (dla linkowanego: `helper.c:39-45`).
+
+## H7. Konfiguracja ukladow z bajtow naglowka (`GenerateDeviceConfig`, vgmplayer.cpp:1253-1426) - dopisane po recenzji
+Status: odczyt kodu + potwierdzenie crashu na buildzie wydaniowym (reprodukcje w `tests/data/fuzz-crashes/`).
+- C352 (`:1373-1376`): `devCfg.clock = devCfg.clock * 72 / _hdrBuffer[0xD6]` - dzielenie przez bajt z pliku bez ochrony
+  (#DE przy `LoadFile`). Obrona: `BadHeader` gdy 0xD6 == 0 (patrz ADR pkt 15).
+- Mnozenia zegarow w UINT32 z zawinieciem: MultiPCM `*224/180` (`:1321`), C352 `*72`, K054539 `*384` (`:1338`), C140/C219
+  `*576`, QSound `*15`, SCSP `*512` (wszystkie tylko dla zegarow < 1-5 MHz, wiec bez zawiniecia; zawija MultiPCM i C352).
+  Wynik 0 (np. MultiPCM 2^27, C352 2^29 przy 0xD6 = 72) daje zegar 0 w rdzeniu. Sprawdzamy zegar efektywny.
+- SN76496 (`:1278`): `shiftRegWidth` = bajt 0x2A trafia do `1 << (width - 1)` (`sn76496.c:665`, `sn76489.c:369`) i petli
+  `1 << i` (`sn76496.c:652`) - UB dla > 32 (na x86 przesuniecie mod 32, bez crasha). SegaPCM (`:1298`): `bnkshift` = 0x3C w
+  `0x1fffff >> shift` (`segapcm.c:211`) - to samo. Odrzucane (ADR pkt 15b).
+- AY8910 (`chipType`/`chipFlags`), MSM6258 (`& 3` -> indeks tablicy 4 wpisow), MSM5205 (`& 3`), ES5503 (`flags` = liczba
+  kanalow, `pow2_mask`), K054539/C140 (`flags` = typ bankowania, `switch` z domyslna galezia) - bez dzielen i indeksowania
+  poza tablica; przejrzane, bez zmian.
+- ES5506 ma w libvgm tylko szkielet (`emu/cores/es5506.c`, brak rdzenia): `SndEmu_Start2` zawodzi i uklad jest po cichu
+  pomijany (`InitDevices`, `retVal`), wiec nie istnieje jako cel DAC.
+- Instancja z zerowym zegarem: `GetChipCount` liczy po surowym polu (bit 30 -> 2), a `GenerateDeviceConfig` tworzy
+  konfiguracje takze dla zegara 0 po zamaskowaniu. Dawne "zegar 0 -> pomin i ostrzez" rozjezdzalo nasza liste ukladow z
+  libvgm; teraz `BadHeader`.
+- NIEOBSLUZONE (ryzyko resztkowe, tylko odczyt): `segapcm.c:177` czyta `rom[offset | (addr >> 8)]` bez porownania z
+  `ROMSize`; indeks moze siegnac 0x1FFFFF, a ROM ma domyslnie 0x80000 B (albo `memSize` bloku ROM). Zalezy od naglowka
+  (bnkshift/bnkmask) i od rejestrow zapisanych komendami 0xC0 - wymaga emulacji rejestrow SegaPCM w pre-skanie.
+  Podobnie `daccontrol_SendCommand` czyta `ChipData[1]` dla 2-bajtowych komend o 1 bajt za koniec banku.
+
+## H8. DAC Stream Control (0x90-0x95): dzielenie przez zero
+- `Cmd_DACCtrl_Setup` (`cmdhandler:871-915`): strumien trafia do `_dacStrmMap` ZANIM sprawdzony jest uklad docelowy;
+  `GetDevicePtr == NULL` (typ >= 48, brak zegara, rdzen nie wystartowal) konczy komende bez `daccontrol_setup_chip`.
+- `daccontrol_*` (`dac_control.c:405-515`) wracaja natychmiast, gdy `Running & 0x80` (init `0xFF`; zdejmuje je dopiero
+  skuteczne setup). Dlatego 0x91/0x92/0x93 sa ignorowane przed skutecznym 0x90, ale `bankID` (0x91) i `lastItem` sa
+  zapisywane mimo to.
+- `daccontrol_start` (`:516-560`): MSEC `1000 * Length / Frequency`, TOEND `.../ DataStep`, BYTES `Length / DataStep` -
+  `Frequency` (0 do pierwszego 0x92) i `DataStep` (UINT8 = CmdSize * StepSize; StepSize 0 do pierwszego 0x91; 2 * 128
+  zawija sie do 0) moga byc zerem. Potwierdzone: 0x93 MSEC (freq 0), TOEND, BYTES oraz 0x95 (zawsze BYTES) z DataStep 0
+  koncza proces kodem 0xC0000094; 0x93/0x95 bez skutecznego setupu lub 0x95 bez wybranego banku sa bezpieczne.
+- Stan strumieni przezywa skok petli (`Cmd_EndOfData` zmienia tylko `_filePos`; reset tylko w `VGMPlayer::Reset`), wiec
+  `0x92 freq=0` na koncu petli psuje 0x93 MSEC na jej poczatku w 2. przebiegu.
+- Pamiec: wskaznik `Data` w strumieniu ustawia wylacznie skuteczne 0x91 (`daccontrol_set_data`); pozniejszy blok PCM w tym
+  samym banku realokuje wektor (dangling, H3).
+
+## H9. Zegar bez gornej granicy i bufory resamplera; eofOfs a padding
+- `Resmpl_Init` (`Resampler.c:103`) `Resmpl_EnsureBuffers(rate)` -> `malloc(rate * 2 * sizeof(DEV_SMPL))`, `abort()` przy
+  NULL (`:26-27`). Rate = zegar / dzielnik rdzenia (tabela w `src/format/header.cpp`); najwyzsze: POKEY, K005289, MSM5205
+  w trybie slave (rate = zegar), SN76496 (zegar / 2). Zegar POKEY 0x3FFFFFFF => ~8 GiB => `abort()` (reprodukcja
+  `known_pokey_huge_clock.vgm`). Obrona: `Limits::maxChipClockHz`, `maxChipSampleRate`, `maxTotalChipSampleRate`.
+- `LoadFile` (`vgmplayer.cpp:322-327`) porownuje `eofOfs` z `DataLoader_GetSize` czyli rozmiarem Z paddingiem (>= +0x110 B).
+  Pole 0, wskazujace w padding albo za niego daje `dataEnd` w paddingu (zera = komendy 0x00 "unknown") lub rozmiar z
+  paddingiem; `loopOfs` w paddingu przechodzi test `< dataEnd`. Obrona: `applyLibvgmPatches` zapisuje w kopii eof parsera.
+- Blok skompresowany z `decmpLen == 0` i `dblkLen == 10` (sam naglowek): `return` w `cmdhandler:727` przed przeskoczeniem
+  payloadu - 10 bajtow naglowka wykonane jako komendy; bajt `bitsDec` (1..16) to komenda "invalid", wiec odtwarzanie sie
+  urywa (nie crash). Pre-skan odrzuca tylko `dblkLen > 10`; zostawione.
+- Pusty blok (`dblkLen == 0`) w/za `loopOfs`: `_filePos += 7` jest PRZED `return` w `_curLoop > 0`, wiec nie ma payloadu do
+  wykonania - nie wylacza petli.

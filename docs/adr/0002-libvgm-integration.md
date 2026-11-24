@@ -292,10 +292,20 @@ listy `cores[]`.
 
 ## 8. Bezpieczenstwo parsera: co MUSIMY zwalidowac sami
 
-Co libvgm waliduje (dobrze): `eofOfs` (poprawia do rozmiaru, `vgmplayer.cpp:319-325`), `loopOfs` w `[dataOfs,
-dataEnd)` i `loopTicks != 0` (`:340-353`), GD3 (offset, sygnatura, wersja, `eotPos`, `:439-459`), rozszerzony naglowek
-(`:382`, `:391`, `:408`, `:417`), `Cmd_PcmRamWrite` (`cmdhandler:824-833`), `daccontrol_start` (`dac_control.c:516`),
-`ParseFileForOPL4ROMRequirement` (`:1833`). Co NIE jest sprawdzane - luki H1-H6 w `docs/research/libvgm-parser-hazards.md`.
+Co libvgm waliduje: `eofOfs` (poprawia do rozmiaru, ale porownuje z rozmiarem BUFORA Z PADDINGIEM - patrz pkt 17),
+`loopOfs` w `[dataOfs, dataEnd)` i `loopTicks != 0` (`:340-353`), GD3 (offset, sygnatura, wersja, `eotPos`, `:439-459`;
+wynik zreszta ignorowany), rozszerzony naglowek (czesciowo: `:382`, `:391`, `:408`, `:417`, ale odczyt `extraHdrOfs`
+moze siegnac za plik), `Cmd_PcmRamWrite` (`cmdhandler:824-833`), `ParseFileForOPL4ROMRequirement` (`:1833`).
+**Sprostowania wczesniejszych twierdzen** (ta sekcja mowila, ze libvgm waliduje `daccontrol_start`; zrodlo tego nie potwierdza):
+* `daccontrol_start` (`emu/dac_control.c:528-534`) NIE chroni przed zerem: `1000 * Length / Frequency` (tryb MSEC),
+  `(DataLen - ...) / DataStep` (TOEND), `Length / DataStep` (BYTES) - dzielenie przez zero (#DE, SEH 0xC0000094 w buildzie
+  MSVC; sprawdzone na buildzie wydaniowym dla MSEC, TOEND, BYTES oraz 0x95). Sprawdzane jest tylko `Running & 0x80`.
+* konfiguracja ukladow (`GenerateDeviceConfig`, `vgmplayer.cpp:1253-1426`): `devCfg.clock * 72 / _hdrBuffer[0xD6]` (C352,
+  `:1374`) dzieli przez bajt z pliku bez ochrony; mnozenia zegarow (MultiPCM `*224/180`, C352 `*72`, K054539 `*384`...)
+  sa w UINT32 z zawinieciem.
+* `Resmpl_Init` (`emu/Resampler.c:103`) alokuje 1 s probek (rate * 2 * 4 B) i `abort()`-uje przy OOM; rate zalezy od
+  zegara (POKEY, K005289: rate = zegar), a zegar nie ma zadnej gornej granicy.
+Co NIE jest sprawdzane - luki H1-H9 w `docs/research/libvgm-parser-hazards.md`.
 
 **Lista kontroli wykonywanych przez nas PRZED `MemoryLoader_Init`** (modul `format`/`loader`; wszystkie funkcje
 czyste, testowalne, celem fuzzingu):
@@ -333,7 +343,31 @@ czyste, testowalne, celem fuzzingu):
     z gory przez pre-skan, aby `Resmpl_EnsureBuffers` (`abort()` przy OOM) nie wystapilo przy rozsadnych plikach.
 14. Wersje: dla `fileVer < 0x150`/`0x110` libvgm stosuje obejscia (`:355-370`); pre-skan uzywa tych samych regul
     wersji, aby dlugosc `dataOfs` byla zgodna.
-
+15. **Konfiguracja ukladow** (`format::parseVgmHeader`, odpowiedniki `GenerateDeviceConfig`): (a) C352 z `0xD6 == 0` ->
+    `BadHeader` (libvgm dzieli przez bajt; nie mamy sposobu na odgadniecie dzielnika, wiec nie "naprawiamy" bufora);
+    (b) SN76496 `0x2A > 32`, SegaPCM `0x3C > 31` -> `BadHeader` (przesuniecia o >= 32 bity to UB w rdzeniach);
+    (c) zegar PO przeliczeniach libvgm liczony w UINT32 z zawinieciem tak jak libvgm (MultiPCM, K054539, C140/C219,
+    QSound, SCSP, C352); wynik 0 -> `BadHeader`; (d) instancja ukladu z zerowym zegarem po zamaskowaniu bitow 30/31
+    -> `BadHeader` (libvgm i tak by ja uruchomil - `GetChipCount` liczy po surowym polu).
+16. **Gorne granice zegarow** (`Limits`, `LimitExceeded`): `maxChipClockHz` = 400 MHz (surowy i efektywny zegar),
+    `maxChipSampleRate` = 20 MHz (natywny rate jednej instancji = zegar / najmniejszy dzielnik rdzenia z `emu/cores`,
+    tabela `kRateDivisor` w `src/format/header.cpp`; 5x wiecej niz najszybszy realny uklad: POKEY/K005289 ~3,6 MHz),
+    `maxTotalChipSampleRate` = 64 MHz (suma po instancjach => bufory `Resampler` <= ~512 MiB). 32X PWM (stale 22020 Hz)
+    i ES5506 (rdzen jest szkieletem, nie startuje) nie licza sie do rate.
+17. **Lacki bufora dla libvgm** (`format::applyLibvgmPatches`, wspolne dla loadera i `VgmDecoder::open`): `0x04` (eofOfs)
+    := eof uzyty przez parser (`HeaderInfo::eofOffset`) - libvgm porownuje eofOfs z rozmiarem Z paddingiem, wiec pole 0
+    albo wskazujace w padding dawaloby `dataEnd` w paddingu i inne `loopOfs`/GD3 niz pre-skan; `0x1C/0x20` := 0 przy
+    `StreamReport::loopDisabled`. Obie poprawki dotycza tylko naszej kopii.
+18. **Strumienie DAC (0x90-0x95)**: pre-skan symuluje stan strumieni wg `Cmd_DACCtrl_*` i `dac_control.c`: strumien
+    powstaje przy kazdym 0x90 (id != 0xFF), ale 0x91-0x95 dzialaja dopiero po SKUTECZNYM 0x90 (uklad docelowy o typie
+    < 48 istnieje w naglowku i jego rdzen startuje; `Running &= 0`); `bankID` jest zapisywany przez 0x91 nawet gdy
+    ignorowane; `DataStep = (UINT8)(CmdSize * StepSize)` (CmdSize 2 dla SN76496-czestotliwosc, 32X PWM, QSound, K005289,
+    BSMT2000; `StepSize` 0 -> 1 dopiero przez 0x91). Odrzucenie (`BadCommandStream`): 0x93 MSEC przy `freq == 0`,
+    0x93 TOEND/BYTES przy `DataStep == 0`, 0x95 (zawsze tryb BYTES) przy `DataStep == 0` gdy bank wybrany i ID w banku.
+    Komendy bezpiecznie ignorowane przez libvgm -> ostrzezenie `Other` (raz na rodzaj komendy). Stan NIE jest
+    resetowany przy skoku petli, wiec petla jest skanowana drugi raz. Wskaznik na dane banku (pkt 10) liczony per
+    strumien i tylko dla skutecznego 0x91; przestawienie strumienia zwalnia poprzedni bank.
+19. Znaki kierunkowe/niewidoczne Unicode w GD3 (U+200B-200F, U+202A-202E, U+2066-2069) sa usuwane (`sanitized`).
 Fuzzing: cele w `fuzz/` (libFuzzer, clang-cl): (1) `ValidateVgm(buf)` bez libvgm, (2) pelny `LoadFile+Start+Render(N)`
 dla buforow, ktore przeszly walidacje, z ASAN. Dla stwierdzonych luk (H1-H3) test regresyjny powinien PADAC na
 nieprzefiltrowanym wejsciu i przechodzic z walidatorem.

@@ -457,10 +457,6 @@ void checkEntry(const json& entry, const std::string& id, const fs::path& file, 
 const std::set<std::string>& knownImplementationBugs()
 {
     static const std::set<std::string> s = {
-        // parseVgmHeader emituje WarningCode::Other ("zero-length loop; loop ignored") dla poprawnego pliku
-        // z loopOfs != 0 i loopSamples == 0. libvgm ignoruje taka petle po cichu, a valid/ ma byc bez
-        // ostrzezen (plan E1, kryterium 1). Do rozstrzygniecia przez backend: usunac ostrzezenie.
-        "valid/sn76489_loop_zero_samples_v150.vgm",
     };
     return s;
 }

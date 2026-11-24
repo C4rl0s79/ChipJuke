@@ -311,7 +311,7 @@ Result<HeaderInfo> parseVgmHeader(std::span<const std::uint8_t> file, const Limi
             if (abs < dataOfs || abs >= dataEnd) {
                 warn(hi.warnings, WarningCode::Other, 0x1C, "loop offset outside [dataOfs, dataEnd); loop ignored");
             } else if (hi.loopSamples == 0) {
-                warn(hi.warnings, WarningCode::Other, 0x20, "zero-length loop; loop ignored");
+                // libvgm ignoruje petle o zerowej dlugosci po cichu (vgmplayer.cpp:347) - bez ostrzezenia.
             } else {
                 hi.loopOffset = abs;
             }
@@ -366,6 +366,22 @@ Result<HeaderInfo> parseVgmHeader(std::span<const std::uint8_t> file, const Limi
     } catch (...) {
         return makeError(ErrorCode::Internal, "unexpected exception in parseVgmHeader");
     }
+}
+
+void applyLibvgmPatches(std::span<std::uint8_t> raw, const HeaderInfo& header, const StreamReport& stream) noexcept
+{
+    if (raw.size() < detail::kMinVgmHeader || raw.size() != header.fileSize) return;
+    // EOF: libvgm porownuje eofOfs z rozmiarem bufora Z paddingiem (DataLoader_GetSize), a parser z rozmiarem bez
+    // paddingu. Pole 0 / wskazujace w padding / za padding dalyby libvgm dataEnd w paddingu (zera = komendy 0x00).
+    // Zapisujemy dokladnie ten eof, ktory uzyl parser.
+    if (header.eofOffset >= 4 && header.eofOffset <= raw.size()) {
+        const std::uint64_t rel = header.eofOffset - 4;
+        for (unsigned i = 0; i < 4; ++i) raw[0x04 + i] = static_cast<std::uint8_t>(rel >> (8 * i));
+    }
+    // Blok PCM w/za punktem petli: libvgm w 2. przejsciu wykonalby jego dane jako komendy - zerujemy loopOfs
+    // (0x1C) i loopSamples (0x20), plik gra raz.
+    if (stream.loopDisabled)
+        for (unsigned i = 0; i < 8; ++i) raw[0x1C + i] = 0;
 }
 
 } // namespace vgmplay::format

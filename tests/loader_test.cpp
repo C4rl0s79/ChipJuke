@@ -411,3 +411,24 @@ TEST_CASE("loader: potok nazwany jest odrzucany bez polaczenia klienta (typ plik
     CloseHandle(srv);
 }
 #endif
+
+TEST_CASE("loader: reproduktory awarii libvgm z tests/data/fuzz-crashes sa odrzucane")
+{
+    struct Case {
+        const char* file;
+        ErrorCode code;
+    };
+    const Case cases[] = {
+        {"known_c352_divider_zero.vgm", ErrorCode::BadHeader},                    // clock*72/hdr[0xD6], #DE
+        {"known_dac_start_msec_without_freq.vgm", ErrorCode::BadCommandStream},   // 0x93 MSEC, Frequency == 0
+        {"known_dac_start_toend_without_data.vgm", ErrorCode::BadCommandStream},  // 0x93 TOEND, DataStep == 0
+        {"known_pokey_huge_clock.vgm", ErrorCode::LimitExceeded},                 // bufor 1 s przy rate = zegar
+    };
+    for (const Case& c : cases) {
+        const fs::path p = fs::path(VGMPLAY_TEST_DATA_DIR) / "fuzz-crashes" / c.file;
+        REQUIRE_MESSAGE(fs::exists(p), c.file);
+        auto r = loader::loadTrackFromFile(p);
+        REQUIRE_MESSAGE(!r.ok(), c.file, " przeszedl loader");
+        CHECK_MESSAGE(r.error().code == c.code, c.file, ": ", static_cast<int>(r.error().code), " ", r.error().message);
+    }
+}

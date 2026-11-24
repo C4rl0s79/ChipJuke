@@ -151,4 +151,12 @@ struct StreamReport {
                                                          const HeaderInfo& header,
                                                          const Limits& limits = {});
 
+// Lacki bufora przekazywanego do libvgm (WSPOLNE dla loadera i VgmDecoder::open). `raw` = surowe bajty pliku
+// (rozmiar == header.fileSize, jeszcze BEZ paddingu; wywolac przed dopelnieniem). Modyfikuje WYLACZNIE kopie:
+//  * 0x04 (eofOfs) := header.eofOffset - 4, zeby libvgm (liczacy rozmiar z paddingiem) widzial ten sam eof,
+//    a tym samym dataEnd/loopOfs/GD3 co pre-skan;
+//  * 0x1C/0x20 := 0 gdy stream.loopDisabled (blok PCM w/za punktem petli).
+// Nie zmienia HeaderInfo - wywolujacy sam zeruje loopOffset/loopSamples, jesli ich uzywa.
+void applyLibvgmPatches(std::span<std::uint8_t> raw, const HeaderInfo& header, const StreamReport& stream) noexcept;
+
 } // namespace vgmplay::format

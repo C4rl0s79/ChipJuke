@@ -96,20 +96,11 @@ Result<LoadedTrack> loadImpl(std::span<const std::uint8_t> input, ByteBuffer* ow
 
     // Dopelnienie zerami (pkt 8.7): resize wartosciuje nowe bajty zerami.
     const std::size_t rawSize = dec.bytes.size();
-    // Petla wylaczona przez pre-skan (blok PCM w/za punktem petli): zerujemy loop offset (0x1C)
-    // i loop samples (0x20) we wlasnej kopii, zeby libvgm nie skakal do petli. Naglowek ma >= 0x38 B.
+    // Lacki dla libvgm (eofOfs, petla wylaczona przez pre-skan) - wspolne z VgmDecoder::open.
+    format::applyLibvgmPatches(dec.bytes, track.header, track.stream);
     if (track.stream.loopDisabled) {
-        std::fill_n(dec.bytes.begin() + 0x1C, 8, std::uint8_t{0});
         track.header.loopOffset = 0;
         track.header.loopSamples = 0;
-    }
-    // EOF dla libvgm: libvgm porownuje eofOfs z rozmiarem BUFORA Z PADDINGIEM (DataLoader_GetSize), a nasz parser
-    // z rozmiarem bez paddingu. Gdy pole 0x04 jest zerem albo wskazuje w padding (rawSize, rawSize+0x110], libvgm
-    // przyjalby dataEnd w paddingu (zera = komendy 0x00 "unknown") i jego loopOfs/GD3 rozjechalyby sie z naszym
-    // pre-skanem. Zapisujemy w kopii dokladnie ten eof, ktory uzyl parser (HeaderInfo::eofOffset).
-    if (track.header.eofOffset >= 4 && track.header.eofOffset <= rawSize) {
-        const std::uint64_t rel = track.header.eofOffset - 4;
-        for (int i = 0; i < 4; ++i) dec.bytes[0x04 + i] = static_cast<std::uint8_t>(rel >> (8 * i));
     }
     dec.bytes.resize(rawSize + format::kParserPadding);
     track.bytes = std::make_shared<const ByteBuffer>(std::move(dec.bytes));
@@ -158,9 +149,29 @@ struct Handle {
     }
 };
 
+// Przestrzen nazw urzadzen Win32 (\.\pipe\..., \.\COM1, \.\PhysicalDrive0), \?\pipe\ i \?\GLOBALROOT:
+// samo OTWARCIE (nawet z dwDesiredAccess = 0) laczy klienta z potokiem nazwanym, wiec odrzucamy je po nazwie,
+// zanim dotkniemy systemu plikow. Zwykle sciezki \?\C:\... pozostaja dozwolone.
+[[nodiscard]] bool isDeviceNamespacePath(const std::filesystem::path& p)
+{
+    std::wstring s = p.native();
+    for (wchar_t& c : s) {
+        if (c == L'/') c = static_cast<wchar_t>(0x5C);   // '\\'
+        else if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+    }
+    auto starts = [&](const wchar_t* pre) { return s.rfind(pre, 0) == 0; };
+    const std::wstring bs(1, static_cast<wchar_t>(0x5C));
+    const std::wstring dev = bs + bs + L"." + bs;                 // prefiks urzadzen Win32
+    const std::wstring ext = bs + bs + L"?" + bs;                 // prefiks "extended-length"
+    return starts(dev.c_str()) || starts((ext + L"pipe" + bs).c_str()) || starts((ext + L"globalroot").c_str()) ||
+           starts((bs + L"??" + bs).c_str());
+}
+
 Result<ByteBuffer> readFile(const std::filesystem::path& path, const format::Limits& limits,
                             const CancelToken& cancel)
 {
+    if (isDeviceNamespacePath(path))
+        return makeError(ErrorCode::PathRejected, "device namespace path (pipe, COM, physical drive)");
     constexpr DWORD kShareAll = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     auto openError = [&](DWORD e) -> Error {
         if (e == ERROR_ACCESS_DENIED) {
