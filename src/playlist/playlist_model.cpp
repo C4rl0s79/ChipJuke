@@ -256,4 +256,25 @@ Result<std::size_t> PlaylistModel::previous(RepeatMode repeat)
     return static_cast<std::size_t>(c);
 }
 
+std::size_t PlaylistModel::updateEntryMeta(const std::filesystem::path& path, std::string_view title,
+                                           std::uint64_t durationMs)
+{
+    if (path.empty()) return 0;
+    const std::string cleanTitle = fsutil::sanitizeTitle(title);
+    const std::uint64_t dur = fsutil::clampDurationMs(durationMs);
+    // Klucz jak przy deduplikacji skanu: sciezka znormalizowana (separatory), bez rozrozniania wielkosci liter.
+    const std::wstring key = path.lexically_normal().native();
+    std::size_t changed = 0;
+    for (Playlist& p : lists_) {
+        for (Entry& e : p.entries) {
+            if (!fsutil::equalsIgnoreCase(e.path.lexically_normal().native(), key)) continue;
+            if (e.title == cleanTitle && e.durationMs == dur) continue;
+            e.title = cleanTitle;
+            e.durationMs = dur;
+            ++changed;
+        }
+    }
+    return changed;
+}
+
 } // namespace vgmplay::playlist

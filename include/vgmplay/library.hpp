@@ -112,9 +112,9 @@ struct TrackMeta {
 
 // Czyta plik przez loader. Bledy loadera przekazywane bez zmian (Cancelled przy cancel).
 // Pliki z isCloudPlaceholder(atrybuty) sa POMIJANE (brak pobierania z sieci): wynik to Error
-// ErrorCode::AccessDenied, rozpoznawany przez isCloudPlaceholderError(). `allowCloudDownload=true`
-// ("pobierz mimo to") czyta plik normalnie (system pobierze tresc). Propozycja dla core.hpp:
-// ErrorCode::CloudPlaceholder / WarningCode::CloudPlaceholderSkipped (dzis: AccessDenied + Other).
+// ErrorCode::CloudPlaceholder, rozpoznawany przez isCloudPlaceholderError(). `allowCloudDownload=true`
+// ("pobierz mimo to") czyta plik normalnie (system pobierze tresc). Ostrzezenie skanu to nadal
+// WarningCode::Other z komunikatem "cloud placeholder ..." (brak dedykowanego WarningCode).
 [[nodiscard]] Result<TrackMeta> readTrackMeta(const std::filesystem::path& path, const CancelToken& cancel = {},
                                               bool allowCloudDownload = false);
 [[nodiscard]] bool isCloudPlaceholderError(const Error& e) noexcept;
