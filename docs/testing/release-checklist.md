@@ -1,6 +1,6 @@
-# Checklista testow recznych przed wydaniem (vgmplay)
+# Checklista testow recznych przed wydaniem (ChipJuke)
 
-Wykonuje czlowiek na skompilowanym artefakcie wydania (ten sam plik `vgmplay.exe`, ktory trafi do uzytkownikow),
+Wykonuje czlowiek na skompilowanym artefakcie wydania (ten sam plik `ChipJuke.exe`, ktory trafi do uzytkownikow),
 NIE na buildzie deweloperskim. Testy automatyczne (doctest MSVC, kampania fuzzingu) sa warunkiem wstepnym,
 nie zamiennikiem - ta lista obejmuje to, czego automat nie widzi: sprzet, system, DPI, chmure, siec, czas.
 
@@ -18,7 +18,7 @@ nie zamiennikiem - ta lista obejmuje to, czego automat nie widzi: sprzet, system
 | Pole | Wartosc |
 |---|---|
 | Wersja / tag | |
-| Skrot SHA-256 `vgmplay.exe` (`Get-FileHash`) | |
+| Skrot SHA-256 `ChipJuke.exe` (`Get-FileHash`) | |
 | Sposob dystrybucji (zip / instalator / sam exe) | |
 | Tester, data | |
 | Skrot commita buildu, preset (`msvc-x64-release`) | |
@@ -43,16 +43,16 @@ Cel: pojedynczy plik wykonywalny dziala na swiezym systemie bez doinstalowywania
 ### 1.1 Windows 10 22H2 (czysta maszyna lub swiezy snapshot VM)
 
 Przygotowanie: system po instalacji, zaktualizowany; BRAK zainstalowanych "Visual C++ Redistributable" (sprawdz
-Aplikacje i funkcje), BRAK SDL3.dll w PATH i obok exe. Skopiuj tylko artefakt wydania do `C:\Users\<uzytkownik>\Desktop\vgmplay\`.
+Aplikacje i funkcje), BRAK SDL3.dll w PATH i obok exe. Skopiuj tylko artefakt wydania do `C:\Users\<uzytkownik>\Desktop\ChipJuke\`.
 
 | Krok | Oczekiwany wynik | Wynik |
 |---|---|---|
-| 1. Uruchom `vgmplay.exe` dwuklikiem | Okno startuje bez bledu "brakuje VCRUNTIME140.dll / MSVCP140.dll / SDL3.dll" i bez komunikatu SmartScreen blokujacego uruchomienie na stale ("Uruchom mimo to" jest akceptowalne i odnotowane) | |
+| 1. Uruchom `ChipJuke.exe` dwuklikiem | Okno startuje bez bledu "brakuje VCRUNTIME140.dll / MSVCP140.dll / SDL3.dll" i bez komunikatu SmartScreen blokujacego uruchomienie na stale ("Uruchom mimo to" jest akceptowalne i odnotowane) | |
 | 2. Bez zadnych plikow: obejrzyj ekran startowy | Pusty stan z czytelna podpowiedzia (jak dodac pliki), zadnego crasha | |
 | 3. Przeciagnij plik `.vgm` z `D:\emu\vgm` na okno | Utwor sie laduje i gra, czas biegnie, wizualizacje reaguja | |
 | 4. Zamknij okno (X) | Proces znika z Menedzera zadan w <2 s; powstal `settings.json` (patrz 2) | |
-| 5. Uruchom z konsoli `vgmplay.exe --diag` | Start z diagnostyka; brak komunikatow o bledach bibliotek | |
-| 6. Narzedzia: `dumpbin /dependents vgmplay.exe` (na maszynie deweloperskiej) | Tylko DLL systemowe (KERNEL32, USER32, D3D11, DXGI, ...); brak `VCRUNTIME*`, `MSVCP*`, `SDL3.dll` | |
+| 5. Uruchom z konsoli `ChipJuke.exe --diag` | Start z diagnostyka; brak komunikatow o bledach bibliotek | |
+| 6. Narzedzia: `dumpbin /dependents ChipJuke.exe` (na maszynie deweloperskiej) | Tylko DLL systemowe (KERNEL32, USER32, D3D11, DXGI, ...); brak `VCRUNTIME*`, `MSVCP*`, `SDL3.dll` | |
 
 Wynik zbiorczy 1.1: ______
 
@@ -72,17 +72,18 @@ Wynik zbiorczy 1.2: ______
 
 ## 2. Pierwsze uruchomienie: folder zapisywalny i tylko-do-odczytu
 
-Regula (tryb przenosny): ustawienia (`settings.json`, `playlists.json`, `library-cache.json`) leza OBOK `vgmplay.exe`,
-gdy katalog jest zapisywalny; w przeciwnym razie w `%APPDATA%\vgmplay`.
+Regula (tryb przenosny): ustawienia (`settings.json`, `playlists.json`, `library-cache.json`) leza OBOK `ChipJuke.exe`,
+gdy katalog jest zapisywalny; w przeciwnym razie w `%APPDATA%\ChipJuke`.
 
 | Krok | Oczekiwany wynik | Wynik |
 |---|---|---|
-| 2.1 Pusty, zapisywalny folder (np. `D:\Test\vgmplay`). Uruchom, zmien jedno ustawienie (np. glosnosc), zamknij | Obok exe powstaje `settings.json` (i `playlists.json` po dodaniu playlisty); `%APPDATA%\vgmplay` NIE jest tworzony; ponowne uruchomienie pamieta ustawienie | |
+| 2.1 Pusty, zapisywalny folder (np. `D:\Test\ChipJuke`). Uruchom, zmien jedno ustawienie (np. glosnosc), zamknij | Obok exe powstaje `settings.json` (i `playlists.json` po dodaniu playlisty); `%APPDATA%\ChipJuke` NIE jest tworzony; ponowne uruchomienie pamieta ustawienie | |
 | 2.2 Skopiuj folder w inne miejsce (inny dysk / pendrive) | Ustawienia "jada" razem z folderem; aplikacja dziala identycznie | |
-| 2.3 `C:\Program Files\vgmplay\` (zwykly uzytkownik, bez admina): uruchom, zmien ustawienie, zamknij | Brak okna z prosba o uprawnienia administratora; `settings.json` powstaje w `%APPDATA%\vgmplay\`; ponowne uruchomienie pamieta ustawienie; w `Program Files` nic nowego nie powstalo | |
+| 2.3 `C:\Program Files\ChipJuke\` (zwykly uzytkownik, bez admina): uruchom, zmien ustawienie, zamknij | Brak okna z prosba o uprawnienia administratora; `settings.json` powstaje w `%APPDATA%\ChipJuke\`; ponowne uruchomienie pamieta ustawienie; w `Program Files` nic nowego nie powstalo | |
 | 2.4 Folder tylko-do-odczytu (wlasciwosc "Tylko do odczytu" / odebrane prawo zapisu dla uzytkownika) | Jak 2.3; brak bledu zapisu pokazanego uzytkownikowi jako crash; ewentualny komunikat jest zrozumialy | |
 | 2.5 Plyta/ISO/udzial tylko-do-odczytu (zamontuj ISO z exe) | Jak 2.3 | |
-| 2.6 Istnieje stary `%APPDATA%\vgmplay\settings.json`, a exe lezy w zapisywalnym folderze bez wlasnego `settings.json` | Zachowanie zgodne z regula (patrz `docs/adr/0003-playlists-settings.md`); odnotuj, ktorego pliku uzyto | |
+| 2.6 Istnieje stary `%APPDATA%\ChipJuke\settings.json`, a exe lezy w zapisywalnym folderze bez wlasnego `settings.json` | Zachowanie zgodne z regula (patrz `docs/adr/0003-playlists-settings.md`); odnotuj, ktorego pliku uzyto | |
+| 2.7 Migracja nazwy: istnieje `%APPDATA%\vgmplay\` (z wersji testowych), brak `%APPDATA%\ChipJuke`; exe w folderze tylko do odczytu | Po starcie katalog przemianowany na `%APPDATA%\ChipJuke`, ustawienia i playlisty zachowane | |
 | 2.7 Uszkodz `settings.json` (obetnij w polowie, uruchom) | Aplikacja startuje z domyslnymi; powstaje kopia `settings.json.bad`; czytelny komunikat; oryginal nie jest po cichu nadpisany bez wiedzy uzytkownika | |
 | 2.8 Uszkodz `playlists.json` tak samo | Jak 2.7 (kopia `.bad`), playlisty puste, aplikacja dziala | |
 | 2.9 Ustaw w `settings.json` nowsza `schemaVersion` (np. 99) | Aplikacja nie nadpisuje pliku nowszej wersji, informuje o niezgodnosci, dziala na domyslnych | |
@@ -245,7 +246,7 @@ Wynik zbiorczy 6: ______
 | 2. Sciezka >260 znakow (np. 40 zagniezdzonych folderow; wymaga wlaczonego LongPathsEnabled lub prefiksu `\\?\`) | Plik odtwarza sie lub jest czytelny blad; skan nie crashuje | |
 | 3. Nazwy z emoji, spacjami na koncu, znakami RTL | Brak crasha; wyswietlanie bez znakow sterujacych zakłócajacych uklad (znaki kierunkowe sa czyszczone) | |
 | 4. Przeciagnij-upusc pliku z takimi sciezkami na okno | Dziala jak otwarcie z dialogu | |
-| 5. Argument wiersza polecenia: `vgmplay.exe "D:\Muzyka\Zażółć\a.vgm"` | Otwiera i gra | |
+| 5. Argument wiersza polecenia: `ChipJuke.exe "D:\Muzyka\Zażółć\a.vgm"` | Otwiera i gra | |
 | 6. Powiazanie plikow `.vgm`/`.vgz` w Eksploratorze (otworz za pomoca) | Otwiera w uruchomionej lub nowej instancji (odnotuj zachowanie) | |
 
 Wynik zbiorczy 7: ______
