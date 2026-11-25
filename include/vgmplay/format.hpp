@@ -140,6 +140,11 @@ struct StreamReport {
     // wykonalby jego dane jako komendy. Plik jest przyjmowany, ale gra RAZ, bez petli
     // (decyzja uzytkownika 2026-11-23); loader zeruje pola petli w swojej kopii bufora.
     bool loopDisabled = false;
+    // YMF262 (OPL3), instancja 0/1: suma (OR) zapisow rejestru 0x104 wykonanych w trybie OPL3 (bit NEW 0x105) (bity 0..5 = pary 4-op
+    // 1+4, 2+5, 3+6, 10+13, 11+14, 12+15). Para 4-op brzmi jako jeden kanal: MUTE/SOLO i oscyloskopy
+    // lacza obie polowki (VgmDecoder), bo dzwiek pary wychodzi w rdzeniach przez kanal drugiej polowki.
+    // Ograniczenie: para wlaczona choc raz jest laczona przez caly utwor (utwory przelaczajace 4-op sa rzadkie).
+    std::uint8_t opl3FourOp[2] = {0, 0};
     std::vector<Warning> warnings;
 };
 

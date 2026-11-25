@@ -153,13 +153,21 @@ struct Engine::Impl {
     }
 
     // ---------------------------------------------------------------- ladowanie
+    // Konfiguracja dekodera dla biezacego utworu: ROM-y szukane tez w katalogu utworu (po katalogach z cfg).
+    [[nodiscard]] DecoderConfig trackDecoderConfig() const
+    {
+        DecoderConfig c = cfg.decoder;
+        if (track && !track->path.empty()) c.romDirs.push_back(track->path.parent_path());
+        return c;
+    }
+
     // Otwiera dekoder dla `track`, ustawia os czasu i (opcjonalnie) przewija do startPos.
     // Zwraca false i ustawia Failed, gdy sie nie udalo (blad juz zgloszony).
     bool openTrack(SampleTime startPos, bool announce)
     {
         dec = makeVgmDecoder();
         const auto raw = track->raw();
-        auto opened = dec->open(raw, cfg.decoder);
+        auto opened = dec->open(raw, trackDecoderConfig());
         if (!opened.ok()) { fail(opened.error()); return false; }
         auto started = dec->start();
         if (!started.ok()) { fail(started.error()); return false; }
@@ -204,7 +212,7 @@ struct Engine::Impl {
             renderPos = dec->positionFrames();
         }
         publishPosition();
-        if (scopesEnabled) scopes.bind(track, cfg.decoder, *info, *dec);
+        if (scopesEnabled) scopes.bind(track, trackDecoderConfig(), *info, *dec);
         if (announce) postEvent(evt::TrackLoaded{info});
         return true;
     }
@@ -336,7 +344,7 @@ struct Engine::Impl {
         if (enabled == scopesEnabled) return;
         scopesEnabled = enabled;
         if (!enabled) { scopes.reset(); return; }
-        if (dec && info && track) scopes.bind(track, cfg.decoder, *info, *dec);
+        if (dec && info && track) scopes.bind(track, trackDecoderConfig(), *info, *dec);
     }
 
     void onSetMute(const cmd::SetMute& c)

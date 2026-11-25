@@ -239,6 +239,7 @@ int main()
         else options.noAppDataNotice = true;   // brak zapisywalnego katalogu: bez trwalosci
     }
     options.nullAudio = cl.nullAudio;
+    options.romDir = exeDirectory();
     options.allowNetworkPaths = cl.allowNetwork;
     options.autoplay = !cl.noAutoplay;
     options.fakeChannelScopes = cl.fakeChannelScopes;

@@ -70,12 +70,13 @@ Utf8Result utf16leToUtf8(std::span<const std::uint8_t> bytes, std::uint32_t maxB
             r.sanitized = true;
             continue;
         } else if (cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp <= 0x9F)) {
-            r.sanitized = true;
             if (cp == '\t' || cp == '\n' || cp == '\r') {
-                // CRLF -> jedna spacja; pojedyncze znaki biale -> spacja (jedna linia w UI).
+                // CRLF -> jedna spacja; pojedyncze znaki biale -> spacja (jedna linia w UI). To zwykle
+                // formatowanie (np. wieloliniowe "Notes" z vgmrips), nie podejrzana tresc: bez flagi sanitized.
                 if (cp == '\r' && i + 1 < units && rd16(&bytes[(i + 1) * 2]) == '\n') ++i;
                 cp = ' ';
             } else {
+                r.sanitized = true;
                 continue;   // pozostale znaki sterujace usuwamy
             }
         }

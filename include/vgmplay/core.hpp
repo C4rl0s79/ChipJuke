@@ -81,6 +81,7 @@ enum class WarningCode : std::uint16_t {
     Gd3Invalid,             // GD3 uszkodzony - tagi puste
     TagTruncated,           // pole GD3 przyciete do limitu
     TagSanitized,           // usunieto znaki sterujace / niesparowane surogaty
+    RomMissing,             // brak zewnetrznego ROM-u ukladu (yrw801.rom dla OPL4) - czesc dzwieku cicha
     // playlist / library
     EntrySkipped,           // pozycja pominieta (np. odrzucona sciezka)
     PathRejected,

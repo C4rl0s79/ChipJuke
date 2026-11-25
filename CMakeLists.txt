@@ -17,7 +17,7 @@ set(CMAKE_POLICY_DEFAULT_CMP0091 NEW)
 # pusty = wydanie finalne). Reszta (version.hpp, VERSIONINFO, nazwa paczki) jest z nich wyprowadzana.
 # vcpkg.json ("version-string") musi byc zgodny - sprawdza to sekcja "Wersja" nizej.
 project(vgmplay VERSION 1.0.0 LANGUAGES C CXX)
-set(VGMPLAY_VERSION_SUFFIX "rc2")
+set(VGMPLAY_VERSION_SUFFIX "rc3")
 
 if(PROJECT_IS_TOP_LEVEL)
     set(_vgmplay_tests_default ON)

@@ -57,7 +57,7 @@ Get **`ChipJuke-<version>-win64.zip`** from the [Releases](https://github.com/C4
 **Requirements:** Windows 10 22H2 or newer (x64), a Direct3D 11 GPU driver and an audio output. Nothing to install —
 no DLLs, no Visual C++ redistributable. To uninstall, delete the folder (and `%APPDATA%\ChipJuke`, if it was created).
 
-The current version is **1.0.0-rc2**, a release candidate. Please report problems in
+The current version is **1.0.0-rc3**, a release candidate. Please report problems in
 [Issues](https://github.com/C4rl0s79/ChipJuke/issues).
 
 ## Features
@@ -78,12 +78,16 @@ The current version is **1.0.0-rc2**, a release candidate. Please report problem
 
 | Family | Chips |
 |---|---|
-| PSG / square | SN76489, AY8910, NES APU + FDS |
-| Yamaha FM | YM2612 (incl. DAC), YM2151, YM2203, YM2608 (OPNA), YM2610/B (OPNB), YM2413, YM3812, YM3526, YMF262 |
-| PCM / ADPCM | SegaPCM, OKIM6295, OKIM6258, C140, K054539, K053260, GA20, YM2608/YM2610 ADPCM and rhythm |
+| PSG / square / wavetable | SN76489, AY8910, NES APU + FDS, Konami SCC (K051649) |
+| Yamaha FM | YM2612 (incl. DAC), YM2151, YM2203, YM2608 (OPNA), YM2610/B (OPNB), YM2413, YM3812, YM3526, Y8950 (incl. ADPCM), YMF262 |
+| PCM / ADPCM | SegaPCM, QSound (PCM voices), OKIM6295, OKIM6258, C140, K054539, K053260, GA20, YM2608/YM2610 ADPCM and rhythm |
 
 Every other chip supported by libvgm **plays normally**; its columns show `...` instead of notes.
 For PCM chips a "note" is relative: the same sample at the same rate shows the same note.
+
+OPL4 (YMF278B, Moonsound) needs the Yamaha sample ROM `yrw801.rom` for its built-in instruments. It is not included;
+put your own copy next to `ChipJuke.exe` or next to the track. Without it the Info panel shows a warning and ROM
+instruments are silent.
 
 ### Playback
 - VGM and gzip-compressed VGZ files.

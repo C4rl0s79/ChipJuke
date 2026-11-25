@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -35,6 +36,9 @@ struct DecoderConfig {
     std::uint32_t endSilenceMs = 500;       // krotka cisza ogonowa przy Stop [wartosc robocza]
     // Wybor rdzeni per uklad+instancja; brak wpisu lub coreId==0 = domyslny rdzen vgmplay.
     std::vector<CoreChoice> cores;
+    // Katalogi przeszukiwane (po kolei) za zewnetrznymi ROM-ami, o ktore prosi libvgm - dzis tylko
+    // yrw801.rom (probki OPL4 / YMF278B). Program ROM-u nie dolacza (prawa Yamaha). Pusta lista = bez ROM-u.
+    std::vector<std::filesystem::path> romDirs;
 };
 
 // Metadane dostepne po open(), bez start(). Wartosci w klatkach dla DecoderConfig::sampleRate.

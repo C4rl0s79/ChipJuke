@@ -67,7 +67,7 @@ std::vector<PatternChannel> one(ChipType type, std::uint8_t instance, std::uint3
                {{"FM ", 6}, {"ADPCM-A ", 6}, {"ADPCM-B", 0}, {"AY-3-8910 Ch ", 3}});
         break;
     case ChipType::Y8950:
-        append(v, type, instance, false,
+        append(v, type, instance, true,
                {{"", 9}, {"Bass Drum", 0}, {"Snare Drum", 0}, {"Tom Tom", 0}, {"Cymbal", 0}, {"Hi-Hat", 0},
                 {"ADPCM", 0}});
         break;
@@ -99,14 +99,17 @@ std::vector<PatternChannel> one(ChipType type, std::uint8_t instance, std::uint3
     case ChipType::UPD7759:
     case ChipType::OKIM6258:  chd(1); break;
     case ChipType::OKIM6295:  append(v, type, instance, true, {{"Ch ", 4}}); break;
-    case ChipType::K051649:   ch(5); break;
+    case ChipType::K051649:   chd(5); break;
     case ChipType::K054539:   chd(8); break;
     case ChipType::HuC6280:   ch(6); break;
     case ChipType::C140:      chd(24); break;
     case ChipType::C219:      ch(16); break;
     case ChipType::K053260:   chd(4); break;
     case ChipType::Pokey:     ch(4); break;
-    case ChipType::QSound:    append(v, type, instance, false, {{"PCM ", 16}, {"ADPCM ", 3}}); break;
+    case ChipType::QSound:    // PCM z dekoderem, ADPCM bez
+        append(v, type, instance, true, {{"PCM ", 16}});
+        append(v, type, instance, false, {{"ADPCM ", 3}});
+        break;
     case ChipType::SCSP:      ch(32); break;
     case ChipType::WonderSwan: ch(4); break;
     case ChipType::VirtualBoyVSU:

@@ -1,7 +1,9 @@
 // vgmrender - render offline VGM -> WAV przez ten sam IDecoder co silnik odtwarzania.
 //
 //   vgmrender in.vgm out.wav [--rate 44100] [--loops N] [--fade MS] [--float]
-//                            [--max-seconds S] [--list-cores]
+//                            [--max-seconds S] [--list-cores] [--core CHIP=FCC ...]
+//   --core: rdzen emulacji dla typu ukladu (pierwsza instancja i druga), np. --core YM2612=NUKE;
+//           nazwy typow i rdzeni (FourCC) jak w --list-cores. Do porownan rdzeni (A/B) tego samego pliku.
 //   vgmrender in.vgm --gaps [--gap-thr RMS] [--gap-rows]
 //
 // --gaps: pomiar luk we wzorcu (chipstate::buildPattern). Dla kazdego kanalu z kopia emulacji (dzwiek
@@ -89,7 +91,7 @@ void usage()
 {
     std::fprintf(stderr,
         "usage: vgmrender in.vgm|in.vgz out.wav [--rate 44100] [--loops N] [--fade MS] [--float]\n"
-        "                                [--max-seconds S]\n"
+        "                                [--max-seconds S] [--core CHIP=FCC ...]\n"
         "       vgmrender --list-cores\n");
 }
 
@@ -202,7 +204,7 @@ int listCores()
         const auto type = static_cast<ChipType>(t);
         const auto cores = dec->availableCores(type);
         if (cores.empty()) continue;
-        std::printf("type %u:", t);
+        std::printf("%s:", std::string(chipTypeName(type)).c_str());
         for (const auto& c : cores) std::printf(" %s(0x%08X)", c.name.c_str(), c.coreId);
         std::printf("\n");
     }
@@ -218,6 +220,7 @@ int main(int argc, char** argv)
     double maxSeconds = 0;
     bool asFloat = false, gaps = false, gapRows = false;
     double gapThr = 0.002;
+    std::vector<CoreChoice> cores;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&](const char* name) -> const char* {
@@ -233,6 +236,22 @@ int main(int argc, char** argv)
         else if (a == "--gaps") gaps = true;
         else if (a == "--gap-rows") gapRows = true;
         else if (a == "--gap-thr") gapThr = std::strtod(next("--gap-thr"), nullptr);
+        else if (a == "--core") {
+            const std::string v = next("--core");
+            const auto eq = v.find('=');
+            ChipType type = ChipType::Unknown;
+            for (unsigned t = 1; eq != std::string::npos && t < static_cast<unsigned>(ChipType::Count_); ++t)
+                if (chipTypeName(static_cast<ChipType>(t)) == std::string_view(v).substr(0, eq)) type = static_cast<ChipType>(t);
+            const std::string fcc = eq == std::string::npos ? std::string() : v.substr(eq + 1);
+            if (type == ChipType::Unknown || fcc.empty() || fcc.size() > 4) {
+                std::fprintf(stderr, "bad --core value '%s' (expected CHIP=FCC, e.g. YM2612=NUKE)\n", v.c_str());
+                return 2;
+            }
+            std::uint32_t id = 0;
+            for (std::size_t k = 0; k < 4; ++k) id = (id << 8) | (k < fcc.size() ? static_cast<std::uint8_t>(fcc[k]) : 0u);
+            cores.push_back(CoreChoice{type, 0, id});
+            cores.push_back(CoreChoice{type, 1, id});
+        }
         else if (!a.empty() && a[0] == '-') { usage(); return 2; }
         else if (in.empty()) in = a;
         else if (out.empty()) out = a;
@@ -256,6 +275,7 @@ int main(int argc, char** argv)
     cfg.sampleRate = rate;
     cfg.loopCount = loops;
     cfg.fadeMs = fadeMs;
+    cfg.cores = cores;
     auto dec = engine::makeVgmDecoder();
     auto info = dec->open(track.value().raw(), cfg);
     if (!info.ok()) { std::fprintf(stderr, "open failed: %s\n", info.error().message.c_str()); return 1; }
