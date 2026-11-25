@@ -23,6 +23,7 @@ import json
 import os
 import struct
 import sys
+import zlib
 
 # Offset zegara w naglowku -> nazwa ukladu.
 CHIP_CLOCKS = {
@@ -54,6 +55,8 @@ def cmd_len(op: int) -> int:
         return 2
     if op < 0x60 or op == 0x61:
         return 3
+    if op == 0x68:
+        return 12
     if op < 0x90:
         return 1
     if op <= 0x95:
@@ -154,7 +157,7 @@ def main() -> int:
             try:
                 with open(path, "rb") as fh:
                     res = scan_file(fh.read())
-            except (OSError, EOFError, gzip.BadGzipFile, struct.error) as e:
+            except (OSError, EOFError, gzip.BadGzipFile, zlib.error, struct.error) as e:
                 print(f"POMINIETY {path}: {e}", file=sys.stderr)
                 continue
             if res is None:

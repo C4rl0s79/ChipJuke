@@ -88,6 +88,7 @@ private:
     const HeaderInfo& h_;
     const Limits& lim_;
     StreamReport rep_;
+    bool opl3New_[2] = {false, false};   // stan bitu NEW (0x105) YMF262 #1/#2
     std::uint64_t end_ = 0;
 
     std::array<std::uint8_t, 48> chipInstances_{};
@@ -401,8 +402,12 @@ Result<StreamReport> Scanner::run()
             }
         }
         checkChip(cmd, pos);
-        if ((cmd == 0x5F || cmd == 0xAF) && *at(pos + 1) == 0x04)
-            rep_.opl3FourOp[cmd == 0xAF ? 1 : 0] |= static_cast<std::uint8_t>(*at(pos + 2) & 0x3Fu);
+        if (cmd == 0x5F || cmd == 0xAF) {   // OPL3 port 1: 0x105 = NEW (tryb OPL3), 0x104 = pary 4-op
+            const unsigned k = cmd == 0xAF ? 1u : 0u;
+            if (*at(pos + 1) == 0x05) opl3New_[k] = (*at(pos + 2) & 1u) != 0;
+            else if (*at(pos + 1) == 0x04 && opl3New_[k])
+                rep_.opl3FourOp[k] |= static_cast<std::uint8_t>(*at(pos + 2) & 0x3Fu);
+        }
 
         std::uint64_t delay = 0;
         if (cmd == 0x61) delay = rd16(at(pos + 1));

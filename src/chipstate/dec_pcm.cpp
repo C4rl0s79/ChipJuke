@@ -283,11 +283,16 @@ private:
 // n: 0 bank (dla glosu ch+1 - jak w libvgm), 1 adres startu, 2 czestotliwosc, 3 key-on (bit 15), 4 dlugosc petli,
 // 5 adres konca, 6 glosnosc. Key-on: czestotliwosc 0 -> niezerowa albo zapis rejestru 3 z bitem 15 (to samo
 // traktuje jako key-on libvgm dla starych VGM); key-off: czestotliwosc 0 albo koniec probki bez petli (petla 0).
-// Tempo: czestotliwosc / 4096 probek na probke wyjsciowa (zegar / 166). Glosnosc: rejestr 6 / 0x800 (obciete).
+// Zmiana czestotliwosci przy grajacym glosie = nowa nuta (wysokosc); po koncu probki ten sam zapis nie wznawia nuty.
+// Tempo: czestotliwosc / 4096 probek na probke wyjsciowa; probka wyjsciowa = zegar / 2496, zegar < 10 MHz w naglowku
+// (stare VGM: 4 MHz) mnozony x15 jak w libvgm. Glosnosc: rejestr 6 / 0x800 (obciete).
 // Kanaly ADPCM 1-3 (rejestry 0xCA..) nie sa dekodowane.
 class QSound final : public PcmBase {
 public:
-    QSound(Host& h, std::size_t first, std::uint32_t clock) : PcmBase(h, first, 16), rate_(clock / 166.0) {}
+    QSound(Host& h, std::size_t first, std::uint32_t clock)
+        : PcmBase(h, first, 16), rate_((clock < 10000000u ? clock * 15.0 : static_cast<double>(clock)) / 2496.0)
+    {
+    }
     // port = starszy bajt danych (pattern.cpp), val = mlodszy.
     void write(std::uint8_t port, std::uint8_t reg, std::uint8_t lo) override
     {
@@ -302,8 +307,8 @@ public:
             const std::uint16_t old = r.freq;
             r.freq = val;
             if (val == 0) keyOff(ch);
-            else if (old == 0 || !v_[ch].playing) start(ch);
-            else if (midiOf(r) != r.midi) start(ch);
+            else if (old == 0) start(ch);
+            else if (v_[ch].playing && midiOf(r) != r.midi) start(ch);
             break;
         }
         case 3: if ((val & 0x8000) && r.freq) start(ch); break;

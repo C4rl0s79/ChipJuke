@@ -932,6 +932,7 @@ TEST_CASE("chipstate Y8950 (MSX-AUDIO): FM jak YM3526 + kanal ADPCM (start/stop,
     v.clock(11, 3579545);
     y(v, 0x20, 0x21); y(v, 0x23, 0x21); y(v, 0x43, 0x00); y(v, 0x40, 0x10); y(v, 0xC0, 0x04);
     y(v, 0xA0, 580 & 0xFF); y(v, 0xB0, 0x20 | (4 << 2) | (580 >> 8));   // FM A-4 na kanale 1
+    y(v, 0x08, 0x02);                                                    // pamiec x8: adresy << 5
     y(v, 0x09, 0x00); y(v, 0x0A, 0x00);                                  // start 0
     y(v, 0x0B, 0x0F); y(v, 0x0C, 0x00);                                  // koniec ((15+1) << 5) - 1 = 511
     y(v, 0x10, 0x00); y(v, 0x11, 0x80);                                  // delta-N 0x8000 = polowa -> C-3
@@ -982,6 +983,36 @@ TEST_CASE("chipstate QSound: key-on przez czestotliwosc 0 -> !0 i rejestr 3, nut
     CHECK(noteOns(p, 1) == std::vector<int>{72, 72});
     CHECK(p.at(10, 1).volume == 32);
     CHECK(p.at(10, 1).instrument != p.at(0, 0).instrument);
+}
+
+TEST_CASE("chipstate QSound: zegar 60 MHz, brak wznowienia nuty po koncu probki przy tym samym zapisie czestotliwosci")
+{
+    auto q = [](Vgm& v, int reg, int val) { v.raw({0xC4, (val >> 8) & 0xFF, val & 0xFF, reg}); };
+    Vgm v;
+    v.clock(31, 60000000);                                                 // naglowek z zegarem 60 MHz
+    q(v, 0x01, 0x1000); q(v, 0x05, 0x1000 + 2404); q(v, 0x04, 0); q(v, 0x06, 0x800);
+    q(v, 0x02, 0x1000);                                                    // 2404 probki / 24038 Hz = 100 ms
+    v.wait(735 * 8);
+    for (int i = 0; i < 4; ++i) { q(v, 0x02, 0x1000); v.wait(735); }     // sterownik powtarza czestotliwosc
+    const Pattern p = build(v.bytes());
+    CHECK(noteOns(p, 0) == std::vector<int>{60});
+    CHECK(offRows(p, 0) == std::vector<std::uint64_t>{6});
+}
+
+TEST_CASE("chipstate Y8950: rejestr 0x08 bity 0-1 == 0 -> adresy ADPCM << 2")
+{
+    auto y = [](Vgm& v, int r, int val) { v.raw({0x5C, r, val}); };
+    Vgm v;
+    v.clock(11, 3579545);
+    y(v, 0x08, 0x00);
+    y(v, 0x09, 0x00); y(v, 0x0A, 0x00);
+    y(v, 0x0B, 0x7F); y(v, 0x0C, 0x00);                                    // koniec (127 << 2) | 3 = 511
+    y(v, 0x10, 0x00); y(v, 0x11, 0x80);
+    y(v, 0x12, 0xFF);
+    y(v, 0x07, 0x80);
+    v.wait(735 * 4);
+    const Pattern p = build(v.bytes());
+    CHECK(offRows(p, 14) == std::vector<std::uint64_t>{2});                // 1024 nibbli jak przy << 5 z koncem 15
 }
 
 TEST_CASE("chipstate NES: FDS bez zapisu $4023 gra (libvgm wlacza I/O przy resecie) - Zelda no Densetsu FDS")

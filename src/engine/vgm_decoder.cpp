@@ -91,6 +91,8 @@ public:
         try {
             if (started_) return {};
             const UINT8 r = pa_->Start();
+            romBuf_.clear();          // libvgm skopiowal ROM w Start() - nie trzymamy drugiej kopii
+            romBuf_.shrink_to_fit();
             if (r >= 0x80) return makeError(ErrorCode::DecoderFailure, "PlayerA::Start failed");
             started_ = true;
             // Uklady, ktorych rdzen nie wystartowal, libvgm pomija po cichu - tu to bledem.
@@ -443,6 +445,7 @@ private:
     // Wyznacza layout i ustawia emuCore wg polityki (przed Start - opcje czytane przy Start).
     Result<void> buildLayoutAndCores(TrackInfo& info, const format::StreamReport& scan)
     {
+        bool romWarned = false;   // RomMissing raz na utwor (dwa OPL4 = jedno ostrzezenie)
         std::vector<PLR_DEV_INFO> list;
         if (tap_->GetSongDeviceInfo(list) >= 0x80)
             return makeError(ErrorCode::Internal, "GetSongDeviceInfo failed");
@@ -466,9 +469,11 @@ private:
                 continue;
             }
 
-            if (ctype == ChipType::YMF278B && findRom(cfg_.romDirs, kOpl4Rom).empty())
+            if (ctype == ChipType::YMF278B && !romWarned && findRom(cfg_.romDirs, kOpl4Rom).empty()) {
                 info.warnings.push_back(Warning{WarningCode::RomMissing, kNoOffset,
                     "OPL4 sample ROM yrw801.rom not found; instruments from the ROM may be silent"});
+                romWarned = true;
+            }
 
             DevRef ref;
             ref.devId = devId;

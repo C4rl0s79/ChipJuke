@@ -15,7 +15,8 @@
 //    glosnosc liczona z nosnych polaczenia (przyblizenie).
 //  * Y8950: FM jak YM3526 + kanal "ADPCM" (delta-T, rejestry 0x07-0x12): start = bit 7 rejestru 0x07, stop = zapis
 //    0x07 bez bitu 7 albo koniec probki (bez REPEAT); nuta wzgledna = 60 + 12*log2(delta-N / 65536), instrument =
-//    numer pary start/koniec, glosnosc = rejestr 0x12 (jak ADPCM-B w dec_fm.cpp). Adresy: rejestr << 5 (nibble x2).
+//    numer pary start/koniec, glosnosc = rejestr 0x12 (jak ADPCM-B w dec_fm.cpp). Adresy: rejestr << 5, a przy
+//    bitach 0-1 rejestru 0x08 == 0 (RAM x1 bit) << 2 - jak ymdeltat.c w libvgm (dram_rightshift).
 #include <array>
 #include <string>
 
@@ -371,8 +372,9 @@ private:
         if (!(val & 0x80)) { adpcmOff(); return; }   // brak START = stop
         if (val & 0x40) return;                      // REC - nie odtwarzanie
         auto r16 = [&](unsigned lo) { return static_cast<std::uint32_t>(dt_[lo - 0x07] | (dt_[lo + 1 - 0x07] << 8)); };
-        const std::uint32_t start = r16(0x09) << 5;
-        const std::uint32_t end = ((r16(0x0B) + 1u) << 5) - 1u;
+        const unsigned shift = (dt_[0x08 - 0x07] & 3) ? 5u : 2u;
+        const std::uint32_t start = r16(0x09) << shift;
+        const std::uint32_t end = (r16(0x0B) << shift) | ((1u << shift) - 1u);
         const unsigned delta = r16(0x10);
         const double nibblesPerSec = sr_ * delta / 65536.0;
         adpcmEnd_ = kNever;

@@ -88,6 +88,21 @@ TEST_SUITE("opl3_fourop")
         CHECK(s.value().opl3FourOp[1] == 0x00);
     }
 
+    TEST_CASE("0x104 zapisany bez trybu OPL3 (bit NEW 0x105) nie laczy par")
+    {
+        auto t = fourOpTrack(true);
+        // pierwszy zapis w danych to 0x105 = 1 (port 1): wyzeruj go - tryb OPL2
+        const std::uint32_t data = 0x80;
+        REQUIRE(t[data] == 0x5F);
+        REQUIRE(t[data + 1] == 0x05);
+        t[data + 2] = 0x00;
+        auto h = format::parseVgmHeader(t);
+        REQUIRE(h.ok());
+        auto s = format::validateCommandStream(t, h.value());
+        REQUIRE(s.ok());
+        CHECK(s.value().opl3FourOp[0] == 0x00);
+    }
+
     TEST_CASE("solo pierwszej polowki pary 4-op daje dzwiek, solo drugiej - cisze")
     {
         const auto t = fourOpTrack(true);

@@ -57,7 +57,7 @@ Get **`ChipJuke-<version>-win64.zip`** from the [Releases](https://github.com/C4
 **Requirements:** Windows 10 22H2 or newer (x64), a Direct3D 11 GPU driver and an audio output. Nothing to install —
 no DLLs, no Visual C++ redistributable. To uninstall, delete the folder (and `%APPDATA%\ChipJuke`, if it was created).
 
-The current version is **1.0.0-rc2**, a release candidate. Please report problems in
+The current version is **1.0.0-rc3**, a release candidate. Please report problems in
 [Issues](https://github.com/C4rl0s79/ChipJuke/issues).
 
 ## Features
