@@ -60,6 +60,8 @@ struct ControllerOptions {
     std::filesystem::path settingsFile;
     std::uint32_t saveDelayMs = 1000;   // opoznienie zapisu po ostatniej zmianie (debounce)
     bool allowNetworkPaths = false;     // --allow-network-paths: UNC w playlists.json/settings/cache
+    // Katalog zewnetrznych ROM-ow (yrw801.rom) - katalog ChipJuke.exe; pusty = tylko katalog utworu.
+    std::filesystem::path romDir;
     bool noAppDataNotice = false;       // pokaz komunikat "brak AppData, ustawienia nie sa zapisywane"
 };
 

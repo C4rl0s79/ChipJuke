@@ -41,12 +41,15 @@ std::unique_ptr<ChipDecoder> makeDecoderFor(Host& h, const format::ChipEntry& e,
     case ChipType::YM3812:
     case ChipType::YM3526:  return makeOpl(h, first, e.clockHz, false);
     case ChipType::YMF262:  return makeOpl(h, first, e.clockHz, true);
+    case ChipType::Y8950:   return makeY8950(h, first, e.clockHz);
     case ChipType::AY8910:  return makeAy8910(h, first, e.clockHz);
+    case ChipType::K051649: return makeK051649(h, first, e.clockHz);
     case ChipType::OKIM6295: return makeOkim6295(h, first, e.clockHz, e.flags);
     case ChipType::NesApu:  return makeNesApu(h, first, e.clockHz, e.flags);
     case ChipType::C140:    return makeC140(h, first, e.clockHz);
     case ChipType::K054539: return makeK054539(h, first, e.clockHz, e.flags);
     case ChipType::K053260: return makeK053260(h, first, e.clockHz);
+    case ChipType::QSound:  return makeQSound(h, first, e.clockHz);
     case ChipType::SegaPcm: return makeSegaPcm(h, first, e.clockHz);
     case ChipType::GA20:    return makeGa20(h, first, e.clockHz);
     case ChipType::OKIM6258: return makeOkim6258(h, first, e.clockHz, e.flags);
@@ -162,9 +165,13 @@ private:
         case 0xAA: write(ChipType::YM3812, 1, 0, p[1], p[2]); break;
         case 0x5B: write(ChipType::YM3526, 0, 0, p[1], p[2]); break;
         case 0xAB: write(ChipType::YM3526, 1, 0, p[1], p[2]); break;
+        case 0x5C: write(ChipType::Y8950, 0, 0, p[1], p[2]); break;
+        case 0xAC: write(ChipType::Y8950, 1, 0, p[1], p[2]); break;
         case 0x5E: case 0x5F: write(ChipType::YMF262, 0, static_cast<std::uint8_t>(op - 0x5E), p[1], p[2]); break;
         case 0xAE: case 0xAF: write(ChipType::YMF262, 1, static_cast<std::uint8_t>(op - 0xAE), p[1], p[2]); break;
         case 0xA0: write(ChipType::AY8910, p[1] >> 7, 0, p[1] & 0x7F, p[2]); break;
+        case 0xC4: write(ChipType::QSound, 0, p[1], p[3], p[2]); break;   // dane BE: port = MSB
+        case 0xD2: write(ChipType::K051649, p[1] >> 7, static_cast<std::uint8_t>(p[1] & 0x7F), p[2], p[3]); break;
         case 0xB8: write(ChipType::OKIM6295, p[1] >> 7, 0, p[1] & 0x7F, p[2]); break;
         case 0xB4: {   // NES APU / FDS: mapowanie rejestrow jak w libvgm (Cmd_NES_Reg)
             std::uint8_t ofs = p[1] & 0x7F;

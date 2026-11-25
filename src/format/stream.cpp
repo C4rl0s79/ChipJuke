@@ -401,6 +401,8 @@ Result<StreamReport> Scanner::run()
             }
         }
         checkChip(cmd, pos);
+        if ((cmd == 0x5F || cmd == 0xAF) && *at(pos + 1) == 0x04)
+            rep_.opl3FourOp[cmd == 0xAF ? 1 : 0] |= static_cast<std::uint8_t>(*at(pos + 2) & 0x3Fu);
 
         std::uint64_t delay = 0;
         if (cmd == 0x61) delay = rd16(at(pos + 1));

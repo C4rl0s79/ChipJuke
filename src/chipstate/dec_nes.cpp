@@ -351,7 +351,7 @@ private:
     std::uint64_t dmcEnd_ = kNever;
     InstrumentBank dmcBank_;
     // FDS
-    bool fdsIo_ = false, fdsHalt_ = true, fdsWavWrite_ = false;
+    bool fdsIo_ = true, fdsHalt_ = true, fdsWavWrite_ = false;   // jak libvgm: reset zapisuje $4023 = 0x83
     std::uint8_t fdsVolReg_ = 0, fdsMaster_ = 0;
     std::uint16_t fdsFreq_ = 0;
     std::vector<std::uint8_t> wave_;

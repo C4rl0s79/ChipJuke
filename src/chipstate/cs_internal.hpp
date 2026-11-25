@@ -156,6 +156,7 @@ protected:
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeSn76489(Host& h, std::size_t first, std::uint32_t clockHz,
                                                        std::uint32_t flags);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeAy8910(Host& h, std::size_t first, std::uint32_t clockHz);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeK051649(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2612(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2203(Host& h, std::size_t first, std::uint32_t clockHz);
 // OPNA (YM2608: FM + SSG + rytm + ADPCM-B) i OPNB (YM2610, typeB = YM2610B: FM + SSG + ADPCM-A/B).
@@ -166,6 +167,7 @@ protected:
                                                         std::uint32_t flags);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeYm2413(Host& h, std::size_t first, std::uint32_t clockHz);
 // OPL2 (YM3812), OPL (YM3526) - 9 kanalow + 5 perkusji; OPL3 (YMF262) - 18 + 5.
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeY8950(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeOpl(Host& h, std::size_t first, std::uint32_t clockHz, bool opl3);
 // NES APU (5 kanalow; z FDS 6), uklady PCM (dec_pcm.cpp) - flags = ChipEntry::flags.
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeNesApu(Host& h, std::size_t first, std::uint32_t clockHz,
@@ -174,6 +176,7 @@ protected:
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeK054539(Host& h, std::size_t first, std::uint32_t clockHz,
                                                        std::uint32_t flags);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeK053260(Host& h, std::size_t first, std::uint32_t clockHz);
+[[nodiscard]] std::unique_ptr<ChipDecoder> makeQSound(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeSegaPcm(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeGa20(Host& h, std::size_t first, std::uint32_t clockHz);
 [[nodiscard]] std::unique_ptr<ChipDecoder> makeOkim6258(Host& h, std::size_t first, std::uint32_t clockHz,

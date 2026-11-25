@@ -1,6 +1,9 @@
-// vgmplay - modul chipstate: dekodery PSG - SN76489/SN76496 oraz AY-3-8910 (rdzen wspoldzielony z SSG YM2203).
+// vgmplay - modul chipstate: dekodery PSG - SN76489/SN76496, AY-3-8910 (rdzen wspoldzielony z SSG YM2203)
+// oraz Konami SCC (K051649 / K052539, PSG z tablica fali).
 // Uklady bez key-on: kanal "gra", gdy tlumienie < maks. (SN) / amplituda > 0 (AY) i ton jest w zakresie MIDI;
 // zdarzenia wynikaja z roznicy miedzy stanem zadanym a ostatnio zgloszonym (emitState).
+#include <string>
+
 #include "cs_internal.hpp"
 
 namespace vgmplay::chipstate::detail {
@@ -90,6 +93,82 @@ private:
     AyCore core_;
 };
 
+// --- Konami SCC (K051649 / SCC+ K052539) ------------------------------------------------------
+// Komenda VGM 0xD2 pp aa dd: port 0 = fala SCC (0x00..0x7F; 0x60..0x7F wspolne dla kanalow 4 i 5), 1 = okres
+// (rejestry 0..9: mlodszy/starszy bajt, 12 bit), 2 = glosnosc (0..4, 4 bit), 3 = key-on (bity 0..4),
+// 4 = fala SCC+ (0x00..0x9F, osobna dla kazdego kanalu), 5 = rejestr testowy (pomijany).
+// Kanal gra, gdy key-on, glosnosc > 0 i okres > 8 (krotszy okres zatrzymuje kanal - jak w libvgm).
+// Nuta: f = zegar / (32 * (okres + 1)) (fala 32 probki). Instrument: numer unikatowej fali kanalu (32 bajty)
+// w kolejnosci pojawienia sie. Glosnosc: 0..15 liniowo -> 0..0x40.
+class Scc final : public ChipDecoder {
+public:
+    Scc(Host& h, std::size_t first, double clock) : ChipDecoder(h, first), clock_(clock) {}
+
+    void write(std::uint8_t port, std::uint8_t reg, std::uint8_t val) override
+    {
+        switch (port) {
+        case 0:
+            if (reg >= 0x80) return;
+            if (reg >= 0x60) {
+                wave_[3][reg & 0x1F] = val;
+                wave_[4][reg & 0x1F] = val;
+                update(3);
+                update(4);
+            } else {
+                wave_[reg >> 5][reg & 0x1F] = val;
+                update(reg >> 5);
+            }
+            break;
+        case 4:
+            if (reg >= 0xA0) return;
+            wave_[reg >> 5][reg & 0x1F] = val;
+            update(reg >> 5);
+            break;
+        case 1: {
+            if (reg >= 10) return;
+            const unsigned c = reg >> 1;
+            if (reg & 1) period_[c] = static_cast<std::uint16_t>((period_[c] & 0x0FF) | ((val & 0x0F) << 8));
+            else period_[c] = static_cast<std::uint16_t>((period_[c] & 0xF00) | val);
+            update(c);
+            break;
+        }
+        case 2:
+            if (reg >= 5) return;
+            vol_[reg] = val & 0x0F;
+            update(reg);
+            break;
+        case 3:
+            key_ = val & 0x1F;
+            for (unsigned c = 0; c < 5; ++c) update(c);
+            break;
+        default: break;
+        }
+    }
+
+private:
+    void update(unsigned c)
+    {
+        const bool audible = ((key_ >> c) & 1u) && vol_[c] > 0 && period_[c] > 8;
+        const int midi = midiFromHz(clock_ / (32.0 * (period_[c] + 1u)));
+        // Fala zmieniana w trakcie nuty (animacja fali) nie tworzy nowej nuty: instrument z key-on / zmiany tonu.
+        std::uint8_t inst = kValueNone;
+        if (audible) {
+            inst = (tr_[c].on && tr_[c].midi == midi)
+                       ? tr_[c].inst
+                       : waves_.id(std::string(reinterpret_cast<const char*>(wave_[c]), 32));
+        }
+        emitState(host_.rec, base_ + c, tr_[c], audible, midi, inst, scaleVolume(vol_[c], 15));
+    }
+
+    double clock_;
+    std::uint8_t wave_[5][32] = {};
+    std::uint16_t period_[5] = {};
+    std::uint8_t vol_[5] = {};
+    std::uint8_t key_ = 0;
+    InstrumentBank waves_;
+    Tracked tr_[5];
+};
+
 } // namespace
 
 // Instrument AY: bit0 = szum wmieszany, bit1 = obwiednia amplitudy, bit2 = ton wylaczony (sam szum) -> 0..7.
@@ -136,6 +215,11 @@ std::unique_ptr<ChipDecoder> makeSn76489(Host& h, std::size_t first, std::uint32
 std::unique_ptr<ChipDecoder> makeAy8910(Host& h, std::size_t first, std::uint32_t clockHz)
 {
     return std::make_unique<AyDecoder>(h, first, static_cast<double>(clockHz));
+}
+
+std::unique_ptr<ChipDecoder> makeK051649(Host& h, std::size_t first, std::uint32_t clockHz)
+{
+    return std::make_unique<Scc>(h, first, static_cast<double>(clockHz));
 }
 
 } // namespace vgmplay::chipstate::detail

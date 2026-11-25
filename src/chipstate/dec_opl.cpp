@@ -1,4 +1,4 @@
-// vgmplay - modul chipstate: rodzina OPL - YM2413 (OPLL), YM3812/YM3526 (OPL2/OPL), YMF262 (OPL3).
+// vgmplay - modul chipstate: rodzina OPL - YM2413 (OPLL), YM3812/YM3526 (OPL2/OPL), Y8950 (MSX-AUDIO), YMF262 (OPL3).
 //
 // Kanaly (kolejnosc jak w silniku): melodyczne 1..9 (OPL3: 1..18; kanaly 10..18 = port 1), potem perkusja
 // "Bass Drum", "Snare Drum", "Tom Tom", "Cymbal", "Hi-Hat".
@@ -13,7 +13,11 @@
 //    glosnosc z poziomu odpowiedniego operatora; kanaly melodyczne 7..9 sa w tym trybie wyciszone;
 //  * OPL3 4-op: kanal parzysty (1..3, 10..12) niesie nute, kanal drugiej pary (4..6, 13..15) jest pusty;
 //    glosnosc liczona z nosnych polaczenia (przyblizenie).
+//  * Y8950: FM jak YM3526 + kanal "ADPCM" (delta-T, rejestry 0x07-0x12): start = bit 7 rejestru 0x07, stop = zapis
+//    0x07 bez bitu 7 albo koniec probki (bez REPEAT); nuta wzgledna = 60 + 12*log2(delta-N / 65536), instrument =
+//    numer pary start/koniec, glosnosc = rejestr 0x12 (jak ADPCM-B w dec_fm.cpp). Adresy: rejestr << 5 (nibble x2).
 #include <array>
+#include <string>
 
 #include "cs_internal.hpp"
 
@@ -157,14 +161,21 @@ private:
 // --- YM3812 / YM3526 / YMF262 -----------------------------------------------------------------
 class Opl final : public ChipDecoder {
 public:
-    Opl(Host& h, std::size_t first, std::uint32_t clock, bool opl3)
-        : ChipDecoder(h, first), opl3_(opl3), nMel_(opl3 ? 18u : 9u),
+    Opl(Host& h, std::size_t first, std::uint32_t clock, bool opl3, bool y8950 = false)
+        : ChipDecoder(h, first), opl3_(opl3), y8950_(y8950), nMel_(opl3 ? 18u : 9u),
           sr_(static_cast<double>(clock) / (opl3 ? 288.0 : 72.0))
     {
     }
 
+    [[nodiscard]] std::uint64_t deadline() const override { return adpcmOn_ ? adpcmEnd_ : kNever; }
+    void onDeadline(std::uint64_t when) override
+    {
+        if (adpcmOn_ && adpcmEnd_ <= when) adpcmOff();
+    }
+
     void write(std::uint8_t port, std::uint8_t reg, std::uint8_t val) override
     {
+        if (y8950_ && reg >= 0x07 && reg <= 0x12) { deltaT(reg, val); return; }
         const unsigned bank = (opl3_ && port) ? 1u : 0u;
         if (reg == 0x04 && bank == 1) { fourOp_ = val & 0x3F; return; }
         if (reg == 0xBD && bank == 0) { rhythmControl(val); return; }
@@ -341,7 +352,44 @@ private:
         }
     }
 
+    // --- Y8950 ADPCM (delta-T) ---
+    [[nodiscard]] std::size_t adpcmChan() const noexcept { return base_ + nMel_ + 5; }
+    void adpcmOff()
+    {
+        if (adpcmOn_) host_.rec.noteOff(adpcmChan());
+        adpcmOn_ = false;
+        adpcmEnd_ = kNever;
+    }
+    void deltaT(std::uint8_t reg, std::uint8_t val)
+    {
+        dt_[reg - 0x07] = val;
+        if (reg == 0x12) {
+            if (adpcmOn_) host_.rec.volume(adpcmChan(), scaleVolume(val, 255));
+            return;
+        }
+        if (reg != 0x07) return;
+        if (!(val & 0x80)) { adpcmOff(); return; }   // brak START = stop
+        if (val & 0x40) return;                      // REC - nie odtwarzanie
+        auto r16 = [&](unsigned lo) { return static_cast<std::uint32_t>(dt_[lo - 0x07] | (dt_[lo + 1 - 0x07] << 8)); };
+        const std::uint32_t start = r16(0x09) << 5;
+        const std::uint32_t end = ((r16(0x0B) + 1u) << 5) - 1u;
+        const unsigned delta = r16(0x10);
+        const double nibblesPerSec = sr_ * delta / 65536.0;
+        adpcmEnd_ = kNever;
+        if (!(val & 0x10) && delta > 0 && end >= start && nibblesPerSec > 0.0)
+            adpcmEnd_ = host_.now + ticksFromSeconds(2.0 * (end - start + 1.0) / nibblesPerSec);
+        const int midi = midiFromRatio(delta / 65536.0, 1.0);
+        const std::uint8_t inst = adpcmBank_.id("D" + std::to_string(start) + ":" + std::to_string(end));
+        adpcmOn_ = true;
+        host_.rec.noteOn(adpcmChan(), midi < 0 ? 60 : midi, inst, scaleVolume(dt_[0x12 - 0x07], 255));
+    }
+
     bool opl3_;
+    bool y8950_;
+    std::uint8_t dt_[12] = {};
+    bool adpcmOn_ = false;
+    std::uint64_t adpcmEnd_ = kNever;
+    InstrumentBank adpcmBank_;
     std::size_t nMel_;
     double sr_;
     InstrumentBank bank_;
@@ -364,6 +412,10 @@ std::unique_ptr<ChipDecoder> makeYm2413(Host& h, std::size_t first, std::uint32_
 std::unique_ptr<ChipDecoder> makeOpl(Host& h, std::size_t first, std::uint32_t clockHz, bool opl3)
 {
     return std::make_unique<Opl>(h, first, clockHz, opl3);
+}
+std::unique_ptr<ChipDecoder> makeY8950(Host& h, std::size_t first, std::uint32_t clockHz)
+{
+    return std::make_unique<Opl>(h, first, clockHz, false, true);
 }
 
 } // namespace vgmplay::chipstate::detail

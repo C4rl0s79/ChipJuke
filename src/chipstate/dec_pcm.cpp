@@ -1,4 +1,4 @@
-// vgmplay - modul chipstate: uklady PCM/ADPCM - C140, K054539, K053260, Sega PCM, Irem GA20, OKIM6258.
+// vgmplay - modul chipstate: uklady PCM/ADPCM - C140, K054539, K053260, Sega PCM, Irem GA20, OKIM6258, QSound.
 //
 // Wspolne zasady (jak OKIM6295):
 //  * key-on = nuta; instrument = numer unikatowej probki (adres startu + parametry) w kolejnosci pojawienia sie
@@ -279,6 +279,66 @@ private:
     std::array<std::uint8_t, 0x40> regs_;
 };
 
+// --- QSound (16 glosow PCM; komenda 0xC4 mm ll rr: dane 16 bit BE, rejestr rr; rejestry glosu = ch*8 + n) -----
+// n: 0 bank (dla glosu ch+1 - jak w libvgm), 1 adres startu, 2 czestotliwosc, 3 key-on (bit 15), 4 dlugosc petli,
+// 5 adres konca, 6 glosnosc. Key-on: czestotliwosc 0 -> niezerowa albo zapis rejestru 3 z bitem 15 (to samo
+// traktuje jako key-on libvgm dla starych VGM); key-off: czestotliwosc 0 albo koniec probki bez petli (petla 0).
+// Tempo: czestotliwosc / 4096 probek na probke wyjsciowa (zegar / 166). Glosnosc: rejestr 6 / 0x800 (obciete).
+// Kanaly ADPCM 1-3 (rejestry 0xCA..) nie sa dekodowane.
+class QSound final : public PcmBase {
+public:
+    QSound(Host& h, std::size_t first, std::uint32_t clock) : PcmBase(h, first, 16), rate_(clock / 166.0) {}
+    // port = starszy bajt danych (pattern.cpp), val = mlodszy.
+    void write(std::uint8_t port, std::uint8_t reg, std::uint8_t lo) override
+    {
+        const auto val = static_cast<std::uint16_t>((port << 8) | lo);
+        if (reg >= 0x80) return;
+        const std::size_t ch = reg >> 3;
+        R& r = r_[ch];
+        switch (reg & 7) {
+        case 0: r_[(ch + 1) & 15].bank = val; break;
+        case 1: r.addr = val; break;
+        case 2: {
+            const std::uint16_t old = r.freq;
+            r.freq = val;
+            if (val == 0) keyOff(ch);
+            else if (old == 0 || !v_[ch].playing) start(ch);
+            else if (midiOf(r) != r.midi) start(ch);
+            break;
+        }
+        case 3: if ((val & 0x8000) && r.freq) start(ch); break;
+        case 4: r.loop = val; break;
+        case 5: r.end = val; break;
+        case 6:
+            r.vol = val;
+            setVolume(ch, volOf(r));
+            break;
+        default: break;
+        }
+    }
+
+private:
+    struct R {
+        std::uint16_t bank = 0, addr = 0, freq = 0, loop = 0, end = 0, vol = 0;
+        int midi = -1;
+    };
+    [[nodiscard]] static int midiOf(const R& r) { return midiFromRatio(r.freq / 4096.0, 1.0); }
+    [[nodiscard]] static std::uint8_t volOf(const R& r) { return scaleVolume(std::min<int>(r.vol, 0x800), 0x800); }
+    void start(std::size_t ch)
+    {
+        R& r = r_[ch];
+        r.midi = midiOf(r);
+        std::uint64_t until = kNever;
+        if (r.loop == 0 && r.end > r.addr && r.freq > 0)
+            until = endAfter((r.end - r.addr) / (rate_ * r.freq / 4096.0));
+        keyOn(ch, r.midi, sampleId("%04X%04X:%04X", r.bank & 0x7Fu, r.addr, (static_cast<std::uint32_t>(r.end) << 16) | r.loop),
+              volOf(r), until);
+    }
+
+    double rate_;
+    std::array<R, 16> r_{};
+};
+
 // --- Sega PCM (16 glosow; 8 bajtow na glos: +2/+3 glosnosc, +6 strona konca, +7 delta; +0x84/+0x85 adres biezacy,
 // +0x86 bit 0 = glos wylaczony, bit 1 = petla wylaczona, reszta = bank) --------------------------------------
 // Tempo: delta / 256 probek na probke wyjsciowa (zegar / 128). Koniec: adres (strona koncowa + 1) << 16, tylko gdy
@@ -459,6 +519,11 @@ std::unique_ptr<ChipDecoder> makeK054539(Host& h, std::size_t first, std::uint32
 {
     return std::make_unique<K054539>(h, first, clockHz, flags);
 }
+std::unique_ptr<ChipDecoder> makeQSound(Host& h, std::size_t first, std::uint32_t clockHz)
+{
+    return std::make_unique<QSound>(h, first, clockHz);
+}
+
 std::unique_ptr<ChipDecoder> makeK053260(Host& h, std::size_t first, std::uint32_t clockHz)
 {
     return std::make_unique<K053260>(h, first, clockHz);

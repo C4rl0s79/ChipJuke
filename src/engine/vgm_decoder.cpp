@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <limits>
 #include <new>
 
@@ -60,6 +61,7 @@ struct DevRef {
     std::uint8_t instance = 0;
     std::uint16_t mainChannels = 0;
     std::uint16_t linkedChannels = 0;
+    std::uint8_t opl3FourOp = 0; // YMF262: pary 4-op uzyte w utworze (StreamReport::opl3FourOp)
     MuteMask mask{};            // ostatnio ustawiona maska (do ponownego zastosowania po zmianie zamrozenia)
     bool frozen = false;        // E1.5: Render pomija emulacje (muteOpts.disable) - tylko kopie kanalowe
 };
@@ -250,6 +252,8 @@ private:
         devs_.clear();
         scratch_.clear();
         scratch_.shrink_to_fit();
+        romBuf_.clear();
+        romBuf_.shrink_to_fit();
         started_ = false;
         ended_ = false;
         pos_ = 0;
@@ -265,9 +269,62 @@ private:
         // chnMute, nie "disable" (zamrazanie emulacji) - ADR pkt 4a; "disable" (bity 0/1 = glowny/polaczony)
         // tylko na zadanie dla kopii kanalowych (setDeviceFrozen, E1.5).
         mo.disable = devs_[idx].frozen ? 0x03 : 0x00;
-        mo.chnMute[0] = m.main;
+        mo.chnMute[0] = linkFourOpPairs(m.main, devs_[idx].opl3FourOp);
         mo.chnMute[1] = m.linked;
         (void)tap_->SetDeviceMuting(PLR_DEV_ID(devs_[idx].devId, devs_[idx].instance), mo);
+    }
+
+    // OPL3 4-op: dzwiek pary wychodzi przez kanal drugiej polowki (4..6, 13..15), a nuta jest na
+    // pierwszej (1..3, 10..12). Druga polowka dziedziczy wyciszenie pierwszej: MUTE/SOLO pierwszego
+    // kanalu obejmuje cala pare, oscyloskop pierwszego kanalu pokazuje cala pare, a drugiego - cisze.
+    [[nodiscard]] static std::uint32_t linkFourOpPairs(std::uint32_t mute, std::uint8_t pairs) noexcept
+    {
+        for (unsigned k = 0; k < 6; ++k) {
+            if (!((pairs >> k) & 1u)) continue;
+            const unsigned a = k < 3 ? k : 9 + (k - 3), b = a + 3;
+            mute = (mute & ~(1u << b)) | (((mute >> a) & 1u) << b);
+        }
+        return mute;
+    }
+
+    // libvgm prosi o zewnetrzny ROM (dzis tylko yrw801.rom dla OPL4) przy Start(). Tylko ta jedna nazwa,
+    // tylko z katalogow DecoderConfig::romDirs, maks. 4 MB; bufor zyje w dekoderze (MemoryLoader go nie kopiuje,
+    // libvgm kopiuje dane i zwalnia loader od razu).
+    static constexpr const char* kOpl4Rom = "yrw801.rom";
+    static constexpr std::uintmax_t kMaxRomBytes = 4u << 20;
+
+    [[nodiscard]] static std::filesystem::path findRom(const std::vector<std::filesystem::path>& dirs, const char* name)
+    {
+        for (const auto& d : dirs) {
+            if (d.empty()) continue;
+            std::error_code ec;
+            const std::filesystem::path p = d / name;
+            if (!std::filesystem::is_regular_file(p, ec)) continue;
+            const std::uintmax_t n = std::filesystem::file_size(p, ec);
+            if (!ec && n > 0 && n <= kMaxRomBytes) return p;
+        }
+        return {};
+    }
+
+    static DATA_LOADER* fileRequest(void* userParam, PlayerBase* /*player*/, const char* fileName)
+    {
+        auto* self = static_cast<VgmDecoder*>(userParam);
+        if (!fileName || std::strcmp(fileName, kOpl4Rom) != 0) return nullptr;
+        const std::filesystem::path p = findRom(self->cfg_.romDirs, kOpl4Rom);
+        if (p.empty()) return nullptr;
+        try {
+            std::ifstream in(p, std::ios::binary);
+            std::vector<std::uint8_t> buf((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            if (!in.good() && !in.eof()) return nullptr;
+            if (buf.empty() || buf.size() > kMaxRomBytes) return nullptr;
+            self->romBuf_ = std::move(buf);
+        } catch (...) {
+            return nullptr;
+        }
+        DATA_LOADER* dl = MemoryLoader_Init(self->romBuf_.data(), static_cast<UINT32>(self->romBuf_.size()));
+        if (!dl) return nullptr;
+        if (DataLoader_Load(dl) != 0) { DataLoader_Deinit(dl); return nullptr; }
+        return dl;
     }
 
     static void logCallback(void* userParam, PlayerBase* /*player*/, UINT8 level, UINT8 /*srcType*/,
@@ -322,6 +379,7 @@ private:
         if (pa_->SetOutputSettings(cfg_.sampleRate, 2, 32, cfg_.maxBlockFrames) != 0)
             return makeError(ErrorCode::Internal, "PlayerA::SetOutputSettings rejected");
         pa_->SetLogCallback(&VgmDecoder::logCallback, this);
+        pa_->SetFileReqCallback(&VgmDecoder::fileRequest, this);
 
         // Kopia z dopelnieniem (H1/H2); libvgm kopiuje ja do wlasnego bufora w DataLoader_Load.
         {
@@ -376,14 +434,14 @@ private:
         fadeStartNonLoop_ = info.totalFrames > fadeFrames ? info.totalFrames - fadeFrames : 0;
 
         // Uklady, rdzenie, kanaly.
-        if (auto r = buildLayoutAndCores(info); !r.ok()) return r.error();
+        if (auto r = buildLayoutAndCores(info, scan); !r.ok()) return r.error();
 
         scratch_.assign(static_cast<std::size_t>(cfg_.maxBlockFrames) * 2u, 0);
         return info;
     }
 
     // Wyznacza layout i ustawia emuCore wg polityki (przed Start - opcje czytane przy Start).
-    Result<void> buildLayoutAndCores(TrackInfo& info)
+    Result<void> buildLayoutAndCores(TrackInfo& info, const format::StreamReport& scan)
     {
         std::vector<PLR_DEV_INFO> list;
         if (tap_->GetSongDeviceInfo(list) >= 0x80)
@@ -408,9 +466,14 @@ private:
                 continue;
             }
 
+            if (ctype == ChipType::YMF278B && findRom(cfg_.romDirs, kOpl4Rom).empty())
+                info.warnings.push_back(Warning{WarningCode::RomMissing, kNoOffset,
+                    "OPL4 sample ROM yrw801.rom not found; instruments from the ROM may be silent"});
+
             DevRef ref;
             ref.devId = devId;
             ref.instance = inst;
+            if (ctype == ChipType::YMF262 && inst < 2) ref.opl3FourOp = scan.opl3FourOp[inst];
 
             DeviceDesc dd;
             dd.id = static_cast<DeviceId>(info.layout.devices.size());
@@ -509,6 +572,7 @@ private:
     DATA_LOADER* dl_ = nullptr;
     std::vector<DevRef> devs_;
     std::vector<std::int32_t> scratch_;
+    std::vector<std::uint8_t> romBuf_;   // yrw801.rom na czas Start() (fileRequest)
     LogRing log_;
     std::string lastError_;
     SampleTime pos_ = 0;

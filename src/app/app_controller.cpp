@@ -101,6 +101,7 @@ bool AppController::start()
 
     engine::EngineConfig ec;
     ec.decoder.sampleRate = rate;
+    if (!options_.romDir.empty()) ec.decoder.romDirs.push_back(options_.romDir);
     engine_ = std::make_unique<engine::Engine>(ec, pcm_);
     engineThread_ = std::thread([this] { engine_->run(); });
     view_.sampleRate = rate;

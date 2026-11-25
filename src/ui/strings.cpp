@@ -295,6 +295,7 @@ const char* warningCodeName(WarningCode c)
     case WarningCode::Gd3Invalid: return "Gd3Invalid";
     case WarningCode::TagTruncated: return "TagTruncated";
     case WarningCode::TagSanitized: return "TagSanitized";
+    case WarningCode::RomMissing: return "RomMissing";
     case WarningCode::EntrySkipped: return "EntrySkipped";
     case WarningCode::PathRejected: return "PathRejected";
     case WarningCode::ReparsePointSkipped: return "ReparsePointSkipped";
@@ -349,6 +350,8 @@ const char* trWarning(WarningCode c)
     case WarningCode::Gd3Invalid: return pick("GD3 tag is damaged (ignored)", "tag GD3 uszkodzony (pominięto)");
     case WarningCode::TagTruncated: return pick("a GD3 field was shortened", "pole GD3 skrócono");
     case WarningCode::TagSanitized: return pick("control characters removed from tags", "usunięto znaki sterujące z tagów");
+    case WarningCode::RomMissing: return pick("OPL4 sample ROM yrw801.rom not found (put it next to ChipJuke.exe or the track) - ROM instruments may be silent",
+                                              "brak ROM-u próbek OPL4 yrw801.rom (połóż go obok ChipJuke.exe albo utworu) - instrumenty z ROM-u mogą być ciche");
     case WarningCode::EntrySkipped: return pick("entry skipped", "pominięto pozycję");
     case WarningCode::PathRejected: return pick("path rejected", "ścieżka odrzucona");
     case WarningCode::ReparsePointSkipped: return pick("link skipped", "pominięto dowiązanie");

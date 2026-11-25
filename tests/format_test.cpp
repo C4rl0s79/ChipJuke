@@ -748,6 +748,20 @@ TEST_CASE("gd3: surogaty - poprawna para, niesparowane -> U+FFFD")
     CHECK(g.value().sanitized);
 }
 
+TEST_CASE("gd3: same znaki biale (wieloliniowe Notes) -> spacje bez flagi sanitized")
+{
+    // Out Run (vgmrips): "Sound ID: 85\nExtended Loop Version." - zwykle formatowanie, nie ostrzezenie.
+    Opt o;
+    o.gd3 = makeGd3({std::u16string(u"a\r\nb\tc\nd")});
+    const Bytes f = makeVgm(kSimple, o);
+    auto h = parseVgmHeader(f);
+    REQUIRE(h.ok());
+    auto g = parseGd3(f, h.value());
+    REQUIRE(g.ok());
+    CHECK(g.value().trackEn == "a b c d");
+    CHECK_FALSE(g.value().sanitized);
+}
+
 TEST_CASE("gd3: znaki sterujace usuniete, bialy znak -> spacja; limit dlugosci pola")
 {
     Opt o;
